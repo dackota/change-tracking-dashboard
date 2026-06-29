@@ -14,6 +14,9 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
+// ptr is a test-local helper to take the address of a string literal.
+func ptr(s string) *string { return &s }
+
 // buildFixtureRepo mirrors gitsource_test's helper; both need their own repo.
 func buildFixtureRepo(t *testing.T) (repoPath, sha1, sha2 string) {
 	t.Helper()
@@ -345,5 +348,173 @@ func TestPoller_ResumesFromHighWaterMark(t *testing.T) {
 	}
 	if feed[1].NewValue == nil || *feed[1].NewValue != "1.1.0" {
 		t.Errorf("feed[1].NewValue = %v, want 1.1.0", feed[1].NewValue)
+	}
+}
+
+// buildKeyedFixtureRepo creates a fixture repo whose Chart.yaml dependencies
+// change across two commits:
+//   - commit 1: gateway@0.38.0, engine@1.0.0 (both with aliases)
+//   - commit 2: gateway@0.39.0 (bumped), engine removed, analytics@2.0.0 added
+//
+// This exercises the mixed add/remove/modify case end-to-end through the poller.
+func buildKeyedFixtureRepo(t *testing.T) (repoPath string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	repo, err := git.PlainInit(dir, false)
+	if err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("worktree: %v", err)
+	}
+
+	chartPath := filepath.Join(dir, "Chart.yaml")
+	base := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+
+	commit := func(content, msg string, when time.Time) {
+		if err := os.WriteFile(chartPath, []byte(content), 0o644); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
+		if _, err := wt.Add("Chart.yaml"); err != nil {
+			t.Fatalf("git add: %v", err)
+		}
+		if _, err := wt.Commit(msg, &git.CommitOptions{
+			Author: &object.Signature{Name: "dev", Email: "d@x.com", When: when},
+		}); err != nil {
+			t.Fatalf("commit %q: %v", msg, err)
+		}
+	}
+
+	commit(`apiVersion: v2
+name: aidp
+dependencies:
+  - name: kanpai-gateway
+    alias: aidp-gateway
+    version: "0.38.0"
+    repository: oci://registry.example.com
+  - name: kanpai-engine
+    alias: aidp-engine
+    version: "1.0.0"
+    repository: oci://registry.example.com
+`, "init", base)
+
+	commit(`apiVersion: v2
+name: aidp
+dependencies:
+  - name: kanpai-gateway
+    alias: aidp-gateway
+    version: "0.39.0"
+    repository: oci://registry.example.com
+  - name: kanpai-analytics
+    alias: aidp-analytics
+    version: "2.0.0"
+    repository: oci://registry.example.com
+`, "bump gateway, remove engine, add analytics", base.Add(time.Hour))
+
+	return dir
+}
+
+// TestPoller_KeyedEndToEnd confirms that the poller correctly processes a
+// Chart.yaml whose dependencies change between two commits, producing per-key
+// Changes with non-nil Key values persisted and queryable.
+func TestPoller_KeyedEndToEnd(t *testing.T) {
+	t.Parallel()
+
+	repoPath := buildKeyedFixtureRepo(t)
+
+	src, err := gitsource.Open(repoPath)
+	if err != nil {
+		t.Fatalf("gitsource.Open: %v", err)
+	}
+
+	st := newTestStore(t)
+
+	tracker := domain.Tracker{
+		Repo:          repoPath,
+		FileGlob:      "Chart.yaml",
+		Field:         "subchart-versions",
+		// alias-vs-name keying: prefer alias when present, else name.
+		ExtractorExpr: `.dependencies | map({(if .alias then .alias else .name end): .version}) | add`,
+		FacetPattern:  "",
+	}
+
+	p := poller.New(src, st)
+	if err := p.Poll(tracker); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+
+	feed, err := st.QueryFeed(100)
+	if err != nil {
+		t.Fatalf("QueryFeed: %v", err)
+	}
+
+	// Expect exactly 3 Changes: aidp-gateway modified, aidp-engine removed,
+	// aidp-analytics added.
+	if len(feed) != 3 {
+		t.Fatalf("got %d changes, want 3; feed = %+v", len(feed), feed)
+	}
+
+	// Index by key for order-independent assertions.
+	byKey := make(map[string]domain.Change, len(feed))
+	for _, c := range feed {
+		if c.Key == nil {
+			t.Errorf("keyed Change has nil Key: %+v", c)
+			continue
+		}
+		byKey[*c.Key] = c
+	}
+
+	// aidp-gateway: modified 0.38.0 → 0.39.0
+	gw, ok := byKey["aidp-gateway"]
+	if !ok {
+		t.Error("missing Change for key aidp-gateway")
+	} else {
+		if gw.ChangeType != domain.ChangeTypeModified {
+			t.Errorf("aidp-gateway: ChangeType = %q, want modified", gw.ChangeType)
+		}
+		if gw.OldValue == nil || *gw.OldValue != "0.38.0" {
+			t.Errorf("aidp-gateway: OldValue = %v, want 0.38.0", gw.OldValue)
+		}
+		if gw.NewValue == nil || *gw.NewValue != "0.39.0" {
+			t.Errorf("aidp-gateway: NewValue = %v, want 0.39.0", gw.NewValue)
+		}
+		if gw.Field != "subchart-versions" {
+			t.Errorf("aidp-gateway: Field = %q, want subchart-versions", gw.Field)
+		}
+	}
+
+	// aidp-engine: removed
+	eng, ok := byKey["aidp-engine"]
+	if !ok {
+		t.Error("missing Change for key aidp-engine")
+	} else {
+		if eng.ChangeType != domain.ChangeTypeRemoved {
+			t.Errorf("aidp-engine: ChangeType = %q, want removed", eng.ChangeType)
+		}
+		if eng.OldValue == nil || *eng.OldValue != "1.0.0" {
+			t.Errorf("aidp-engine: OldValue = %v, want 1.0.0", eng.OldValue)
+		}
+		if eng.NewValue != nil {
+			t.Errorf("aidp-engine: NewValue = %v, want nil", eng.NewValue)
+		}
+	}
+
+	// aidp-analytics: added
+	an, ok := byKey["aidp-analytics"]
+	if !ok {
+		t.Error("missing Change for key aidp-analytics")
+	} else {
+		if an.ChangeType != domain.ChangeTypeAdded {
+			t.Errorf("aidp-analytics: ChangeType = %q, want added", an.ChangeType)
+		}
+		if an.OldValue != nil {
+			t.Errorf("aidp-analytics: OldValue = %v, want nil", an.OldValue)
+		}
+		if an.NewValue == nil || *an.NewValue != "2.0.0" {
+			t.Errorf("aidp-analytics: NewValue = %v, want 2.0.0", an.NewValue)
+		}
 	}
 }

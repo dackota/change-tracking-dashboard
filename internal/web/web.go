@@ -124,7 +124,7 @@ const feedTemplate = `<!DOCTYPE html>
     {{range .Changes}}
     <li class="feed-item">
       <div class="feed-header">
-        <span class="field-name">{{.Field}}</span>
+        <span class="field-name">{{.Field}}{{if .Key}} › {{derefStr .Key}}{{end}}</span>
         <span class="change-type change-type-{{.ChangeType}}">{{.ChangeType}}</span>
       </div>
       <div class="value-change">

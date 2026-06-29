@@ -65,7 +65,24 @@ func (e *Extractor) Extract(content []byte) (domain.TrackedField, error) {
 		return domain.TrackedField{Present: false}, nil
 	}
 
+	// If the gojq output is a map (object), return a keyed TrackedField with each
+	// value stringified — the same Sprintf approach as the scalar path uses.
+	if m, ok := v.(map[string]any); ok {
+		return buildKeyedField(m), nil
+	}
+
 	return domain.TrackedField{Value: fmt.Sprintf("%v", v), Present: true}, nil
+}
+
+// buildKeyedField converts a map[string]any gojq result into a keyed TrackedField.
+// Each value is stringified with fmt.Sprintf("%v", v) to match the scalar path.
+// The returned TrackedField has Present=true and a non-nil Map.
+func buildKeyedField(m map[string]any) domain.TrackedField {
+	result := make(map[string]string, len(m))
+	for k, v := range m {
+		result[k] = fmt.Sprintf("%v", v)
+	}
+	return domain.TrackedField{Present: true, Map: result}
 }
 
 // normalizeYAML converts map[any]any (what gopkg.in/yaml.v3 can produce for

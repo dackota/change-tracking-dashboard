@@ -189,3 +189,81 @@ func TestFeedHandler_QueryErrorIsGeneric(t *testing.T) {
 		t.Errorf("error body leaks internal detail: %q", body)
 	}
 }
+
+// TestFeedHandler_KeyedChangeRendersKey verifies that a keyed Change (non-nil
+// Key) is rendered with the key visible in the feed HTML (e.g.
+// "subchart-versions › kanpai-gateway"), and that a scalar Change (nil Key)
+// renders without a stray key label.
+func TestFeedHandler_KeyedChangeRendersKey(t *testing.T) {
+	t.Parallel()
+
+	st := newTestStore(t)
+
+	keyVal := "kanpai-gateway"
+	base := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
+
+	keyedChange := domain.Change{
+		Repo:        "apps-repo",
+		FilePath:    "aidp/k8/Chart.yaml",
+		Field:       "subchart-versions",
+		Key:         &keyVal,
+		ChangeType:  domain.ChangeTypeModified,
+		OldValue:    ptr("0.38.0"),
+		NewValue:    ptr("0.39.0"),
+		Facets:      map[string]string{},
+		CommitSha:   "sha-keyed",
+		Author:      "alice",
+		CommittedAt: base,
+	}
+	scalarChange := domain.Change{
+		Repo:        "apps-repo",
+		FilePath:    "Chart.yaml",
+		Field:       "aidp-version",
+		Key:         nil,
+		ChangeType:  domain.ChangeTypeModified,
+		OldValue:    ptr("1.0.0"),
+		NewValue:    ptr("1.1.0"),
+		Facets:      map[string]string{},
+		CommitSha:   "sha-scalar",
+		Author:      "bob",
+		CommittedAt: base.Add(time.Hour),
+	}
+
+	if err := st.SaveChange(keyedChange); err != nil {
+		t.Fatalf("SaveChange keyed: %v", err)
+	}
+	if err := st.SaveChange(scalarChange); err != nil {
+		t.Fatalf("SaveChange scalar: %v", err)
+	}
+
+	h := web.NewHandler(st)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+
+	body := rr.Body.String()
+
+	// The keyed Change must show the map key in the header area.
+	// The expected pattern is something like "subchart-versions › kanpai-gateway".
+	if !strings.Contains(body, "kanpai-gateway") {
+		t.Errorf("body does not contain map key 'kanpai-gateway'; got:\n%s", body)
+	}
+
+	// The scalar Change field name must still appear.
+	if !strings.Contains(body, "aidp-version") {
+		t.Errorf("body missing scalar field name 'aidp-version'; got:\n%s", body)
+	}
+
+	// The scalar Change must NOT have a key label — "aidp-version" should not be
+	// followed by the key separator that the keyed template uses.
+	// We verify by checking the separator only appears once (for the keyed change).
+	const sep = "›"
+	count := strings.Count(body, sep)
+	if count != 1 {
+		t.Errorf("separator %q appears %d times, want exactly 1 (for the keyed Change)", sep, count)
+	}
+}

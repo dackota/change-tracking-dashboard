@@ -1,13 +1,16 @@
 // Package differ compares old and new TrackedField values to produce Change
-// records. This module is pure — no I/O, no side effects. It handles the
-// scalar case; keyed-map diffing is a future slice (keyed-map-diff task).
+// records. This module is pure — no I/O, no side effects.
 //
-// Interface design: ScalarParams carries commit metadata separately from the
-// field values so the Differ's signature can be extended with a keyed variant
-// (DiffKeyed) without reshaping the existing call sites.
+// Two diff functions are provided:
+//   - DiffScalar: scalar TrackedField → 0 or 1 Change.
+//   - DiffKeyed:  keyed TrackedField (Map != nil) → 0..N Changes, one per affected key.
+//
+// Both share ScalarParams for commit-level metadata. The Poller dispatches to
+// the correct function based on TrackedField.IsKeyed().
 package differ
 
 import (
+	"sort"
 	"time"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
@@ -58,8 +61,77 @@ func DiffScalar(p ScalarParams, old, new domain.TrackedField) []domain.Change {
 	}
 }
 
+// DiffKeyed compares old and new keyed TrackedFields (where Map != nil) and
+// returns one Change per affected map key:
+//   - key in both, value changed  → modified (Key set, old+new values)
+//   - key only in new             → added    (Key set, nil old)
+//   - key only in old             → removed  (Key set, nil new)
+//   - key in both, value same     → no Change
+//
+// The output slice is sorted by key for deterministic ordering. Scalar Changes
+// continue to use Key=nil; only keyed Changes have Key set.
+//
+// DiffKeyed never mutates its inputs.
+func DiffKeyed(p ScalarParams, old, new domain.TrackedField) []domain.Change {
+	oldMap := old.Map
+	newMap := new.Map
+
+	// Collect all keys across both maps.
+	keySet := make(map[string]struct{}, len(oldMap)+len(newMap))
+	for k := range oldMap {
+		keySet[k] = struct{}{}
+	}
+	for k := range newMap {
+		keySet[k] = struct{}{}
+	}
+
+	// Sort keys for deterministic output.
+	keys := make([]string, 0, len(keySet))
+	for k := range keySet {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var changes []domain.Change
+	for _, k := range keys {
+		oldVal, inOld := oldMap[k]
+		newVal, inNew := newMap[k]
+
+		kCopy := k // avoid loop-variable capture
+
+		switch {
+		case inOld && inNew && oldVal == newVal:
+			// Unchanged — emit nothing.
+
+		case inOld && inNew:
+			// Modified.
+			ov, nv := oldVal, newVal
+			changes = append(changes, newKeyedChange(p, &kCopy, domain.ChangeTypeModified, &ov, &nv))
+
+		case !inOld && inNew:
+			// Added.
+			nv := newVal
+			changes = append(changes, newKeyedChange(p, &kCopy, domain.ChangeTypeAdded, nil, &nv))
+
+		case inOld && !inNew:
+			// Removed.
+			ov := oldVal
+			changes = append(changes, newKeyedChange(p, &kCopy, domain.ChangeTypeRemoved, &ov, nil))
+		}
+	}
+
+	return changes
+}
+
+// newKeyedChange constructs an immutable Change with a non-nil Key.
+func newKeyedChange(p ScalarParams, key *string, ct domain.ChangeType, oldVal, newVal *string) domain.Change {
+	c := newChange(p, ct, oldVal, newVal)
+	c.Key = key
+	return c
+}
+
 // newChange constructs an immutable Change from the provided params and values.
-// key is always nil for scalars; future keyed-map variants will pass a non-nil key.
+// Key is always nil here; callers that need a non-nil key use newKeyedChange.
 func newChange(p ScalarParams, ct domain.ChangeType, oldVal, newVal *string) domain.Change {
 	// Copy facets defensively — do not reference the caller's map.
 	facets := make(map[string]string, len(p.Facets))

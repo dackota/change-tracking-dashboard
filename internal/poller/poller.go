@@ -21,6 +21,18 @@ import (
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/store"
 )
 
+// diffFields dispatches to DiffKeyed or DiffScalar based on whether either
+// TrackedField is a keyed map result. If either old or new is keyed, both are
+// treated as keyed (a nil Map is equivalent to an empty map for keyed diffing).
+// This means the poller does not need explicit kind configuration on the Tracker
+// — the extractor's output type determines the diff path automatically.
+func diffFields(p differ.ScalarParams, old, new domain.TrackedField) []domain.Change {
+	if old.IsKeyed() || new.IsKeyed() {
+		return differ.DiffKeyed(p, old, new)
+	}
+	return differ.DiffScalar(p, old, new)
+}
+
 // Poller wires the git source and store together to run polling cycles.
 type Poller struct {
 	src *gitsource.Source
@@ -88,7 +100,7 @@ func (p *Poller) Poll(t domain.Tracker) error {
 				CommittedAt: snapshots[0].CommittedAt,
 				Facets:      facets,
 			}
-			changes := differ.DiffScalar(params, domain.TrackedField{Present: false}, prevField)
+			changes := diffFields(params, domain.TrackedField{Present: false}, prevField)
 			for _, c := range changes {
 				if err := p.st.SaveChange(c); err != nil {
 					return fmt.Errorf("poller: save change: %w", err)
@@ -134,7 +146,7 @@ func (p *Poller) Poll(t domain.Tracker) error {
 			Facets:      facets,
 		}
 
-		changes := differ.DiffScalar(params, prevField, newField)
+		changes := diffFields(params, prevField, newField)
 		for _, c := range changes {
 			if err := p.st.SaveChange(c); err != nil {
 				return fmt.Errorf("poller: save change: %w", err)
