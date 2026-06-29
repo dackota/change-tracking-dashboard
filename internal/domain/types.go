@@ -32,9 +32,22 @@ type Change struct {
 
 // TrackedField is the result an Extractor yields for a single watched value.
 // Present=false means the path/key was not found in the file (not an error).
+//
+// Two modes:
+//   - Scalar: Map is nil, Value holds the stringified result.
+//   - Keyed:  Map is non-nil, Value is empty. Each entry is a key→stringified-value pair.
+//
+// The Poller dispatches to DiffScalar or DiffKeyed based on whether Map is nil.
 type TrackedField struct {
 	Value   string
 	Present bool
+	Map     map[string]string // non-nil only for keyed (map) extraction results
+}
+
+// IsKeyed reports whether this TrackedField is a keyed map result (as opposed
+// to a scalar). A keyed field routes to DiffKeyed; a scalar to DiffScalar.
+func (f TrackedField) IsKeyed() bool {
+	return f.Map != nil
 }
 
 // Tracker defines what to watch in one repo: a (repo, file-glob, field-name,

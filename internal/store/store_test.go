@@ -141,3 +141,63 @@ func TestQueryFeedEmptyDatabase(t *testing.T) {
 		t.Errorf("QueryFeed (empty): got %d changes, want 0", len(feed))
 	}
 }
+
+// TestKeyedChangeRoundTrip confirms that a Change with a non-nil Key persists
+// and reads back with its Key intact through SaveChange → QueryFeed.
+func TestKeyedChangeRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+
+	key := "aidp-gateway"
+	c := domain.Change{
+		Repo:        "apps-repo",
+		FilePath:    "aidp/k8/Chart.yaml",
+		Field:       "subchart-versions",
+		Key:         &key,
+		ChangeType:  domain.ChangeTypeModified,
+		OldValue:    ptr("0.38.0"),
+		NewValue:    ptr("0.39.0"),
+		Facets:      map[string]string{"env": "dev"},
+		CommitSha:   "sha-keyed-001",
+		Author:      "alice",
+		CommittedAt: time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC),
+	}
+
+	if err := s.SaveChange(c); err != nil {
+		t.Fatalf("SaveChange: %v", err)
+	}
+
+	feed, err := s.QueryFeed(100)
+	if err != nil {
+		t.Fatalf("QueryFeed: %v", err)
+	}
+
+	if len(feed) != 1 {
+		t.Fatalf("QueryFeed returned %d changes, want 1", len(feed))
+	}
+
+	got := feed[0]
+
+	// Key must round-trip.
+	if got.Key == nil {
+		t.Fatal("Key is nil after round-trip, want non-nil")
+	}
+	if *got.Key != key {
+		t.Errorf("Key = %q, want %q", *got.Key, key)
+	}
+
+	// Other fields must also be intact.
+	if got.ChangeType != domain.ChangeTypeModified {
+		t.Errorf("ChangeType = %q, want modified", got.ChangeType)
+	}
+	if got.OldValue == nil || *got.OldValue != "0.38.0" {
+		t.Errorf("OldValue = %v, want 0.38.0", got.OldValue)
+	}
+	if got.NewValue == nil || *got.NewValue != "0.39.0" {
+		t.Errorf("NewValue = %v, want 0.39.0", got.NewValue)
+	}
+	if got.Field != "subchart-versions" {
+		t.Errorf("Field = %q, want subchart-versions", got.Field)
+	}
+}

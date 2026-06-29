@@ -1,7 +1,9 @@
 package differ_test
 
 import (
+	"sort"
 	"testing"
+	"time"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/differ"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
@@ -176,4 +178,191 @@ func ptrStr(s *string) string {
 		return "<nil>"
 	}
 	return *s
+}
+
+// changeKey is a test helper to summarise a Change in a way that is easy to
+// index in test assertions (key + changeType).
+type changeKey struct {
+	key        string // "" if nil
+	changeType domain.ChangeType
+}
+
+func changeKeyOf(c domain.Change) changeKey {
+	k := ""
+	if c.Key != nil {
+		k = *c.Key
+	}
+	return changeKey{key: k, changeType: c.ChangeType}
+}
+
+// indexByKey returns a map from map-key → Change for easy per-key assertions.
+func indexByKey(changes []domain.Change) map[string]domain.Change {
+	out := make(map[string]domain.Change, len(changes))
+	for _, c := range changes {
+		k := ""
+		if c.Key != nil {
+			k = *c.Key
+		}
+		out[k] = c
+	}
+	return out
+}
+
+// TestDiffKeyed exercises all per-key cases: modified, added, removed, unchanged,
+// and the mixed case where multiple changes occur simultaneously.
+func TestDiffKeyed(t *testing.T) {
+	t.Parallel()
+
+	baseTime := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+
+	params := differ.ScalarParams{
+		Repo:        "apps-repo",
+		FilePath:    "aidp/k8/Chart.yaml",
+		Field:       "subchart-versions",
+		CommitSha:   "abc123",
+		Author:      "alice",
+		CommittedAt: baseTime,
+		Facets:      map[string]string{"env": "dev"},
+	}
+
+	tests := []struct {
+		name        string
+		old         domain.TrackedField
+		new         domain.TrackedField
+		wantChanges []domain.Change // use Key+ChangeType as identity
+	}{
+		{
+			name: "modified key produces one modified Change",
+			old:  domain.TrackedField{Present: true, Map: map[string]string{"gateway": "0.38.0"}},
+			new:  domain.TrackedField{Present: true, Map: map[string]string{"gateway": "0.39.0"}},
+			wantChanges: []domain.Change{
+				{
+					Key:        ptr("gateway"),
+					ChangeType: domain.ChangeTypeModified,
+					OldValue:   ptr("0.38.0"),
+					NewValue:   ptr("0.39.0"),
+				},
+			},
+		},
+		{
+			name: "new key in new produces added Change",
+			old:  domain.TrackedField{Present: true, Map: map[string]string{"gateway": "0.38.0"}},
+			new:  domain.TrackedField{Present: true, Map: map[string]string{"gateway": "0.38.0", "engine": "1.0.0"}},
+			wantChanges: []domain.Change{
+				{
+					Key:        ptr("engine"),
+					ChangeType: domain.ChangeTypeAdded,
+					OldValue:   nil,
+					NewValue:   ptr("1.0.0"),
+				},
+			},
+		},
+		{
+			name: "key removed from new produces removed Change",
+			old:  domain.TrackedField{Present: true, Map: map[string]string{"gateway": "0.38.0", "engine": "1.0.0"}},
+			new:  domain.TrackedField{Present: true, Map: map[string]string{"gateway": "0.38.0"}},
+			wantChanges: []domain.Change{
+				{
+					Key:        ptr("engine"),
+					ChangeType: domain.ChangeTypeRemoved,
+					OldValue:   ptr("1.0.0"),
+					NewValue:   nil,
+				},
+			},
+		},
+		{
+			name: "unchanged key produces no Change",
+			old:  domain.TrackedField{Present: true, Map: map[string]string{"gateway": "0.38.0"}},
+			new:  domain.TrackedField{Present: true, Map: map[string]string{"gateway": "0.38.0"}},
+			wantChanges: nil,
+		},
+		{
+			name: "mixed: one modified, one added, one removed simultaneously",
+			old: domain.TrackedField{Present: true, Map: map[string]string{
+				"gateway": "0.38.0",
+				"engine":  "1.0.0",
+				"ui":      "0.5.0",
+			}},
+			new: domain.TrackedField{Present: true, Map: map[string]string{
+				"gateway": "0.39.0", // modified
+				// engine removed
+				"analytics": "2.0.0", // added
+				"ui":        "0.5.0", // unchanged
+			}},
+			wantChanges: []domain.Change{
+				{Key: ptr("gateway"), ChangeType: domain.ChangeTypeModified, OldValue: ptr("0.38.0"), NewValue: ptr("0.39.0")},
+				{Key: ptr("engine"), ChangeType: domain.ChangeTypeRemoved, OldValue: ptr("1.0.0"), NewValue: nil},
+				{Key: ptr("analytics"), ChangeType: domain.ChangeTypeAdded, OldValue: nil, NewValue: ptr("2.0.0")},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			changes := differ.DiffKeyed(params, tc.old, tc.new)
+
+			if len(changes) != len(tc.wantChanges) {
+				t.Fatalf("DiffKeyed() returned %d changes, want %d; got: %+v",
+					len(changes), len(tc.wantChanges), changes)
+			}
+
+			if len(tc.wantChanges) == 0 {
+				return
+			}
+
+			// Index by map-key for order-independent assertions.
+			got := indexByKey(changes)
+
+			for _, want := range tc.wantChanges {
+				k := ""
+				if want.Key != nil {
+					k = *want.Key
+				}
+				c, ok := got[k]
+				if !ok {
+					t.Errorf("missing Change for key %q", k)
+					continue
+				}
+				if c.ChangeType != want.ChangeType {
+					t.Errorf("key %q: ChangeType = %q, want %q", k, c.ChangeType, want.ChangeType)
+				}
+				if !ptrEqual(c.OldValue, want.OldValue) {
+					t.Errorf("key %q: OldValue = %s, want %s", k, ptrStr(c.OldValue), ptrStr(want.OldValue))
+				}
+				if !ptrEqual(c.NewValue, want.NewValue) {
+					t.Errorf("key %q: NewValue = %s, want %s", k, ptrStr(c.NewValue), ptrStr(want.NewValue))
+				}
+				// Metadata must be copied from params.
+				if c.Repo != params.Repo {
+					t.Errorf("key %q: Repo = %q, want %q", k, c.Repo, params.Repo)
+				}
+				if c.Field != params.Field {
+					t.Errorf("key %q: Field = %q, want %q", k, c.Field, params.Field)
+				}
+				if c.CommitSha != params.CommitSha {
+					t.Errorf("key %q: CommitSha = %q, want %q", k, c.CommitSha, params.CommitSha)
+				}
+				// Facets must be a copy (not the same underlying map).
+				if c.Facets["env"] != "dev" {
+					t.Errorf("key %q: Facets[env] = %q, want dev", k, c.Facets["env"])
+				}
+			}
+
+			// Output order should be deterministic (sorted by key).
+			keys := make([]string, len(changes))
+			for i, c := range changes {
+				k := ""
+				if c.Key != nil {
+					k = *c.Key
+				}
+				keys[i] = k
+			}
+			if !sort.StringsAreSorted(keys) {
+				t.Errorf("DiffKeyed() output not sorted by key: %v", keys)
+			}
+		})
+	}
 }
