@@ -102,6 +102,7 @@ func TestPoller_EndToEnd(t *testing.T) {
 		Field:         "aidp-version",
 		ExtractorExpr: ".version",
 		FacetPattern:  `^apps/(?P<tenant>[^/]+)/(?P<env>[^/]+)/(?P<region>[^/]+)/`,
+		BackfillDays:  3650, // 10 years — fixture commits are well within range
 	}
 
 	p := poller.New(src, st)
@@ -157,6 +158,7 @@ func TestPoller_IncrementalPoll(t *testing.T) {
 		Field:         "aidp-version",
 		ExtractorExpr: ".version",
 		FacetPattern:  "",
+		BackfillDays:  3650,
 	}
 
 	p := poller.New(src, st)
@@ -238,6 +240,7 @@ func TestPoller_SingleCommitProducesAdded(t *testing.T) {
 		Field:         "chart-version",
 		ExtractorExpr: ".version",
 		FacetPattern:  "",
+		BackfillDays:  3650,
 	}
 
 	p := poller.New(src, st)
@@ -326,6 +329,7 @@ func TestPoller_ResumesFromHighWaterMark(t *testing.T) {
 		Field:         "chart-version",
 		ExtractorExpr: ".version",
 		FacetPattern:  "",
+		BackfillDays:  3650,
 	}
 
 	p := poller.New(src, st)
@@ -345,6 +349,239 @@ func TestPoller_ResumesFromHighWaterMark(t *testing.T) {
 	// Newest first — sha3 change comes first.
 	if feed[0].NewValue == nil || *feed[0].NewValue != "1.2.0" {
 		t.Errorf("feed[0].NewValue = %v, want 1.2.0", feed[0].NewValue)
+	}
+	if feed[1].NewValue == nil || *feed[1].NewValue != "1.1.0" {
+		t.Errorf("feed[1].NewValue = %v, want 1.1.0", feed[1].NewValue)
+	}
+}
+
+// buildDatedCommitRepo creates a repo with three commits at known dates:
+// sha1 = 2024-01-01, sha2 = 2024-01-10, sha3 = 2024-01-20.
+func buildDatedCommitRepo(t *testing.T) (repoPath, sha1, sha2, sha3 string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	repo, err := git.PlainInit(dir, false)
+	if err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("worktree: %v", err)
+	}
+
+	chartPath := filepath.Join(dir, "Chart.yaml")
+
+	commit := func(version, msg string, when time.Time) string {
+		if err := os.WriteFile(chartPath, []byte("version: \""+version+"\"\n"), 0o644); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
+		if _, err := wt.Add("Chart.yaml"); err != nil {
+			t.Fatalf("git add: %v", err)
+		}
+		h, err := wt.Commit(msg, &git.CommitOptions{
+			Author: &object.Signature{Name: "dev", Email: "d@x.com", When: when},
+		})
+		if err != nil {
+			t.Fatalf("commit %q: %v", msg, err)
+		}
+		return h.String()
+	}
+
+	sha1 = commit("1.0.0", "init", time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+	sha2 = commit("1.1.0", "bump1", time.Date(2024, 1, 10, 0, 0, 0, 0, time.UTC))
+	sha3 = commit("1.2.0", "bump2", time.Date(2024, 1, 20, 0, 0, 0, 0, time.UTC))
+
+	return dir, sha1, sha2, sha3
+}
+
+// TestPoller_FirstRun_BackfillWindowExcludesOldCommits verifies that on the
+// first run (HWM empty), only commits within BackfillDays of the injected
+// reference time are walked.
+func TestPoller_FirstRun_BackfillWindowExcludesOldCommits(t *testing.T) {
+	t.Parallel()
+
+	// Repo has commits on Jan 1, Jan 10, Jan 20 2024.
+	// Reference "now" = Jan 15 2024. BackfillDays = 7.
+	// notBefore = Jan 8 2024 → sha2 (Jan 10) and sha3 (Jan 20) are in window;
+	// sha1 (Jan 1) is excluded.
+	repoPath, _, _, sha3 := buildDatedCommitRepo(t)
+
+	src, err := gitsource.Open(repoPath)
+	if err != nil {
+		t.Fatalf("gitsource.Open: %v", err)
+	}
+
+	st := newTestStore(t)
+
+	tracker := domain.Tracker{
+		Repo:          repoPath,
+		FileGlob:      "Chart.yaml",
+		Field:         "chart-version",
+		ExtractorExpr: ".version",
+		FacetPattern:  "",
+		BackfillDays:  7,
+	}
+
+	// Inject a fixed "now" so the backfill window is deterministic.
+	refNow := time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC)
+	p := poller.New(src, st).WithNow(func() time.Time { return refNow })
+
+	if err := p.Poll(tracker); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+
+	feed, err := st.QueryFeed(100)
+	if err != nil {
+		t.Fatalf("QueryFeed: %v", err)
+	}
+
+	// sha2 (Jan 10) is the oldest commit within the window; it becomes the
+	// baseline "old" state. sha3 (Jan 20) is diffed against sha2, producing
+	// one modified Change (1.1.0→1.2.0). sha1 (Jan 1) is outside the window
+	// and is not walked at all.
+	if len(feed) != 1 {
+		t.Fatalf("got %d changes, want 1 (sha2 is baseline, sha3 is diff target)", len(feed))
+	}
+
+	c := feed[0]
+	if c.ChangeType != domain.ChangeTypeModified {
+		t.Errorf("ChangeType = %q, want modified", c.ChangeType)
+	}
+	if c.OldValue == nil || *c.OldValue != "1.1.0" {
+		t.Errorf("OldValue = %v, want 1.1.0 (sha2 baseline)", c.OldValue)
+	}
+	if c.NewValue == nil || *c.NewValue != "1.2.0" {
+		t.Errorf("NewValue = %v, want 1.2.0 (sha3)", c.NewValue)
+	}
+
+	// HWM should be sha3 (the last commit walked).
+	hwm, err := st.GetHighWaterMark(repoPath)
+	if err != nil {
+		t.Fatalf("GetHighWaterMark: %v", err)
+	}
+	if hwm != sha3 {
+		t.Errorf("HWM = %q, want sha3=%q", hwm, sha3)
+	}
+}
+
+// TestPoller_IncrementalRun_UnaffectedByBackfillWindow verifies that on an
+// incremental run (HWM set), the backfill window is NOT applied — the HWM
+// already bounds the walk.
+func TestPoller_IncrementalRun_UnaffectedByBackfillWindow(t *testing.T) {
+	t.Parallel()
+
+	// Repo has commits on Jan 1, Jan 10, Jan 20 2024.
+	// Pre-seed HWM at sha1 (Jan 1). BackfillDays = 7, refNow = Jan 15.
+	// On incremental, walks since sha1 → returns sha2 and sha3 regardless of window.
+	repoPath, sha1, _, sha3 := buildDatedCommitRepo(t)
+
+	src, err := gitsource.Open(repoPath)
+	if err != nil {
+		t.Fatalf("gitsource.Open: %v", err)
+	}
+
+	st := newTestStore(t)
+	if err := st.SetHighWaterMark(repoPath, sha1); err != nil {
+		t.Fatalf("SetHighWaterMark: %v", err)
+	}
+
+	tracker := domain.Tracker{
+		Repo:          repoPath,
+		FileGlob:      "Chart.yaml",
+		Field:         "chart-version",
+		ExtractorExpr: ".version",
+		FacetPattern:  "",
+		BackfillDays:  7, // window would exclude sha1, but HWM is already at sha1
+	}
+
+	refNow := time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC)
+	p := poller.New(src, st).WithNow(func() time.Time { return refNow })
+
+	if err := p.Poll(tracker); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+
+	feed, err := st.QueryFeed(100)
+	if err != nil {
+		t.Fatalf("QueryFeed: %v", err)
+	}
+
+	// sha2 and sha3 are both new since sha1: produces 2 changes (1.0.0→1.1.0 and 1.1.0→1.2.0).
+	if len(feed) != 2 {
+		t.Fatalf("got %d changes, want 2 (incremental since sha1)", len(feed))
+	}
+
+	hwm, err := st.GetHighWaterMark(repoPath)
+	if err != nil {
+		t.Fatalf("GetHighWaterMark: %v", err)
+	}
+	if hwm != sha3 {
+		t.Errorf("HWM = %q, want sha3=%q", hwm, sha3)
+	}
+}
+
+// TestPoller_HWMContentLookup_WorksForOutOfWindowHWM verifies that the HWM
+// commit content lookup always uses an unbounded walk, so even if the HWM
+// commit is older than the backfill window, the diff computation is correct.
+func TestPoller_HWMContentLookup_WorksForOutOfWindowHWM(t *testing.T) {
+	t.Parallel()
+
+	// Repo has commits on Jan 1 (sha1), Jan 10 (sha2), Jan 20 (sha3).
+	// HWM = sha1 (Jan 1). BackfillDays = 7, refNow = Jan 15.
+	// sha1 is out of the backfill window. The incremental walk (since sha1)
+	// returns sha2+sha3. The HWM lookup must find sha1's content unboundedly.
+	repoPath, sha1, _, sha3 := buildDatedCommitRepo(t)
+
+	src, err := gitsource.Open(repoPath)
+	if err != nil {
+		t.Fatalf("gitsource.Open: %v", err)
+	}
+
+	st := newTestStore(t)
+	if err := st.SetHighWaterMark(repoPath, sha1); err != nil {
+		t.Fatalf("SetHighWaterMark: %v", err)
+	}
+
+	tracker := domain.Tracker{
+		Repo:          repoPath,
+		FileGlob:      "Chart.yaml",
+		Field:         "chart-version",
+		ExtractorExpr: ".version",
+		FacetPattern:  "",
+		BackfillDays:  7,
+	}
+
+	refNow := time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC)
+	p := poller.New(src, st).WithNow(func() time.Time { return refNow })
+
+	if err := p.Poll(tracker); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+
+	feed, err := st.QueryFeed(100)
+	if err != nil {
+		t.Fatalf("QueryFeed: %v", err)
+	}
+
+	// Must produce 2 changes (sha1→sha2: 1.0.0→1.1.0, sha2→sha3: 1.1.0→1.2.0).
+	if len(feed) != 2 {
+		t.Fatalf("got %d changes, want 2", len(feed))
+	}
+
+	hwm, err := st.GetHighWaterMark(repoPath)
+	if err != nil {
+		t.Fatalf("GetHighWaterMark: %v", err)
+	}
+	if hwm != sha3 {
+		t.Errorf("HWM = %q, want sha3=%q", hwm, sha3)
+	}
+
+	// Oldest change should be 1.0.0→1.1.0 (diff from sha1's content to sha2).
+	// feed is newest-first so feed[1] is the older change.
+	if feed[1].OldValue == nil || *feed[1].OldValue != "1.0.0" {
+		t.Errorf("feed[1].OldValue = %v, want 1.0.0 (from sha1 HWM content)", feed[1].OldValue)
 	}
 	if feed[1].NewValue == nil || *feed[1].NewValue != "1.1.0" {
 		t.Errorf("feed[1].NewValue = %v, want 1.1.0", feed[1].NewValue)
@@ -439,6 +676,7 @@ func TestPoller_KeyedEndToEnd(t *testing.T) {
 		// alias-vs-name keying: prefer alias when present, else name.
 		ExtractorExpr: `.dependencies | map({(if .alias then .alias else .name end): .version}) | add`,
 		FacetPattern:  "",
+		BackfillDays:  3650,
 	}
 
 	p := poller.New(src, st)

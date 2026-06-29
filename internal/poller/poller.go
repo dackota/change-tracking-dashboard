@@ -6,12 +6,14 @@
 // The Poller is a thin coordinator — it delegates all logic to the pure modules
 // (extractor, differ, facet) and the I/O edges (gitsource, store).
 //
-// TODO (backfill-and-poll-config task): add configurable backfill window and
-// poll cadence. Currently each Poll() call processes all commits since HWM.
+// On first run (HWM empty), the walk is bounded to the BackfillDays window
+// configured on the Tracker. An injectable clock (WithNow) enables deterministic
+// testing against fixture repos with fixed commit dates.
 package poller
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/differ"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
@@ -37,17 +39,30 @@ func diffFields(p differ.ScalarParams, old, new domain.TrackedField) []domain.Ch
 type Poller struct {
 	src *gitsource.Source
 	st  *store.Store
+	// now returns the current wall time. Defaults to time.Now; tests may inject
+	// a fixed clock to make the backfill window deterministic.
+	now func() time.Time
 }
 
 // New returns a Poller wired to the given source and store.
 func New(src *gitsource.Source, st *store.Store) *Poller {
-	return &Poller{src: src, st: st}
+	return &Poller{src: src, st: st, now: time.Now}
+}
+
+// WithNow returns a copy of the Poller with a custom clock function. It is
+// intended for tests that need a deterministic reference point for the backfill
+// window calculation.
+func (p *Poller) WithNow(fn func() time.Time) *Poller {
+	return &Poller{src: p.src, st: p.st, now: fn}
 }
 
 // Poll runs one polling cycle for the given Tracker:
 //  1. Read the current high-water-mark SHA for the repo.
 //  2. Walk commits touching Tracker.FileGlob (treated as a literal path in
 //     this skeleton; glob fan-out is the keyed-map-diff task's concern).
+//     On the first run (HWM empty) the walk is bounded by the backfill window
+//     (Tracker.BackfillDays days before now). On incremental runs the HWM
+//     already provides the lower bound and the notBefore is zero (unbounded).
 //  3. For each consecutive pair of snapshots, extract → diff → attach facets.
 //  4. Persist all resulting Changes and update the high-water mark.
 func (p *Poller) Poll(t domain.Tracker) error {
@@ -56,9 +71,16 @@ func (p *Poller) Poll(t domain.Tracker) error {
 		return fmt.Errorf("poller: get HWM for %q: %w", t.Repo, err)
 	}
 
+	// On first run, bound the walk to the configured backfill window.
+	// On incremental runs the HWM already provides the boundary; no time bound.
+	var notBefore time.Time
+	if hwm == "" && t.BackfillDays >= 0 {
+		notBefore = p.now().Add(-time.Duration(t.BackfillDays) * 24 * time.Hour)
+	}
+
 	// FileGlob is used as a literal path in this skeleton.
 	// TODO (glob fan-out): expand the glob across the repo tree.
-	snapshots, err := p.src.WalkCommits(t.FileGlob, hwm)
+	snapshots, err := p.src.WalkCommits(t.FileGlob, hwm, notBefore)
 	if err != nil {
 		return fmt.Errorf("poller: walk commits: %w", err)
 	}
@@ -112,8 +134,9 @@ func (p *Poller) Poll(t domain.Tracker) error {
 	} else if hwm != "" {
 		// There IS a previous snapshot already processed. We need the file
 		// state at the HWM commit to compute the diff for the first new commit.
-		// Fetch the snapshot content at the HWM SHA.
-		hwmSnaps, err := p.src.WalkCommits(t.FileGlob, "")
+		// This lookup MUST be unbounded (zero notBefore) so we can find an HWM
+		// commit that may predate the backfill window.
+		hwmSnaps, err := p.src.WalkCommits(t.FileGlob, "", time.Time{})
 		if err != nil {
 			return fmt.Errorf("poller: reload all commits for HWM lookup: %w", err)
 		}

@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"time"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
 	"github.com/go-git/go-git/v5"
@@ -45,7 +46,10 @@ func Open(path string) (*Source, error) {
 
 // WalkCommits returns all commits that touched filePath, in chronological
 // order (oldest first). If sinceCommitSha is non-empty, only commits strictly
-// after that SHA are returned (used for incremental polling).
+// after that SHA are returned (used for incremental polling). If notBefore is
+// non-zero, commits whose author-time is strictly before notBefore are excluded
+// (used to bound the backfill window on first run). Pass a zero time.Time for
+// notBefore to apply no lower time bound.
 //
 // The returned slice contains one CommitSnapshot per qualifying commit. The
 // Content field holds the raw file bytes at that commit; if the file was
@@ -53,7 +57,7 @@ func Open(path string) (*Source, error) {
 //
 // This skeleton handles a single explicit file path. Glob expansion across many
 // files (fan-out from a Tracker.FileGlob) is a seam left for the poller layer.
-func (s *Source) WalkCommits(filePath, sinceCommitSha string) ([]domain.CommitSnapshot, error) {
+func (s *Source) WalkCommits(filePath, sinceCommitSha string, notBefore time.Time) ([]domain.CommitSnapshot, error) {
 	head, err := s.repo.Head()
 	if err != nil {
 		return nil, fmt.Errorf("gitsource: get HEAD: %w", err)
@@ -85,8 +89,16 @@ func (s *Source) WalkCommits(filePath, sinceCommitSha string) ([]domain.CommitSn
 			return nil, fmt.Errorf("gitsource: iterate commits: %w", err)
 		}
 
-		// Skip commits at-or-before the high-water mark.
+		// Stop at the high-water mark (exclusive — the HWM commit was already
+		// processed in a prior run).
 		if sinceCommitSha != "" && commit.Hash == stopAt {
+			break
+		}
+
+		// Skip (stop walking) once we reach commits older than the backfill
+		// window. The walk is newest-first, so once we cross the boundary all
+		// subsequent commits are also out-of-window.
+		if !notBefore.IsZero() && commit.Author.When.Before(notBefore) {
 			break
 		}
 
@@ -104,7 +116,7 @@ func (s *Source) WalkCommits(filePath, sinceCommitSha string) ([]domain.CommitSn
 		})
 
 		if len(raw) >= maxCommitsPerWalk {
-			log.Printf("gitsource: walk for %q hit the %d-commit cap; older history truncated (see backfill-and-poll-config task)", filePath, maxCommitsPerWalk)
+			log.Printf("gitsource: walk for %q hit the %d-commit cap; older history truncated", filePath, maxCommitsPerWalk)
 			break
 		}
 	}

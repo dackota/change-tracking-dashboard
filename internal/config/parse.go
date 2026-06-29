@@ -150,8 +150,9 @@ func resolveTracker(idx int, tr TrackerRaw, defaults Defaults) (ResolvedTracker,
 }
 
 // flattenTracker produces one domain.Tracker per (file-glob × field) entry,
-// validating jq expressions along the way.
-func flattenTracker(trackerIdx int, tr TrackerRaw, _ ResolvedTracker) ([]domainTracker, error) {
+// validating jq expressions along the way. The resolved per-tracker cadence
+// and backfill window are carried onto every flattened tracker.
+func flattenTracker(trackerIdx int, tr TrackerRaw, rt ResolvedTracker) ([]domainTracker, error) {
 	var out []domainTracker
 
 	for fileIdx, f := range tr.Files {
@@ -174,11 +175,13 @@ func flattenTracker(trackerIdx int, tr TrackerRaw, _ ResolvedTracker) ([]domainT
 			}
 
 			out = append(out, domainTrackerType{
-				Repo:          tr.Repo,
-				FileGlob:      f.Glob,
-				Field:         field.Name,
-				ExtractorExpr: field.Expr,
-				FacetPattern:  tr.FacetRegex,
+				Repo:                tr.Repo,
+				FileGlob:            f.Glob,
+				Field:               field.Name,
+				ExtractorExpr:       field.Expr,
+				FacetPattern:        tr.FacetRegex,
+				PollIntervalSeconds: rt.PollIntervalSeconds,
+				BackfillDays:        rt.BackfillDays,
 			})
 		}
 	}

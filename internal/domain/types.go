@@ -59,6 +59,13 @@ type Tracker struct {
 	Field            string // human-readable field name stored on Change
 	ExtractorExpr    string // gojq expression
 	FacetPattern     string // regex with named capture groups for facet extraction
+
+	// PollIntervalSeconds is how often this tracker is polled. Zero is not
+	// valid in production but is accepted for testing/scheduling-logic purposes.
+	PollIntervalSeconds int
+	// BackfillDays is the number of days of git history to walk on the first
+	// run (HWM empty). Zero means no history (only commits from now onward).
+	BackfillDays int
 }
 
 // CommitSnapshot is the state of a single file at a particular commit.
