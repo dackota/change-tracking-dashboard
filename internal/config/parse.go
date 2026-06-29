@@ -1,6 +1,6 @@
-// parse.go handles YAML unmarshalling + validation + flattening.
-// All of these are pure functions (no I/O except the initial os.ReadFile
-// call in Load).
+// parse.go handles YAML unmarshalling + validation + flattening. These are pure
+// functions except readConfigFile (called from parseFile), which reads the
+// size-capped config file from disk.
 package config
 
 import (
