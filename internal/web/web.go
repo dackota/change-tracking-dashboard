@@ -1,13 +1,14 @@
 // Package web implements the HTTP feed handler: it queries the store for the
 // reverse-chronological Change feed and renders it as HTML using html/template.
-// HTMX is loaded via CDN for future progressive-enhancement needs.
+// The feed is server-rendered HTML with no third-party scripts; interactive
+// HTMX-driven filtering arrives with the facets-and-filtering task.
 //
 // TODO (facets-and-filtering task): add dynamic facet filter controls to the feed UI.
 package web
 
 import (
-	"fmt"
 	"html/template"
+	"log"
 	"net/http"
 	"time"
 
@@ -16,6 +17,10 @@ import (
 )
 
 const maxFeedItems = 200
+
+// contentSecurityPolicy is strict: the feed serves first-party HTML with inline
+// CSS only and no scripts, so nothing third-party needs to be allowed.
+const contentSecurityPolicy = "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
 
 // Handler serves the Change feed as an HTML page.
 type Handler struct {
@@ -32,18 +37,34 @@ func NewHandler(st *store.Store) *Handler {
 
 // ServeHTTP satisfies http.Handler. It queries the feed and renders it.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	setSecurityHeaders(w.Header())
+
 	changes, err := h.st.QueryFeed(maxFeedItems)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("query feed: %v", err), http.StatusInternalServerError)
+		// Log the detail server-side; return a generic message so internal
+		// details (e.g. SQLite filesystem paths in the error) don't leak to
+		// the client.
+		log.Printf("web: query feed: %v", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	if err := h.tmpl.Execute(w, feedData{Changes: changes}); err != nil {
-		// Header already written — log and bail.
-		_ = fmt.Errorf("web: render template: %w", err)
+		// The response may already be partly written, so we can't change the
+		// status code here — just record the failure so it's observable.
+		log.Printf("web: render template: %v", err)
 	}
+}
+
+// setSecurityHeaders applies a conservative set of response security headers to
+// every response (including error responses).
+func setSecurityHeaders(h http.Header) {
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("X-Frame-Options", "DENY")
+	h.Set("Referrer-Policy", "no-referrer")
+	h.Set("Content-Security-Policy", contentSecurityPolicy)
 }
 
 type feedData struct {
@@ -70,7 +91,9 @@ const feedTemplate = `<!DOCTYPE html>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Change Tracking Dashboard</title>
-  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+  <!-- TODO (facets-and-filtering task): when the feed gains interactive facet
+       filtering, add HTMX vendored locally (served under script-src 'self') or
+       via a Subresource-Integrity-pinned CDN tag — never an unpinned CDN. -->
   <style>
     body { font-family: system-ui, sans-serif; margin: 0; padding: 1rem 2rem; background: #f8f9fa; color: #212529; }
     h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }

@@ -138,3 +138,54 @@ func TestFeedHandler_ContentType(t *testing.T) {
 		t.Errorf("Content-Type = %q, want text/html", ct)
 	}
 }
+
+func TestFeedHandler_SecurityHeaders(t *testing.T) {
+	t.Parallel()
+
+	st := newTestStore(t)
+	h := web.NewHandler(st)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	want := map[string]string{
+		"X-Content-Type-Options": "nosniff",
+		"X-Frame-Options":        "DENY",
+	}
+	for k, v := range want {
+		if got := rr.Header().Get(k); got != v {
+			t.Errorf("header %s = %q, want %q", k, got, v)
+		}
+	}
+	if csp := rr.Header().Get("Content-Security-Policy"); csp == "" {
+		t.Error("missing Content-Security-Policy header")
+	}
+}
+
+func TestFeedHandler_QueryErrorIsGeneric(t *testing.T) {
+	t.Parallel()
+
+	st := newTestStore(t)
+	// Close the store so QueryFeed fails, exercising the error path.
+	if err := st.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	h := web.NewHandler(st)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "internal server error") {
+		t.Errorf("body = %q, want generic 'internal server error'", body)
+	}
+	// The generic message must not leak internal detail (DB file path, SQL text).
+	if strings.Contains(body, ".db") || strings.Contains(strings.ToLower(body), "sql") {
+		t.Errorf("error body leaks internal detail: %q", body)
+	}
+}

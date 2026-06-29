@@ -13,12 +13,21 @@ package gitsource
 import (
 	"fmt"
 	"io"
+	"log"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
+
+// maxCommitsPerWalk bounds how many commits a single walk loads into memory,
+// guarding against unbounded memory use on a first-run backfill of a repo with
+// long history. Commits are walked newest-first, so the most recent ones are
+// kept. Hitting the cap is logged, never silent.
+// TODO (backfill-and-poll-config task): replace this fixed cap with a
+// per-tracker, config-driven backfill window.
+const maxCommitsPerWalk = 5000
 
 // Source wraps a local git repository for commit walking.
 type Source struct {
@@ -93,6 +102,11 @@ func (s *Source) WalkCommits(filePath, sinceCommitSha string) ([]domain.CommitSn
 			FilePath:    filePath,
 			Content:     content,
 		})
+
+		if len(raw) >= maxCommitsPerWalk {
+			log.Printf("gitsource: walk for %q hit the %d-commit cap; older history truncated (see backfill-and-poll-config task)", filePath, maxCommitsPerWalk)
+			break
+		}
 	}
 
 	// Reverse to chronological order (oldest first).

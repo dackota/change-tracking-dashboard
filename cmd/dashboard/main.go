@@ -24,6 +24,14 @@ import (
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/web"
 )
 
+// HTTP server timeouts guard against slow-client (slow-loris) attacks and
+// connections held open indefinitely.
+const (
+	serverReadTimeout  = 10 * time.Second
+	serverWriteTimeout = 30 * time.Second
+	serverIdleTimeout  = 120 * time.Second
+)
+
 // skeletonConfig is the hardcoded skeleton configuration.
 // Replace with full config loading in the hot-reload-config-validation task.
 type skeletonConfig struct {
@@ -105,8 +113,16 @@ func run(cfg skeletonConfig) error {
 	mux := http.NewServeMux()
 	mux.Handle("/", handler)
 
+	srv := &http.Server{
+		Addr:         cfg.ListenAddr,
+		Handler:      mux,
+		ReadTimeout:  serverReadTimeout,
+		WriteTimeout: serverWriteTimeout,
+		IdleTimeout:  serverIdleTimeout,
+	}
+
 	log.Printf("dashboard: listening on %s", cfg.ListenAddr)
-	return http.ListenAndServe(cfg.ListenAddr, mux)
+	return srv.ListenAndServe()
 }
 
 func envOrDefault(key, defaultVal string) string {
