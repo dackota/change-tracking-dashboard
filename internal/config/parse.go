@@ -98,13 +98,23 @@ func parseBytes(data []byte) (*Config, error) {
 // the domain package (it is imported via validate.go's domainTrackerType).
 type domainTracker = domainTrackerType
 
+// Upper bounds on the time-valued config fields. They keep the downstream
+// time.Duration arithmetic well within int64 — e.g. days*24h overflows ~292
+// years out, after which a negative duration would silently skip the backfill
+// (notBefore in the future). The caps are far above any realistic setting, so
+// they only reject absurd or typo'd values, failing fast with a clear error.
+const (
+	maxBackfillDays        = 36500    // 100 years
+	maxPollIntervalSeconds = 31622400 // ~366 days
+)
+
 // validateDefaults checks that the global defaults are sensible.
 func validateDefaults(d Defaults) error {
-	if d.PollIntervalSeconds <= 0 {
-		return fmt.Errorf("config: defaults.pollIntervalSeconds must be > 0, got %d", d.PollIntervalSeconds)
+	if d.PollIntervalSeconds <= 0 || d.PollIntervalSeconds > maxPollIntervalSeconds {
+		return fmt.Errorf("config: defaults.pollIntervalSeconds must be between 1 and %d, got %d", maxPollIntervalSeconds, d.PollIntervalSeconds)
 	}
-	if d.BackfillDays < 0 {
-		return fmt.Errorf("config: defaults.backfillDays must be >= 0, got %d", d.BackfillDays)
+	if d.BackfillDays < 0 || d.BackfillDays > maxBackfillDays {
+		return fmt.Errorf("config: defaults.backfillDays must be between 0 and %d, got %d", maxBackfillDays, d.BackfillDays)
 	}
 	return nil
 }
@@ -123,16 +133,16 @@ func resolveTracker(idx int, tr TrackerRaw, defaults Defaults) (ResolvedTracker,
 	if poll == 0 {
 		poll = defaults.PollIntervalSeconds
 	}
-	if poll <= 0 {
-		return ResolvedTracker{}, fmt.Errorf("config: tracker[%d] (repo=%q): resolved pollIntervalSeconds must be > 0, got %d", idx, tr.Repo, poll)
+	if poll <= 0 || poll > maxPollIntervalSeconds {
+		return ResolvedTracker{}, fmt.Errorf("config: tracker[%d] (repo=%q): resolved pollIntervalSeconds must be between 1 and %d, got %d", idx, tr.Repo, maxPollIntervalSeconds, poll)
 	}
 
 	backfill := defaults.BackfillDays
 	if tr.BackfillDaysOverride != nil {
 		backfill = *tr.BackfillDaysOverride
 	}
-	if backfill < 0 {
-		return ResolvedTracker{}, fmt.Errorf("config: tracker[%d] (repo=%q): resolved backfillDays must be >= 0, got %d", idx, tr.Repo, backfill)
+	if backfill < 0 || backfill > maxBackfillDays {
+		return ResolvedTracker{}, fmt.Errorf("config: tracker[%d] (repo=%q): resolved backfillDays must be between 0 and %d, got %d", idx, tr.Repo, maxBackfillDays, backfill)
 	}
 
 	// Validate facetRegex by compiling it (using facet package's compile logic).

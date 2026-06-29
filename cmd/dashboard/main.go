@@ -92,7 +92,9 @@ func run(configPath, dbPath, listenAddr string) error {
 	sched := scheduler.New(time.Now, scheduler.PollFunc(pollFn))
 
 	go func() {
-		for range time.Tick(scheduler.BaseTickInterval) {
+		ticker := time.NewTicker(scheduler.BaseTickInterval)
+		defer ticker.Stop()
+		for range ticker.C {
 			current := cfgWatcher.Current()
 			sched.Tick(current.Trackers)
 		}

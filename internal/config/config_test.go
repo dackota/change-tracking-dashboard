@@ -704,3 +704,86 @@ func containsStr(s, substr string) bool {
 	}
 	return false
 }
+
+// TestLoad_BackfillDaysTooLarge_Rejected verifies the upper bound on the global
+// backfillDays default. Without it, days*24h overflows int64 downstream and the
+// backfill window silently lands in the future.
+func TestLoad_BackfillDaysTooLarge_Rejected(t *testing.T) {
+	const yaml = `
+defaults:
+  pollIntervalSeconds: 60
+  backfillDays: 999999
+trackers:
+  - repo: /some/repo
+    facetRegex: ''
+    files:
+      - glob: 'Chart.yaml'
+        fields:
+          - name: version
+            expr: '.version'
+`
+	path := writeTemp(t, yaml)
+
+	_, err := config.Load(path)
+	if err == nil {
+		t.Fatal("Load should reject an oversized defaults.backfillDays, got nil")
+	}
+	if !contains(err.Error(), "backfillDays") {
+		t.Errorf("error %q does not mention 'backfillDays'", err.Error())
+	}
+}
+
+// TestLoad_BackfillDaysOverrideTooLarge_Rejected verifies the upper bound is
+// also enforced on a per-tracker override (a valid default doesn't excuse it).
+func TestLoad_BackfillDaysOverrideTooLarge_Rejected(t *testing.T) {
+	const yaml = `
+defaults:
+  pollIntervalSeconds: 60
+  backfillDays: 90
+trackers:
+  - repo: /some/repo
+    backfillDays: 999999
+    facetRegex: ''
+    files:
+      - glob: 'Chart.yaml'
+        fields:
+          - name: version
+            expr: '.version'
+`
+	path := writeTemp(t, yaml)
+
+	_, err := config.Load(path)
+	if err == nil {
+		t.Fatal("Load should reject an oversized per-tracker backfillDays override, got nil")
+	}
+	if !contains(err.Error(), "backfillDays") {
+		t.Errorf("error %q does not mention 'backfillDays'", err.Error())
+	}
+}
+
+// TestLoad_PollIntervalTooLarge_Rejected verifies the same overflow class is
+// guarded for pollIntervalSeconds (seconds*time.Second overflows int64 too).
+func TestLoad_PollIntervalTooLarge_Rejected(t *testing.T) {
+	const yaml = `
+defaults:
+  pollIntervalSeconds: 99999999
+  backfillDays: 90
+trackers:
+  - repo: /some/repo
+    facetRegex: ''
+    files:
+      - glob: 'Chart.yaml'
+        fields:
+          - name: version
+            expr: '.version'
+`
+	path := writeTemp(t, yaml)
+
+	_, err := config.Load(path)
+	if err == nil {
+		t.Fatal("Load should reject an oversized pollIntervalSeconds, got nil")
+	}
+	if !contains(err.Error(), "pollIntervalSeconds") {
+		t.Errorf("error %q does not mention 'pollIntervalSeconds'", err.Error())
+	}
+}
