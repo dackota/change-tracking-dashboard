@@ -11,9 +11,8 @@
 // are operational config, not tracker config.
 //
 // GitHub App token auth for remote repos is out of scope here (github-app-auth).
-// Per-tracker poll cadence and git-history backfill window are parsed + resolved
-// from the config but NOT yet wired into the poller runtime — see the
-// TODO (backfill-and-poll-config task) below.
+// Per-tracker poll cadence and backfill window are read from the config and
+// honored by the scheduler, which calls Tick on a 1s base interval.
 package main
 
 import (
@@ -26,8 +25,10 @@ import (
 	"time"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/config"
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/gitsource"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/poller"
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/scheduler"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/store"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/web"
 )
@@ -74,39 +75,28 @@ func run(configPath, dbPath, listenAddr string) error {
 	// --- Per-repo gitsource cache ---
 	sources := newSourceCache()
 
-	// --- Initial poll ---
-	initialTrackers := cfgWatcher.Current().Trackers
-	for _, t := range initialTrackers {
+	// --- Per-tracker scheduler ---
+	// The scheduler calls Tick on a 1s base interval, passing the latest
+	// tracker list from the config watcher each time. Trackers added or removed
+	// by a config reload take effect on the next Tick automatically.
+	// Each tracker fires on its own PollIntervalSeconds cadence.
+	pollFn := func(t domain.Tracker) error {
 		src, err := sources.get(t.Repo)
 		if err != nil {
-			log.Printf("dashboard: open git source for %q: %v", t.Repo, err)
-			continue
+			return fmt.Errorf("open git source for %q: %w", t.Repo, err)
 		}
 		p := poller.New(src, st)
-		if err := p.Poll(t); err != nil {
-			log.Printf("poll (initial, tracker %q): %v", t.Field, err)
-		}
+		return p.Poll(t)
 	}
 
-	// --- Background poll loop ---
-	// TODO (backfill-and-poll-config task): read per-tracker pollIntervalSeconds
-	// from cfgWatcher.Current().TrackerConfigs and drive each tracker at its own
-	// cadence. Currently all trackers share the single constant interval below.
-	const pollInterval = 30 * time.Second
+	sched := scheduler.New(time.Now, scheduler.PollFunc(pollFn))
+
 	go func() {
-		for range time.Tick(pollInterval) {
+		ticker := time.NewTicker(scheduler.BaseTickInterval)
+		defer ticker.Stop()
+		for range ticker.C {
 			current := cfgWatcher.Current()
-			for _, t := range current.Trackers {
-				src, err := sources.get(t.Repo)
-				if err != nil {
-					log.Printf("dashboard: open git source for %q: %v", t.Repo, err)
-					continue
-				}
-				p := poller.New(src, st)
-				if err := p.Poll(t); err != nil {
-					log.Printf("poll (background, tracker %q): %v", t.Field, err)
-				}
-			}
+			sched.Tick(current.Trackers)
 		}
 	}()
 

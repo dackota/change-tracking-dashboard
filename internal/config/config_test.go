@@ -178,17 +178,73 @@ func TestLoad_FullConfig_TrackerDomainShape(t *testing.T) {
 		t.Fatalf("Load returned unexpected error: %v", err)
 	}
 
-	// First tracker: repo/a, Chart.yaml glob
+	// First tracker: repo/a, Chart.yaml glob (with its per-tracker overrides applied).
 	tr := w.Current().Trackers[0]
 	wantTracker := domain.Tracker{
-		Repo:          "/repo/a",
-		FileGlob:      "apps/*/*/*/Chart.yaml",
-		Field:         "aidp-version",
-		ExtractorExpr: `.dependencies[] | select(.name=="aidp") | .version`,
-		FacetPattern:  `^apps/(?P<tenant>[^/]+)/(?P<env>[^/]+)/(?P<region>[^/]+)/`,
+		Repo:                "/repo/a",
+		FileGlob:            "apps/*/*/*/Chart.yaml",
+		Field:               "aidp-version",
+		ExtractorExpr:       `.dependencies[] | select(.name=="aidp") | .version`,
+		FacetPattern:        `^apps/(?P<tenant>[^/]+)/(?P<env>[^/]+)/(?P<region>[^/]+)/`,
+		PollIntervalSeconds: 30,
+		BackfillDays:        14,
 	}
 	if tr != wantTracker {
 		t.Errorf("Trackers[0] =\n  %+v\nwant\n  %+v", tr, wantTracker)
+	}
+}
+
+// --- Behavior 1b: flattened domain.Trackers carry resolved poll/backfill values ---
+
+func TestLoad_FlattenedTrackers_CarryResolvedPollAndBackfill_Defaults(t *testing.T) {
+	// The minimal config uses no per-tracker overrides; resolved values come from defaults.
+	path := writeTemp(t, minimalValidYAML)
+
+	w, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	trackers := w.Current().Trackers
+	if len(trackers) != 1 {
+		t.Fatalf("expected 1 flattened tracker, got %d", len(trackers))
+	}
+
+	tr := trackers[0]
+	if tr.PollIntervalSeconds != 60 {
+		t.Errorf("PollIntervalSeconds = %d, want 60 (from defaults)", tr.PollIntervalSeconds)
+	}
+	if tr.BackfillDays != 90 {
+		t.Errorf("BackfillDays = %d, want 90 (from defaults)", tr.BackfillDays)
+	}
+}
+
+func TestLoad_FlattenedTrackers_CarryResolvedPollAndBackfill_PerTrackerOverride(t *testing.T) {
+	// fullYAML: /repo/a overrides both fields; all three flattened trackers from
+	// /repo/a must reflect those overrides.
+	path := writeTemp(t, fullYAML)
+
+	w, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	trackers := w.Current().Trackers
+	// /repo/a produces 2 flattened trackers (two file×field combos).
+	for i := 0; i < 2; i++ {
+		if trackers[i].PollIntervalSeconds != 30 {
+			t.Errorf("Trackers[%d].PollIntervalSeconds = %d, want 30 (per-tracker override)", i, trackers[i].PollIntervalSeconds)
+		}
+		if trackers[i].BackfillDays != 14 {
+			t.Errorf("Trackers[%d].BackfillDays = %d, want 14 (per-tracker override)", i, trackers[i].BackfillDays)
+		}
+	}
+	// /repo/b inherits defaults.
+	if trackers[2].PollIntervalSeconds != 60 {
+		t.Errorf("Trackers[2].PollIntervalSeconds = %d, want 60 (inherited default)", trackers[2].PollIntervalSeconds)
+	}
+	if trackers[2].BackfillDays != 90 {
+		t.Errorf("Trackers[2].BackfillDays = %d, want 90 (inherited default)", trackers[2].BackfillDays)
 	}
 }
 
@@ -647,4 +703,87 @@ func containsStr(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// TestLoad_BackfillDaysTooLarge_Rejected verifies the upper bound on the global
+// backfillDays default. Without it, days*24h overflows int64 downstream and the
+// backfill window silently lands in the future.
+func TestLoad_BackfillDaysTooLarge_Rejected(t *testing.T) {
+	const yaml = `
+defaults:
+  pollIntervalSeconds: 60
+  backfillDays: 999999
+trackers:
+  - repo: /some/repo
+    facetRegex: ''
+    files:
+      - glob: 'Chart.yaml'
+        fields:
+          - name: version
+            expr: '.version'
+`
+	path := writeTemp(t, yaml)
+
+	_, err := config.Load(path)
+	if err == nil {
+		t.Fatal("Load should reject an oversized defaults.backfillDays, got nil")
+	}
+	if !contains(err.Error(), "backfillDays") {
+		t.Errorf("error %q does not mention 'backfillDays'", err.Error())
+	}
+}
+
+// TestLoad_BackfillDaysOverrideTooLarge_Rejected verifies the upper bound is
+// also enforced on a per-tracker override (a valid default doesn't excuse it).
+func TestLoad_BackfillDaysOverrideTooLarge_Rejected(t *testing.T) {
+	const yaml = `
+defaults:
+  pollIntervalSeconds: 60
+  backfillDays: 90
+trackers:
+  - repo: /some/repo
+    backfillDays: 999999
+    facetRegex: ''
+    files:
+      - glob: 'Chart.yaml'
+        fields:
+          - name: version
+            expr: '.version'
+`
+	path := writeTemp(t, yaml)
+
+	_, err := config.Load(path)
+	if err == nil {
+		t.Fatal("Load should reject an oversized per-tracker backfillDays override, got nil")
+	}
+	if !contains(err.Error(), "backfillDays") {
+		t.Errorf("error %q does not mention 'backfillDays'", err.Error())
+	}
+}
+
+// TestLoad_PollIntervalTooLarge_Rejected verifies the same overflow class is
+// guarded for pollIntervalSeconds (seconds*time.Second overflows int64 too).
+func TestLoad_PollIntervalTooLarge_Rejected(t *testing.T) {
+	const yaml = `
+defaults:
+  pollIntervalSeconds: 99999999
+  backfillDays: 90
+trackers:
+  - repo: /some/repo
+    facetRegex: ''
+    files:
+      - glob: 'Chart.yaml'
+        fields:
+          - name: version
+            expr: '.version'
+`
+	path := writeTemp(t, yaml)
+
+	_, err := config.Load(path)
+	if err == nil {
+		t.Fatal("Load should reject an oversized pollIntervalSeconds, got nil")
+	}
+	if !contains(err.Error(), "pollIntervalSeconds") {
+		t.Errorf("error %q does not mention 'pollIntervalSeconds'", err.Error())
+	}
 }

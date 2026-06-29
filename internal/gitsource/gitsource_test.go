@@ -71,6 +71,106 @@ func buildFixtureRepo(t *testing.T) (repoPath, sha1, sha2 string) {
 	return dir, sha1, sha2
 }
 
+// buildThreeCommitRepo creates a fixture repo with three commits at known dates.
+// commit 1 = Jan 1 2024, commit 2 = Jan 10 2024, commit 3 = Jan 20 2024.
+func buildThreeCommitRepo(t *testing.T) (repoPath, sha1, sha2, sha3 string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	repo, err := git.PlainInit(dir, false)
+	if err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("worktree: %v", err)
+	}
+
+	chartPath := filepath.Join(dir, "Chart.yaml")
+
+	commit := func(version, msg string, when time.Time) string {
+		if err := os.WriteFile(chartPath, []byte("version: \""+version+"\"\n"), 0o644); err != nil {
+			t.Fatalf("write chart: %v", err)
+		}
+		if _, err := wt.Add("Chart.yaml"); err != nil {
+			t.Fatalf("git add: %v", err)
+		}
+		h, err := wt.Commit(msg, &git.CommitOptions{
+			Author: &object.Signature{Name: "dev", Email: "d@x.com", When: when},
+		})
+		if err != nil {
+			t.Fatalf("commit %q: %v", msg, err)
+		}
+		return h.String()
+	}
+
+	sha1 = commit("1.0.0", "init", time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+	sha2 = commit("1.1.0", "bump1", time.Date(2024, 1, 10, 0, 0, 0, 0, time.UTC))
+	sha3 = commit("1.2.0", "bump2", time.Date(2024, 1, 20, 0, 0, 0, 0, time.UTC))
+
+	return dir, sha1, sha2, sha3
+}
+
+// TestWalkCommits_NotBefore_ExcludesOldCommits verifies that commits whose
+// author-time is strictly before notBefore are excluded from the walk.
+func TestWalkCommits_NotBefore_ExcludesOldCommits(t *testing.T) {
+	t.Parallel()
+
+	repoPath, _, sha2, sha3 := buildThreeCommitRepo(t)
+
+	src, err := gitsource.Open(repoPath)
+	if err != nil {
+		t.Fatalf("gitsource.Open: %v", err)
+	}
+
+	// notBefore = Jan 5 2024 — should include sha2 (Jan 10) and sha3 (Jan 20),
+	// but exclude sha1 (Jan 1).
+	notBefore := time.Date(2024, 1, 5, 0, 0, 0, 0, time.UTC)
+	snapshots, err := src.WalkCommits("Chart.yaml", "", notBefore)
+	if err != nil {
+		t.Fatalf("WalkCommits: %v", err)
+	}
+
+	if len(snapshots) != 2 {
+		t.Fatalf("WalkCommits returned %d snapshots, want 2 (sha2 and sha3)", len(snapshots))
+	}
+	if snapshots[0].CommitSha != sha2 {
+		t.Errorf("snapshots[0].CommitSha = %q, want sha2=%q", snapshots[0].CommitSha, sha2)
+	}
+	if snapshots[1].CommitSha != sha3 {
+		t.Errorf("snapshots[1].CommitSha = %q, want sha3=%q", snapshots[1].CommitSha, sha3)
+	}
+}
+
+// TestWalkCommits_NotBefore_ZeroMeansUnbounded verifies that the zero time.Time
+// (notBefore.IsZero() == true) returns all commits, preserving the prior behavior.
+func TestWalkCommits_NotBefore_ZeroMeansUnbounded(t *testing.T) {
+	t.Parallel()
+
+	repoPath, sha1, sha2, sha3 := buildThreeCommitRepo(t)
+
+	src, err := gitsource.Open(repoPath)
+	if err != nil {
+		t.Fatalf("gitsource.Open: %v", err)
+	}
+
+	snapshots, err := src.WalkCommits("Chart.yaml", "", time.Time{})
+	if err != nil {
+		t.Fatalf("WalkCommits: %v", err)
+	}
+
+	if len(snapshots) != 3 {
+		t.Fatalf("WalkCommits (zero bound) returned %d snapshots, want 3", len(snapshots))
+	}
+	shas := []string{sha1, sha2, sha3}
+	for i, snap := range snapshots {
+		if snap.CommitSha != shas[i] {
+			t.Errorf("snapshots[%d].CommitSha = %q, want %q", i, snap.CommitSha, shas[i])
+		}
+	}
+}
+
 func TestWalkCommits_AllCommits(t *testing.T) {
 	t.Parallel()
 
@@ -81,7 +181,7 @@ func TestWalkCommits_AllCommits(t *testing.T) {
 		t.Fatalf("gitsource.Open: %v", err)
 	}
 
-	snapshots, err := src.WalkCommits("Chart.yaml", "")
+	snapshots, err := src.WalkCommits("Chart.yaml", "", time.Time{})
 	if err != nil {
 		t.Fatalf("WalkCommits: %v", err)
 	}
@@ -126,7 +226,7 @@ func TestWalkCommits_SinceHighWaterMark(t *testing.T) {
 	}
 
 	// Walk since sha1 — should only return sha2.
-	snapshots, err := src.WalkCommits("Chart.yaml", sha1)
+	snapshots, err := src.WalkCommits("Chart.yaml", sha1, time.Time{})
 	if err != nil {
 		t.Fatalf("WalkCommits (since sha1): %v", err)
 	}
@@ -149,7 +249,7 @@ func TestWalkCommits_FilePath(t *testing.T) {
 		t.Fatalf("gitsource.Open: %v", err)
 	}
 
-	snapshots, err := src.WalkCommits("Chart.yaml", "")
+	snapshots, err := src.WalkCommits("Chart.yaml", "", time.Time{})
 	if err != nil {
 		t.Fatalf("WalkCommits: %v", err)
 	}
