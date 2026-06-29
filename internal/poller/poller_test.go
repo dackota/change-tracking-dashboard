@@ -467,14 +467,19 @@ func TestPoller_FirstRun_BackfillWindowExcludesOldCommits(t *testing.T) {
 }
 
 // TestPoller_IncrementalRun_UnaffectedByBackfillWindow verifies that on an
-// incremental run (HWM set), the backfill window is NOT applied — the HWM
-// already bounds the walk.
+// incremental run (HWM set), the backfill window is NOT applied — the HWM alone
+// bounds the walk.
+//
+// This fixture is deliberately *discriminating*: the backfill cutoff is placed
+// BETWEEN the two new commits. With refNow = Jan 25 and BackfillDays = 10,
+// notBefore = Jan 15 — which sits between sha2 (Jan 10) and sha3 (Jan 20).
+// Correct behavior ignores the window on incremental runs, so BOTH sha2 and sha3
+// are processed → two changes (including sha2's 1.0.0→1.1.0). If the window were
+// wrongly applied here, sha2 (before the cutoff) would be filtered out and only a
+// single sha1→sha3 change would appear — so this test FAILS if that bug regresses.
 func TestPoller_IncrementalRun_UnaffectedByBackfillWindow(t *testing.T) {
 	t.Parallel()
 
-	// Repo has commits on Jan 1, Jan 10, Jan 20 2024.
-	// Pre-seed HWM at sha1 (Jan 1). BackfillDays = 7, refNow = Jan 15.
-	// On incremental, walks since sha1 → returns sha2 and sha3 regardless of window.
 	repoPath, sha1, _, sha3 := buildDatedCommitRepo(t)
 
 	src, err := gitsource.Open(repoPath)
@@ -493,10 +498,10 @@ func TestPoller_IncrementalRun_UnaffectedByBackfillWindow(t *testing.T) {
 		Field:         "chart-version",
 		ExtractorExpr: ".version",
 		FacetPattern:  "",
-		BackfillDays:  7, // window would exclude sha1, but HWM is already at sha1
+		BackfillDays:  10, // cutoff (Jan 15) lands BETWEEN sha2 (Jan 10) and sha3 (Jan 20)
 	}
 
-	refNow := time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC)
+	refNow := time.Date(2024, 1, 25, 0, 0, 0, 0, time.UTC)
 	p := poller.New(src, st).WithNow(func() time.Time { return refNow })
 
 	if err := p.Poll(tracker); err != nil {
@@ -508,9 +513,17 @@ func TestPoller_IncrementalRun_UnaffectedByBackfillWindow(t *testing.T) {
 		t.Fatalf("QueryFeed: %v", err)
 	}
 
-	// sha2 and sha3 are both new since sha1: produces 2 changes (1.0.0→1.1.0 and 1.1.0→1.2.0).
+	// Correct: 2 changes. A wrongly-applied window would drop sha2 → 1 change.
 	if len(feed) != 2 {
-		t.Fatalf("got %d changes, want 2 (incremental since sha1)", len(feed))
+		t.Fatalf("got %d changes, want 2 — sha2 (before the backfill cutoff) must still be processed on an incremental run", len(feed))
+	}
+
+	// The pre-cutoff commit's change must be present. Feed is newest-first, so
+	// feed[1] is sha2 (1.0.0→1.1.0); this is exactly what disappears if the
+	// backfill window leaks into the incremental walk.
+	got := feed[1]
+	if got.OldValue == nil || *got.OldValue != "1.0.0" || got.NewValue == nil || *got.NewValue != "1.1.0" {
+		t.Errorf("feed[1] = %v→%v, want 1.0.0→1.1.0 (sha2, dated before the cutoff)", got.OldValue, got.NewValue)
 	}
 
 	hwm, err := st.GetHighWaterMark(repoPath)
