@@ -3,11 +3,20 @@ package store
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
 )
+
+// facetKeyPattern constrains facet key names to a safe identifier charset.
+// A facet key is concatenated into the json_extract path expression (a column
+// path cannot be bound as a ? parameter), so this guards the store boundary
+// against any caller passing an unsafe key — independent of, and in addition to,
+// the web layer's whitelist. Legitimate facet keys originate from regex
+// named-capture groups, which already satisfy this pattern.
+var facetKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 
 // QueryFilteredFeed returns up to limit Changes, filtered by the given facet
 // constraints (AND semantics — all constraints must match), ordered newest-first.
@@ -43,12 +52,17 @@ FROM changes`
 
 		sb.WriteString("\nWHERE ")
 		for i, k := range keys {
+			// The key is concatenated into the SQL path (not bindable), so it
+			// must be a safe identifier. Reject anything else at the boundary.
+			if !facetKeyPattern.MatchString(k) {
+				return nil, fmt.Errorf("store: invalid facet key %q: must match %s", k, facetKeyPattern)
+			}
 			if i > 0 {
 				sb.WriteString("\n  AND ")
 			}
-			// json_extract(facets_json, '$.key') = ?
+			// json_extract(facets_json, '$.key') = ?  (value bound as a parameter)
 			sb.WriteString("json_extract(facets_json, '$.")
-			sb.WriteString(k) // facet key names come from validated Tracker config, not user input
+			sb.WriteString(k)
 			sb.WriteString("') = ?")
 			params = append(params, filters[k])
 		}

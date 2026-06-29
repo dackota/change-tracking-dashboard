@@ -83,6 +83,24 @@ func TestQueryFilteredFeed_SingleFilter(t *testing.T) {
 	}
 }
 
+// TestQueryFilteredFeed_RejectsUnsafeKey verifies the store boundary guard: a
+// facet key that is not a safe identifier (e.g. a SQL-injection attempt) is
+// rejected with an error rather than concatenated into the json_extract path.
+func TestQueryFilteredFeed_RejectsUnsafeKey(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+	seedChanges(t, s, []domain.Change{changeDevZero, changeProdOne, changeDevOne})
+
+	got, err := s.QueryFilteredFeed(100, map[string]string{"env') = '' OR '1'='1": "x"})
+	if err == nil {
+		t.Fatalf("expected an error for an unsafe facet key, got nil (returned %d rows)", len(got))
+	}
+	if got != nil {
+		t.Errorf("expected nil result on rejected key, got %d rows", len(got))
+	}
+}
+
 // TestQueryFilteredFeed_MultipleFiltersAND verifies that two facet constraints
 // are ANDed together.
 func TestQueryFilteredFeed_MultipleFiltersAND(t *testing.T) {
