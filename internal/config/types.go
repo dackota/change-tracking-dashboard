@@ -1,0 +1,73 @@
+// Package config implements the Config module: parse + validate the tracker
+// ConfigMap YAML, flatten it into []domain.Tracker for the poller, and watch
+// the mounted file for hot-reload.
+//
+// The public entry point is Load(path), which returns a *Watcher whose
+// Current() method always returns the latest valid snapshot. A background poll
+// loop (or an explicit Reload() call in tests) re-reads + re-validates the
+// file; a bad reload keeps the last-good config and logs a clear error.
+package config
+
+import "github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
+
+// Defaults holds the global defaults from the ConfigMap that individual
+// trackers may override.
+type Defaults struct {
+	// PollIntervalSeconds is how often to poll each tracker.
+	// Must be > 0.
+	PollIntervalSeconds int `yaml:"pollIntervalSeconds"`
+	// BackfillDays is how many days of git history to walk on first run.
+	// Must be >= 0.
+	BackfillDays int `yaml:"backfillDays"`
+}
+
+// FieldConfig is one field extracted from a file.
+type FieldConfig struct {
+	Name string `yaml:"name"`
+	Expr string `yaml:"expr"`
+}
+
+// FileConfig is one glob + its field list.
+type FileConfig struct {
+	Glob   string        `yaml:"glob"`
+	Fields []FieldConfig `yaml:"fields"`
+}
+
+// TrackerRaw is the raw YAML shape for a tracker entry, including optional
+// per-tracker overrides that shadow the Defaults.
+type TrackerRaw struct {
+	Repo string `yaml:"repo"`
+	// Optional per-tracker overrides; zero means "use default".
+	PollIntervalSecondsOverride int    `yaml:"pollIntervalSeconds"`
+	BackfillDaysOverride        *int   `yaml:"backfillDays"` // pointer to distinguish 0 from absent
+	FacetRegex                  string `yaml:"facetRegex"`
+	Files                       []FileConfig `yaml:"files"`
+}
+
+// ResolvedTracker is a tracker entry with defaults already applied.
+// The values here are what the poller (and eventually backfill-and-poll-config)
+// should use.
+//
+// TODO (backfill-and-poll-config): wire PollIntervalSeconds and BackfillDays
+// into the poller's runtime cadence and git-history window.
+type ResolvedTracker struct {
+	Repo                string
+	FacetRegex          string
+	Files               []FileConfig
+	PollIntervalSeconds int
+	BackfillDays        int
+}
+
+// Config is the fully-parsed, fully-validated snapshot that consumers receive
+// from Watcher.Current().
+type Config struct {
+	// Defaults are the global defaults as specified in the YAML.
+	Defaults Defaults
+	// TrackerConfigs are the per-tracker resolved configs (defaults applied).
+	// Indexed parallel to the raw trackers list: TrackerConfigs[i] corresponds
+	// to the i-th tracker in the YAML.
+	TrackerConfigs []ResolvedTracker
+	// Trackers is the flattened []domain.Tracker for the poller —
+	// one entry per (repo × file-glob × field).
+	Trackers []domain.Tracker
+}
