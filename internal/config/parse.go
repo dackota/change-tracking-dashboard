@@ -5,10 +5,17 @@ package config
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"gopkg.in/yaml.v3"
 )
+
+// maxConfigBytes caps how much of the config file is read into memory, both on
+// load and on every hot-reload tick. 1 MiB matches the Kubernetes ConfigMap
+// per-key size limit, so a correctly-sized ConfigMap always fits; a misconfigured
+// or replaced multi-MB file is rejected rather than read in full.
+const maxConfigBytes = 1 << 20 // 1 MiB
 
 // rawConfig is the direct YAML deserialization target.
 type rawConfig struct {
@@ -16,18 +23,39 @@ type rawConfig struct {
 	Trackers []TrackerRaw `yaml:"trackers"`
 }
 
-// parseFile reads path, unmarshals the YAML, validates, and flattens.
-// It is called both from Load and from Watcher.Reload.
-func parseFile(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
+// readConfigFile reads at most maxConfigBytes from path, rejecting anything
+// larger rather than allocating it. Shared by parseFile and the watcher's
+// change-detection hash so both honor the same cap.
+func readConfigFile(path string) ([]byte, error) {
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("config: read %q: %w", path, err)
+	}
+	defer f.Close()
+
+	// Read one byte past the cap so we can detect an over-limit file.
+	data, err := io.ReadAll(io.LimitReader(f, maxConfigBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("config: read %q: %w", path, err)
+	}
+	if len(data) > maxConfigBytes {
+		return nil, fmt.Errorf("config: file %q exceeds the %d-byte limit", path, maxConfigBytes)
+	}
+	return data, nil
+}
+
+// parseFile reads path (size-capped), unmarshals the YAML, validates, and flattens.
+// It is called both from Load and from Watcher.Reload.
+func parseFile(path string) (*Config, error) {
+	data, err := readConfigFile(path)
+	if err != nil {
+		return nil, err
 	}
 	return parseBytes(data)
 }
 
-// parseBytes unmarshals, validates, and flattens raw YAML bytes.
-// Exported for table-driven tests that provide literal YAML without a file.
+// parseBytes unmarshals, validates, and flattens raw YAML bytes. It is shared by
+// parseFile and by in-package tests that supply literal YAML without a file.
 func parseBytes(data []byte) (*Config, error) {
 	var raw rawConfig
 	if err := yaml.Unmarshal(data, &raw); err != nil {

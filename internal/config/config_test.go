@@ -6,6 +6,7 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/config"
@@ -109,6 +110,46 @@ func TestLoad_MinimalValid_FlattensTrackers(t *testing.T) {
 	}
 	if tr.ExtractorExpr != ".version" {
 		t.Errorf("Tracker.ExtractorExpr = %q, want %q", tr.ExtractorExpr, ".version")
+	}
+}
+
+// TestCurrent_ReturnsIndependentCopy verifies that mutating the value returned
+// by Current() does not corrupt the live snapshot handed to other callers.
+func TestCurrent_ReturnsIndependentCopy(t *testing.T) {
+	path := writeTemp(t, minimalValidYAML)
+
+	w, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load returned unexpected error: %v", err)
+	}
+
+	// Mutate the first snapshot aggressively: reassign a field and grow the slice.
+	c1 := w.Current()
+	c1.Trackers[0].Repo = "MUTATED"
+	c1.Trackers = append(c1.Trackers, domain.Tracker{Repo: "injected"})
+
+	// A fresh snapshot must be unaffected by the mutation above.
+	c2 := w.Current()
+	if len(c2.Trackers) != 1 {
+		t.Fatalf("second snapshot len(Trackers) = %d, want 1 (mutation leaked)", len(c2.Trackers))
+	}
+	if c2.Trackers[0].Repo != "/some/repo" {
+		t.Errorf("second snapshot Tracker.Repo = %q, want %q (mutation leaked)", c2.Trackers[0].Repo, "/some/repo")
+	}
+}
+
+// TestLoad_OversizedFile_Rejected verifies the config file size cap: a file
+// larger than the limit is rejected at load rather than read into memory.
+func TestLoad_OversizedFile_Rejected(t *testing.T) {
+	oversized := minimalValidYAML + "\n# " + strings.Repeat("x", 1<<20)
+	path := writeTemp(t, oversized)
+
+	_, err := config.Load(path)
+	if err == nil {
+		t.Fatal("expected an error loading an oversized config file, got nil")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("error = %q, want it to mention the size limit (\"exceeds\")", err.Error())
 	}
 }
 

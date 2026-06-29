@@ -14,7 +14,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"log"
-	"os"
 	"sync"
 	"time"
 )
@@ -57,12 +56,13 @@ func Load(path string) (*Watcher, error) {
 	return w, nil
 }
 
-// Current returns an immutable snapshot of the current valid config.
-// The caller must not mutate the returned value.
+// Current returns a snapshot of the current valid config. The returned value is
+// a deep copy, so callers may freely read (or even mutate) it without affecting
+// the live config shared with the background reload goroutine.
 func (w *Watcher) Current() *Config {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	return w.current
+	return w.current.clone()
 }
 
 // Reload re-reads and re-validates the config file immediately. On success
@@ -121,9 +121,11 @@ func (w *Watcher) pollLoop() {
 	}
 }
 
-// fileHash returns the SHA-256 of the file at path.
+// fileHash returns the SHA-256 of the (size-capped) file at path. Using the
+// same capped reader as parsing means an over-limit file is rejected here too,
+// rather than hashed in full on every poll tick.
 func fileHash(path string) ([sha256.Size]byte, error) {
-	data, err := os.ReadFile(path)
+	data, err := readConfigFile(path)
 	if err != nil {
 		return [sha256.Size]byte{}, err
 	}

@@ -71,3 +71,40 @@ type Config struct {
 	// one entry per (repo × file-glob × field).
 	Trackers []domain.Tracker
 }
+
+// clone returns a deep copy of the Config: every slice (including the nested
+// Files/Fields under each ResolvedTracker) is freshly allocated, so a caller
+// that mutates the returned value cannot corrupt the live snapshot shared with
+// other goroutines. Watcher.Current() hands out a clone for this reason.
+func (c *Config) clone() *Config {
+	if c == nil {
+		return nil
+	}
+	cp := &Config{Defaults: c.Defaults}
+
+	if c.Trackers != nil {
+		cp.Trackers = make([]domain.Tracker, len(c.Trackers))
+		copy(cp.Trackers, c.Trackers) // domain.Tracker has only value fields
+	}
+
+	if c.TrackerConfigs != nil {
+		cp.TrackerConfigs = make([]ResolvedTracker, len(c.TrackerConfigs))
+		for i, rt := range c.TrackerConfigs {
+			rtCopy := rt // copies value fields (Repo, FacetRegex, ints)
+			if rt.Files != nil {
+				rtCopy.Files = make([]FileConfig, len(rt.Files))
+				for j, f := range rt.Files {
+					fCopy := f
+					if f.Fields != nil {
+						fCopy.Fields = make([]FieldConfig, len(f.Fields))
+						copy(fCopy.Fields, f.Fields) // FieldConfig is all value fields
+					}
+					rtCopy.Files[j] = fCopy
+				}
+			}
+			cp.TrackerConfigs[i] = rtCopy
+		}
+	}
+
+	return cp
+}
