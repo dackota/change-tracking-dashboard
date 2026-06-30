@@ -1,0 +1,73 @@
+# change-tracking-dashboard Helm chart values
+#
+# All values in this file are documented. Override in your ArgoCD
+# Application's .spec.source.helm.values or a separate values file.
+
+# -- Image configuration
+image:
+  # -- Image repository (override once published to ECR)
+  repository: change-tracking-dashboard
+  # -- Image pull policy
+  pullPolicy: IfNotPresent
+  # -- Image tag; defaults to the chart's appVersion
+  tag: ""
+
+# -- Number of replicas. Must stay 1: the PVC is ReadWriteOnce.
+replicaCount: 1
+
+# -- Service configuration
+service:
+  # -- Service type; ClusterIP is correct — access via kubectl port-forward
+  type: ClusterIP
+  # -- Port exposed by the Service (maps to container port 8080)
+  port: 8080
+
+# -- Persistent volume claim for SQLite durable history (US18)
+persistence:
+  # -- Storage size for the change-history SQLite database
+  size: 1Gi
+  # -- Storage class name; empty string uses the cluster default
+  storageClassName: ""
+  # -- Mount path for the PVC inside the container
+  mountPath: /data
+
+# -- Tracker configuration (hot-reloaded from the ConfigMap).
+# This is the `defaults:`/`trackers:` YAML that the config watcher parses.
+# Trackers: each entry is a (repo, file-glob, extractor) configuration.
+trackerConfig:
+  defaults:
+    # -- Default poll cadence in seconds for each Tracker
+    pollIntervalSeconds: 300
+    # -- Days of git history to walk on first run (backfill window)
+    backfillDays: 30
+  # -- List of Tracker entries. Each Tracker specifies a repo path,
+  # optional per-tracker overrides, and the Extractors (files + fields).
+  trackers: []
+  # Example Tracker:
+  # trackers:
+  #   - repo: /repos/my-app
+  #     files:
+  #       - glob: "deploy/helm/**/values.yaml"
+  #         fields:
+  #           - name: imageTag
+  #             expr: ".image.tag"
+
+# -- Resource requests/limits for the dashboard container.
+# Conservative defaults bound the single poller+SQLite workload and prevent a
+# runaway loop from starving co-located pods. Tune for your tracker count.
+resources:
+  limits:
+    cpu: 200m
+    memory: 128Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+# -- Node selector for pod scheduling
+nodeSelector: {}
+
+# -- Tolerations for pod scheduling
+tolerations: []
+
+# -- Affinity rules for pod scheduling
+affinity: {}
