@@ -52,14 +52,16 @@ trackerConfig:
   #           - name: imageTag
   #             expr: ".image.tag"
 
-# -- Resource requests/limits for the dashboard container
-resources: {}
-  # limits:
-  #   cpu: 200m
-  #   memory: 128Mi
-  # requests:
-  #   cpu: 50m
-  #   memory: 64Mi
+# -- Resource requests/limits for the dashboard container.
+# Conservative defaults bound the single poller+SQLite workload and prevent a
+# runaway loop from starving co-located pods. Tune for your tracker count.
+resources:
+  limits:
+    cpu: 200m
+    memory: 128Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
 
 # -- Node selector for pod scheduling
 nodeSelector: {}

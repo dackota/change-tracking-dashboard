@@ -19,6 +19,9 @@ spec:
       labels:
         {{- include "change-tracking-dashboard.labels" . | nindent 8 }}
     spec:
+      # The dashboard never calls the Kubernetes API; do not mount the default
+      # service account token into the pod (avoids needless credential exposure).
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 65534
