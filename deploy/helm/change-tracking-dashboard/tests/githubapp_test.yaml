@@ -76,3 +76,12 @@ tests:
             name: github-app-key
             secret:
               secretName: my-github-app-secret
+              defaultMode: 256
+
+  - it: should set defaultMode 256 (0400) on the github-app-key secret volume to restrict private-key file permissions
+    set:
+      githubApp.secretName: my-github-app-secret
+    asserts:
+      - equal:
+          path: spec.template.spec.volumes[2].secret.defaultMode
+          value: 256

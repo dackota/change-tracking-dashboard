@@ -206,10 +206,19 @@ func (c *sourceCache) get(repo string) (*gitsource.Source, error) {
 }
 
 // buildAuth constructs the BasicAuth for the given remote repo URL. Returns nil
-// when no tokenProvider is configured (unauthenticated access). The token value
-// never appears in any returned error.
+// when no tokenProvider is configured (unauthenticated access) or when the
+// remote is not an https:// URL — credentials are never attached to non-HTTPS
+// remotes so an on-path observer cannot capture the installation token.
+//
+// This is a belt-and-suspenders guard: the config validator already rejects
+// http:// repos at load time; this ensures auth is never attached even if a
+// non-https URL reaches this path through an unexpected code route.
 func (c *sourceCache) buildAuth(repo string) (gogithttp.AuthMethod, error) {
 	if c.tokenProvider == nil {
+		return nil, nil
+	}
+	// Never send credentials over a non-HTTPS transport.
+	if !strings.HasPrefix(repo, "https://") {
 		return nil, nil
 	}
 	tok, err := c.tokenProvider.Token()

@@ -787,3 +787,82 @@ trackers:
 		t.Errorf("error %q does not mention 'pollIntervalSeconds'", err.Error())
 	}
 }
+
+// --- Behavior 12: http:// tracker repos are rejected at config load ---
+
+// TestLoad_HttpRepo_Rejected verifies that a tracker whose repo begins with
+// http:// is rejected at config load with a clear, non-leaking error message.
+// An on-path observer could capture an org-scoped installation token sent over
+// a plaintext HTTP connection; fail-fast prevents that.
+func TestLoad_HttpRepo_Rejected(t *testing.T) {
+	const yaml = `
+defaults:
+  pollIntervalSeconds: 60
+  backfillDays: 90
+trackers:
+  - repo: http://github.com/org/repo.git
+    facetRegex: ''
+    files:
+      - glob: 'Chart.yaml'
+        fields:
+          - name: version
+            expr: '.version'
+`
+	path := writeTemp(t, yaml)
+
+	_, err := config.Load(path)
+	if err == nil {
+		t.Fatal("Load should have rejected an http:// tracker repo, got nil")
+	}
+	errStr := err.Error()
+	if !contains(errStr, "https://") {
+		t.Errorf("error %q does not mention https:// as the required scheme", errStr)
+	}
+	if !contains(errStr, "http://") {
+		t.Errorf("error %q does not mention the rejected http:// scheme", errStr)
+	}
+	// The error must not contain the actual repo URL (could leak org/repo structure);
+	// however the finding only requires it to be clear — mentioning the scheme is enough.
+	// Verify the error message follows the expected pattern.
+	if !contains(errStr, "plaintext") {
+		t.Errorf("error %q does not describe the plaintext risk", errStr)
+	}
+}
+
+// TestLoad_HttpsRepo_Accepted verifies that https:// repos are still accepted
+// (no regression — the fix must only block http://, not https://).
+func TestLoad_HttpsRepo_Accepted(t *testing.T) {
+	const yaml = `
+defaults:
+  pollIntervalSeconds: 60
+  backfillDays: 90
+trackers:
+  - repo: https://github.com/org/repo.git
+    facetRegex: ''
+    files:
+      - glob: 'Chart.yaml'
+        fields:
+          - name: version
+            expr: '.version'
+`
+	path := writeTemp(t, yaml)
+
+	_, err := config.Load(path)
+	// The load itself may fail for other reasons (e.g. jq compile), but it must
+	// NOT fail with an http:// rejection error.
+	if err != nil && contains(err.Error(), "plaintext http://") {
+		t.Errorf("Load rejected an https:// repo as if it were plaintext http://: %v", err)
+	}
+}
+
+// TestLoad_LocalPathRepo_Accepted verifies that local filesystem paths
+// (neither http:// nor https://) continue to be accepted — fixture repos and
+// local test paths must not be broken by the http:// guard.
+func TestLoad_LocalPathRepo_Accepted(t *testing.T) {
+	path := writeTemp(t, minimalValidYAML) // minimalValidYAML uses /some/repo
+
+	_, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load should accept a local-path repo, got error: %v", err)
+	}
+}

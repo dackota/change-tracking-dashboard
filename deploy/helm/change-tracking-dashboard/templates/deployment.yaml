@@ -106,9 +106,12 @@ spec:
         {{- if .Values.githubApp.secretName }}
         # GitHub App private key volume (US19) — provisioned by an ExternalSecret
         # that syncs Vault path app/kargo/github-app (deploy task's responsibility).
+        # defaultMode 0400 (octal) = 256 (decimal): owner read-only, prevents
+        # other processes in the pod from reading the private key file.
         - name: github-app-key
           secret:
             secretName: {{ .Values.githubApp.secretName }}
+            defaultMode: 0400
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

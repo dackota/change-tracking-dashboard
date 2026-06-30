@@ -104,9 +104,11 @@ func (s *Source) Fetch(remoteURL string, auth gogithttp.AuthMethod) error {
 
 	err := s.repo.Fetch(fetchOpts)
 	if err != nil && err != git.NoErrAlreadyUpToDate {
-		// Do not include auth details in the error; strip the underlying transport
-		// error to avoid accidentally echoing any credential material.
-		return fmt.Errorf("gitsource: fetch from remote: %w", err)
+		// Return a fixed non-leaking error: transport errors can embed the remote's
+		// HTTP response body (which may contain auth challenges or server details).
+		// We discard the underlying error entirely — mirroring how
+		// githubapp/provider.go returns "token endpoint request failed" with no %w.
+		return fmt.Errorf("gitsource: fetch from remote failed")
 	}
 
 	// Fast-forward the local branch to the fetched remote-tracking ref so that
