@@ -1,0 +1,10 @@
+apiVersion: v2
+name: change-tracking-dashboard
+description: >
+  In-cluster Go service that polls git repositories for tracked field
+  changes and exposes a web feed. Deployed as a single-replica stateful
+  pod backed by a ReadWriteOnce PVC (SQLite) and a hot-reloaded tracker
+  ConfigMap.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

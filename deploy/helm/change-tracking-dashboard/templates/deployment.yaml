@@ -1,0 +1,92 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "change-tracking-dashboard.fullname" . }}
+  labels:
+    {{- include "change-tracking-dashboard.labels" . | nindent 4 }}
+spec:
+  # Single replica: the PVC is ReadWriteOnce — only one pod may mount it at a
+  # time. Recreate strategy prevents a rolling update from trying to attach the
+  # volume to two pods simultaneously.
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "change-tracking-dashboard.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "change-tracking-dashboard.labels" . | nindent 8 }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+      containers:
+        - name: {{ .Chart.Name }}
+          image: {{ include "change-tracking-dashboard.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65534
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            # CONFIG_PATH: path to the hot-reloaded tracker ConfigMap mount
+            - name: CONFIG_PATH
+              value: /etc/dashboard/config.yaml
+            # DB_PATH: durable SQLite file on the ReadWriteOnce PVC (US18)
+            - name: DB_PATH
+              value: {{ .Values.persistence.mountPath }}/changes.db
+            # LISTEN_ADDR: HTTP bind address for the feed server
+            - name: LISTEN_ADDR
+              value: ":8080"
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            # Durable storage for SQLite change history (survives pod restarts)
+            - name: data
+              mountPath: {{ .Values.persistence.mountPath }}
+            # Hot-reloaded tracker configuration (Tracker ConfigMap)
+            - name: config
+              mountPath: /etc/dashboard
+              readOnly: true
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "change-tracking-dashboard.fullname" . }}-data
+        - name: config
+          configMap:
+            name: {{ include "change-tracking-dashboard.fullname" . }}-tracker-config
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

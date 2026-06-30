@@ -1,0 +1,35 @@
+# Exclude build artifacts and unnecessary files from the Docker build context.
+# Keeping the context small speeds up builds and avoids accidentally including
+# sensitive files.
+
+# Version control
+.git/
+.gitignore
+
+# Go test artifacts
+*.test
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+
+# Editor/IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment files — never bake secrets into the image
+.env
+*.env
+
+# Local worktrees and repo caches (workspace-level; won't exist here but guard anyway)
+repos/
+worktrees/
+
+# Helm chart output and deploy artifacts (not needed at build time)
+deploy/
+
+# Documentation
+README.md
+docs/
