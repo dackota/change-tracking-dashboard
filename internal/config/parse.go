@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -124,6 +125,11 @@ func validateDefaults(d Defaults) error {
 func resolveTracker(idx int, tr TrackerRaw, defaults Defaults) (ResolvedTracker, error) {
 	if tr.Repo == "" {
 		return ResolvedTracker{}, fmt.Errorf("config: tracker[%d]: repo is required", idx)
+	}
+	if strings.HasPrefix(tr.Repo, "http://") {
+		return ResolvedTracker{}, fmt.Errorf(
+			"config: tracker[%d]: tracker repo %q must use https:// (plaintext http:// is not allowed)",
+			idx, tr.Repo)
 	}
 	if len(tr.Files) == 0 {
 		return ResolvedTracker{}, fmt.Errorf("config: tracker[%d] (repo=%q): at least one file is required", idx, tr.Repo)

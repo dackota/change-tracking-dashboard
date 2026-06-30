@@ -5,21 +5,25 @@
 // The high-water-mark SHA is used to resume incrementally: only commits *after*
 // that SHA are returned. Pass an empty string to walk from the beginning.
 //
-// TODO (github-app-auth task): add GitHub App token auth for remote repos.
-// Currently only local repo paths are supported — sufficient for the skeleton
-// and test fixture repos.
+// Remote HTTPS repos can be cloned/fetched with GitHub App installation tokens
+// via OpenOrClone, which accepts an optional BasicAuth credential. Local paths
+// continue to use PlainOpen unchanged.
 package gitsource
 
 import (
 	"fmt"
 	"io"
 	"log"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	gogithttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 )
 
 // maxCommitsPerWalk bounds how many commits a single walk loads into memory,
@@ -42,6 +46,126 @@ func Open(path string) (*Source, error) {
 		return nil, fmt.Errorf("gitsource: open repo %q: %w", path, err)
 	}
 	return &Source{repo: r}, nil
+}
+
+// OpenOrClone opens an existing local repository at localPath if it exists,
+// or clones from remoteURL into localPath if it does not. The auth parameter
+// is passed to go-git for HTTPS basic authentication (use
+// &gogithttp.BasicAuth{Username: "x-access-token", Password: token} for
+// GitHub App installation tokens). Pass nil for unauthenticated access.
+//
+// This is the authenticated-remote entry point. For purely local fixture repos,
+// the existing Open function continues to work as before.
+func OpenOrClone(remoteURL, localPath string, auth gogithttp.AuthMethod) (*Source, error) {
+	// If localPath already contains a git repo, open it.
+	if isGitRepo(localPath) {
+		r, err := git.PlainOpen(localPath)
+		if err != nil {
+			return nil, fmt.Errorf("gitsource: open existing clone at %q: %w", localPath, err)
+		}
+		return &Source{repo: r}, nil
+	}
+
+	// Clone from the remote URL into localPath.
+	cloneOpts := &git.CloneOptions{
+		URL:  remoteURL,
+		Auth: auth,
+	}
+	r, err := git.PlainClone(localPath, false, cloneOpts)
+	if err != nil {
+		return nil, fmt.Errorf("gitsource: clone %q: %w", remoteURL, err)
+	}
+	return &Source{repo: r}, nil
+}
+
+// Fetch performs an authenticated git fetch for the given remoteURL, updating
+// the local clone's remote-tracking refs and fast-forwarding the local branch so
+// that WalkCommits (which walks from repo.Head()) observes any commits pushed to
+// the remote after the initial clone.
+//
+// If remoteURL is empty, Fetch is a no-op — local-path Sources opened via Open
+// have no remote and are never fetched.
+//
+// git.NoErrAlreadyUpToDate is treated as success: there is nothing new to fetch
+// on this cycle, which is the common steady-state case.
+//
+// The auth parameter must not appear in any error message (never log tokens).
+func (s *Source) Fetch(remoteURL string, auth gogithttp.AuthMethod) error {
+	if remoteURL == "" {
+		return nil
+	}
+
+	fetchOpts := &git.FetchOptions{
+		RemoteURL: remoteURL,
+		RefSpecs:  []config.RefSpec{"+refs/heads/*:refs/remotes/origin/*"},
+		Auth:      auth,
+		Force:     true,
+	}
+
+	err := s.repo.Fetch(fetchOpts)
+	if err != nil && err != git.NoErrAlreadyUpToDate {
+		// Return a fixed non-leaking error: transport errors can embed the remote's
+		// HTTP response body (which may contain auth challenges or server details).
+		// We discard the underlying error entirely — mirroring how
+		// githubapp/provider.go returns "token endpoint request failed" with no %w.
+		return fmt.Errorf("gitsource: fetch from remote failed")
+	}
+
+	// Fast-forward the local branch to the fetched remote-tracking ref so that
+	// s.repo.Head() — and therefore WalkCommits — sees the newly fetched commits.
+	// go-git's Fetch updates refs/remotes/origin/<branch> but does NOT move the
+	// local branch ref; we must do that explicitly.
+	return s.fastForwardToRemote()
+}
+
+// fastForwardToRemote resolves the remote-tracking ref that corresponds to the
+// current HEAD branch and updates the local branch ref to match it.
+//
+// Example: if HEAD → refs/heads/main, we look up refs/remotes/origin/main and
+// set refs/heads/main to that hash.
+func (s *Source) fastForwardToRemote() error {
+	head, err := s.repo.Head()
+	if err != nil {
+		return fmt.Errorf("gitsource: resolve HEAD for fast-forward: %w", err)
+	}
+
+	// Only fast-forward when HEAD is on a named branch (not detached).
+	if !head.Name().IsBranch() {
+		return nil
+	}
+
+	// Short branch name, e.g. "main".
+	branchName := head.Name().Short()
+
+	// Look up the remote-tracking ref, e.g. refs/remotes/origin/main.
+	remoteRefName := plumbing.NewRemoteReferenceName("origin", branchName)
+	remoteRef, err := s.repo.Reference(remoteRefName, true)
+	if err != nil {
+		// The remote-tracking ref may not exist (e.g. the remote uses a
+		// different default branch name). Treat as a non-fatal condition.
+		return nil
+	}
+
+	// Update the local branch ref to the remote-tracking hash.
+	localRef := plumbing.NewHashReference(head.Name(), remoteRef.Hash())
+	if err := s.repo.Storer.SetReference(localRef); err != nil {
+		return fmt.Errorf("gitsource: fast-forward local branch: %w", err)
+	}
+
+	return nil
+}
+
+// isGitRepo returns true if path exists and contains a .git directory (or is
+// itself a bare repo). Used by OpenOrClone to detect an existing clone.
+func isGitRepo(path string) bool {
+	// Check for a .git directory (non-bare) or a HEAD file (bare).
+	if info, err := os.Stat(filepath.Join(path, ".git")); err == nil && info.IsDir() {
+		return true
+	}
+	if _, err := os.Stat(filepath.Join(path, "HEAD")); err == nil {
+		return true
+	}
+	return false
 }
 
 // WalkCommits returns all commits that touched filePath, in chronological

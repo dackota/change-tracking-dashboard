@@ -10,9 +10,11 @@
 // cache keyed by path). DB_PATH and LISTEN_ADDR are still env-driven; they
 // are operational config, not tracker config.
 //
-// GitHub App token auth for remote repos is out of scope here (github-app-auth).
-// Per-tracker poll cadence and backfill window are read from the config and
-// honored by the scheduler, which calls Tick on a 1s base interval.
+// GitHub App token auth for remote repos is enabled when the three env vars
+// GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, and GITHUB_APP_PRIVATE_KEY_FILE
+// are all set (injected from a Kubernetes Secret). When present, remote HTTPS
+// repos are cloned/fetched using a short-lived installation token. Local paths
+// continue to use PlainOpen unchanged.
 package main
 
 import (
@@ -21,16 +23,19 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/config"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/githubapp"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/gitsource"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/poller"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/scheduler"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/store"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/web"
+	gogithttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 )
 
 // defaultConfigPath is used when CONFIG_PATH is not set.
@@ -72,8 +77,27 @@ func run(configPath, dbPath, listenAddr string) error {
 	}
 	defer st.Close()
 
+	// --- GitHub App token provider (optional) ---
+	// When all three env vars are set the provider mints short-lived installation
+	// tokens; remote HTTPS repos are then cloned/fetched authenticated.
+	// When the vars are absent the provider is nil and local-path repos work as before.
+	var tokenProvider *githubapp.Provider
+	appCfg, enabled, err := githubapp.FromEnv()
+	if err != nil {
+		return fmt.Errorf("github app config: %w", err)
+	}
+	if enabled {
+		p, err := githubapp.New(appCfg)
+		if err != nil {
+			return fmt.Errorf("github app provider: %w", err)
+		}
+		tokenProvider = p
+		log.Printf("dashboard: GitHub App auth enabled (appID=%d, installationID=%d)",
+			appCfg.AppID, appCfg.InstallationID)
+	}
+
 	// --- Per-repo gitsource cache ---
-	sources := newSourceCache()
+	sources := newSourceCache(tokenProvider)
 
 	// --- Per-tracker scheduler ---
 	// The scheduler calls Tick on a 1s base interval, passing the latest
@@ -117,33 +141,140 @@ func run(configPath, dbPath, listenAddr string) error {
 	return srv.ListenAndServe()
 }
 
-// sourceCache is a small thread-safe map from repo path → *gitsource.Source.
+// cachedSource bundles a gitsource.Source with the remote URL it was cloned
+// from (empty string for local-path sources). The remoteURL is used on every
+// subsequent poll cycle to perform an authenticated fetch so that commits pushed
+// to the remote after the initial clone are observed by WalkCommits.
+type cachedSource struct {
+	src       *gitsource.Source
+	remoteURL string // empty for local-path sources — no fetch needed
+}
+
+// sourceCache is a small thread-safe map from repo path/URL → cachedSource.
 // Opening a gitsource is cheap (local disk), but we avoid re-opening the same
 // repo on every poll cycle.
+//
+// For remote HTTPS repos the cache also performs an authenticated fetch on every
+// get() call so that newly-pushed commits are visible within each poll cycle.
+// Local paths continue to use PlainOpen without any fetch.
+//
+// NOTE: clone directories are placed under os.TempDir() (typically tmpfs on
+// many Kubernetes nodes). They are therefore ephemeral: a pod restart re-clones
+// from scratch. This is intentional — the store's high-water-mark resumes
+// incremental polling correctly after a re-clone with no data loss.
 type sourceCache struct {
-	mu      sync.Mutex
-	sources map[string]*gitsource.Source
+	mu            sync.Mutex
+	sources       map[string]*cachedSource
+	tokenProvider *githubapp.Provider // nil when GitHub App auth is disabled
 }
 
-func newSourceCache() *sourceCache {
-	return &sourceCache{sources: make(map[string]*gitsource.Source)}
+func newSourceCache(tp *githubapp.Provider) *sourceCache {
+	return &sourceCache{
+		sources:       make(map[string]*cachedSource),
+		tokenProvider: tp,
+	}
 }
 
-// get returns the cached Source for path, opening it if necessary.
-func (c *sourceCache) get(path string) (*gitsource.Source, error) {
+// get returns the Source for the given repo path or URL. On the first call it
+// opens or clones the repo; on every subsequent call for a remote-backed source
+// it performs an authenticated fetch so that newly-pushed commits are visible to
+// WalkCommits within the same poll cycle.
+func (c *sourceCache) get(repo string) (*gitsource.Source, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if src, ok := c.sources[path]; ok {
-		return src, nil
+	if cs, ok := c.sources[repo]; ok {
+		// Already cloned — fetch from the remote (if any) to pick up new commits.
+		if cs.remoteURL != "" {
+			auth, err := c.buildAuth(repo)
+			if err != nil {
+				return nil, err
+			}
+			if err := cs.src.Fetch(cs.remoteURL, auth); err != nil {
+				return nil, fmt.Errorf("fetch %q: %w", repo, err)
+			}
+		}
+		return cs.src, nil
 	}
 
-	src, err := gitsource.Open(path)
+	cs, err := c.openOrClone(repo)
 	if err != nil {
 		return nil, err
 	}
-	c.sources[path] = src
-	return src, nil
+	c.sources[repo] = cs
+	return cs.src, nil
+}
+
+// buildAuth constructs the BasicAuth for the given remote repo URL. Returns nil
+// when no tokenProvider is configured (unauthenticated access) or when the
+// remote is not an https:// URL — credentials are never attached to non-HTTPS
+// remotes so an on-path observer cannot capture the installation token.
+//
+// This is a belt-and-suspenders guard: the config validator already rejects
+// http:// repos at load time; this ensures auth is never attached even if a
+// non-https URL reaches this path through an unexpected code route.
+func (c *sourceCache) buildAuth(repo string) (gogithttp.AuthMethod, error) {
+	if c.tokenProvider == nil {
+		return nil, nil
+	}
+	// Never send credentials over a non-HTTPS transport.
+	if !strings.HasPrefix(repo, "https://") {
+		return nil, nil
+	}
+	tok, err := c.tokenProvider.Token()
+	if err != nil {
+		return nil, fmt.Errorf("get installation token for %q: %w", repo, err)
+	}
+	return &gogithttp.BasicAuth{
+		Username: "x-access-token",
+		Password: tok,
+	}, nil
+}
+
+// openOrClone opens a local path directly, or clones a remote HTTPS URL with
+// optional GitHub App token auth into a local directory under the system temp dir.
+func (c *sourceCache) openOrClone(repo string) (*cachedSource, error) {
+	if isRemoteURL(repo) {
+		auth, err := c.buildAuth(repo)
+		if err != nil {
+			return nil, err
+		}
+		// Clone into a stable local directory derived from the repo URL.
+		// Clones are ephemeral (os.TempDir() / tmpfs on many k8s nodes);
+		// the store's high-water-mark resumes polling after a pod restart
+		// with no data loss — see sourceCache doc comment.
+		localPath := filepath.Join(os.TempDir(), "ctd-clones", sanitizeRepoURL(repo))
+		src, err := gitsource.OpenOrClone(repo, localPath, auth)
+		if err != nil {
+			return nil, err
+		}
+		return &cachedSource{src: src, remoteURL: repo}, nil
+	}
+
+	// Local path: use the existing PlainOpen path; no remote to fetch.
+	src, err := gitsource.Open(repo)
+	if err != nil {
+		return nil, err
+	}
+	return &cachedSource{src: src, remoteURL: ""}, nil
+}
+
+// isRemoteURL returns true for http:// and https:// repo URLs.
+func isRemoteURL(repo string) bool {
+	return strings.HasPrefix(repo, "http://") || strings.HasPrefix(repo, "https://")
+}
+
+// sanitizeRepoURL converts a URL to a filesystem-safe directory name by
+// replacing path separators and scheme characters with dashes.
+func sanitizeRepoURL(url string) string {
+	r := strings.NewReplacer(
+		"https://", "",
+		"http://", "",
+		"/", "-",
+		":", "-",
+		".", "-",
+	)
+	return r.Replace(url)
 }
 
 func envOrDefault(key, defaultVal string) string {

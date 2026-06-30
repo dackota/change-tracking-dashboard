@@ -52,6 +52,27 @@ trackerConfig:
   #           - name: imageTag
   #             expr: ".image.tag"
 
+# -- GitHub App authentication for private remote repos (US19).
+#
+# Disabled by default (secretName is empty). Enable by pointing secretName at
+# a Kubernetes Secret that carries three keys:
+#   appID          — the GitHub App numeric ID (string value)
+#   installationID — the org-level installation ID (string value)
+#   privateKey     — the PEM-encoded RSA private key
+#
+# The Secret is consumed externally — this chart does NOT template an
+# ExternalSecret. The recommended provisioning path is an ExternalSecret that
+# syncs from Vault path app/kargo/github-app into the named Secret (that is
+# the downstream deploy task's responsibility).
+#
+# Example:
+#   githubApp:
+#     secretName: change-tracking-dashboard-github-app
+githubApp:
+  # -- Name of the Secret holding appID, installationID, and privateKey.
+  # Leave empty to disable GitHub App auth (default).
+  secretName: ""
+
 # -- Resource requests/limits for the dashboard container.
 # Conservative defaults bound the single poller+SQLite workload and prevent a
 # runaway loop from starving co-located pods. Tune for your tracker count.

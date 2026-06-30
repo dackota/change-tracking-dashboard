@@ -1,13 +1,18 @@
 package gitsource_test
 
 import (
+	"encoding/base64"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/gitsource"
 	"github.com/go-git/go-git/v5"
+	gogithttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
@@ -257,5 +262,268 @@ func TestWalkCommits_FilePath(t *testing.T) {
 		if snap.FilePath != "Chart.yaml" {
 			t.Errorf("FilePath = %q, want Chart.yaml", snap.FilePath)
 		}
+	}
+}
+
+// --- Authenticated remote clone tests ---
+
+// TestOpenOrClone_LocalPath_StillWorks verifies the existing local-path Open
+// path is unaffected when no auth is provided.
+func TestOpenOrClone_LocalPath_StillWorks(t *testing.T) {
+	t.Parallel()
+
+	repoPath, sha1, sha2 := buildFixtureRepo(t)
+	localDest := t.TempDir()
+
+	// Open a local repo path via OpenOrClone with nil auth.
+	src, err := gitsource.OpenOrClone(repoPath, localDest, nil)
+	if err != nil {
+		t.Fatalf("OpenOrClone (local): %v", err)
+	}
+
+	snapshots, err := src.WalkCommits("Chart.yaml", "", time.Time{})
+	if err != nil {
+		t.Fatalf("WalkCommits: %v", err)
+	}
+	if len(snapshots) != 2 {
+		t.Fatalf("expected 2 snapshots, got %d", len(snapshots))
+	}
+	if snapshots[0].CommitSha != sha1 || snapshots[1].CommitSha != sha2 {
+		t.Errorf("unexpected SHAs: %v", []string{snapshots[0].CommitSha, snapshots[1].CommitSha})
+	}
+}
+
+// TestOpenOrClone_RemoteHTTPS_SendsBasicAuth verifies that when a remote HTTPS
+// URL is given with BasicAuth credentials, go-git sends the Authorization header
+// to the server. We use an httptest.Server that records requests.
+func TestOpenOrClone_RemoteHTTPS_SendsBasicAuth(t *testing.T) {
+	t.Parallel()
+
+	// Track whether we received an Authorization header.
+	var receivedAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedAuth = r.Header.Get("Authorization")
+		// Return 401 to keep the test fast — we only care that the header was sent.
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(srv.Close)
+
+	localDest := t.TempDir()
+	auth := &gogithttp.BasicAuth{
+		Username: "x-access-token",
+		Password: "ghs_test_token_wiring",
+	}
+
+	// OpenOrClone will fail (server returns 401) but auth must have been attempted.
+	_, err := gitsource.OpenOrClone(srv.URL+"/repo.git", localDest, auth)
+	if err == nil {
+		t.Fatal("expected error from unauthenticated server, got nil")
+	}
+
+	// Verify the Authorization header was set with the expected credentials.
+	if receivedAuth == "" {
+		t.Fatal("no Authorization header sent to server — auth not wired")
+	}
+	expectedCredential := base64.StdEncoding.EncodeToString([]byte("x-access-token:ghs_test_token_wiring"))
+	if !strings.Contains(receivedAuth, expectedCredential) {
+		t.Errorf("Authorization header %q does not contain expected basic auth credential", receivedAuth)
+	}
+}
+
+// TestOpenOrClone_IdempotentOpen verifies that calling OpenOrClone a second time
+// on an already-cloned local destination opens the existing repo (no re-clone).
+func TestOpenOrClone_IdempotentOpen(t *testing.T) {
+	t.Parallel()
+
+	repoPath, sha1, _ := buildFixtureRepo(t)
+	localDest := t.TempDir()
+
+	// First call: clones to localDest.
+	_, err := gitsource.OpenOrClone(repoPath, localDest, nil)
+	if err != nil {
+		t.Fatalf("OpenOrClone (first): %v", err)
+	}
+
+	// Second call: must open the existing clone without error.
+	src2, err := gitsource.OpenOrClone(repoPath, localDest, nil)
+	if err != nil {
+		t.Fatalf("OpenOrClone (second / idempotent): %v", err)
+	}
+
+	snapshots, err := src2.WalkCommits("Chart.yaml", "", time.Time{})
+	if err != nil {
+		t.Fatalf("WalkCommits after idempotent open: %v", err)
+	}
+	if len(snapshots) < 1 || snapshots[0].CommitSha != sha1 {
+		t.Errorf("unexpected snapshots after idempotent open")
+	}
+}
+
+// --- Authenticated fetch tests ---
+
+// addCommitToRepo adds a new commit to an existing repo's worktree and returns
+// the new commit SHA. Used to simulate a push to the "remote" after an initial clone.
+func addCommitToRepo(t *testing.T, repoPath, version string) string {
+	t.Helper()
+
+	r, err := git.PlainOpen(repoPath)
+	if err != nil {
+		t.Fatalf("PlainOpen for addCommit: %v", err)
+	}
+	wt, err := r.Worktree()
+	if err != nil {
+		t.Fatalf("worktree for addCommit: %v", err)
+	}
+
+	chartPath := filepath.Join(repoPath, "Chart.yaml")
+	if err := os.WriteFile(chartPath, []byte("version: \""+version+"\"\n"), 0o644); err != nil {
+		t.Fatalf("write chart for addCommit: %v", err)
+	}
+	if _, err := wt.Add("Chart.yaml"); err != nil {
+		t.Fatalf("git add for addCommit: %v", err)
+	}
+	h, err := wt.Commit("bump: "+version, &git.CommitOptions{
+		Author: &object.Signature{
+			Name:  "ci",
+			Email: "ci@example.com",
+			When:  time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC),
+		},
+	})
+	if err != nil {
+		t.Fatalf("commit for addCommit: %v", err)
+	}
+	return h.String()
+}
+
+// TestFetch_NewCommitIsVisible is the critical behavioral test proving that
+// authenticated fetch makes commits pushed after the initial clone visible via
+// WalkCommits. This test MUST fail against the current code (no Fetch call) and
+// pass after the fix.
+func TestFetch_NewCommitIsVisible(t *testing.T) {
+	t.Parallel()
+
+	// Arrange: build a fixture repo (the "remote") with two commits, then clone it.
+	remoteRepo, sha1, sha2 := buildFixtureRepo(t)
+	localClone := t.TempDir()
+
+	src, err := gitsource.OpenOrClone(remoteRepo, localClone, nil)
+	if err != nil {
+		t.Fatalf("initial OpenOrClone: %v", err)
+	}
+
+	// Confirm the clone sees the two initial commits.
+	snapshots, err := src.WalkCommits("Chart.yaml", "", time.Time{})
+	if err != nil {
+		t.Fatalf("WalkCommits before fetch: %v", err)
+	}
+	if len(snapshots) != 2 {
+		t.Fatalf("expected 2 commits before fetch, got %d", len(snapshots))
+	}
+
+	// Act: add a new commit to the "remote" (simulates a push by another user).
+	sha3 := addCommitToRepo(t, remoteRepo, "2.0.0")
+
+	// Fetch from the remote into the existing clone.
+	if err := src.Fetch(remoteRepo, nil); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+
+	// Assert: WalkCommits now returns all three commits including the new one.
+	snapshots, err = src.WalkCommits("Chart.yaml", "", time.Time{})
+	if err != nil {
+		t.Fatalf("WalkCommits after fetch: %v", err)
+	}
+	if len(snapshots) != 3 {
+		t.Fatalf("WalkCommits after fetch returned %d snapshots, want 3", len(snapshots))
+	}
+	if snapshots[2].CommitSha != sha3 {
+		t.Errorf("snapshots[2].CommitSha = %q, want sha3=%q", snapshots[2].CommitSha, sha3)
+	}
+	// Verify older commits are still present and in order.
+	if snapshots[0].CommitSha != sha1 {
+		t.Errorf("snapshots[0].CommitSha = %q, want sha1=%q", snapshots[0].CommitSha, sha1)
+	}
+	if snapshots[1].CommitSha != sha2 {
+		t.Errorf("snapshots[1].CommitSha = %q, want sha2=%q", snapshots[1].CommitSha, sha2)
+	}
+}
+
+// TestFetch_AlreadyUpToDate verifies that Fetch returns nil (not an error) when
+// the remote has no new commits — "already up to date" is a normal, non-error state.
+func TestFetch_AlreadyUpToDate(t *testing.T) {
+	t.Parallel()
+
+	remoteRepo, _, _ := buildFixtureRepo(t)
+	localClone := t.TempDir()
+
+	src, err := gitsource.OpenOrClone(remoteRepo, localClone, nil)
+	if err != nil {
+		t.Fatalf("initial OpenOrClone: %v", err)
+	}
+
+	// Fetch immediately — nothing has changed on the remote, must not error.
+	if err := src.Fetch(remoteRepo, nil); err != nil {
+		t.Errorf("Fetch on already-up-to-date repo returned error: %v", err)
+	}
+}
+
+// TestFetch_RemoteHTTPS_SendsBasicAuth verifies that when an HTTPS URL is given
+// with BasicAuth credentials, go-git sends the Authorization header on the fetch
+// request. This mirrors the existing TestOpenOrClone_RemoteHTTPS_SendsBasicAuth
+// pattern.
+func TestFetch_RemoteHTTPS_SendsBasicAuth(t *testing.T) {
+	t.Parallel()
+
+	// First clone locally so we have a Source with a remote configured.
+	remoteRepo, _, _ := buildFixtureRepo(t)
+	localClone := t.TempDir()
+
+	src, err := gitsource.OpenOrClone(remoteRepo, localClone, nil)
+	if err != nil {
+		t.Fatalf("initial OpenOrClone: %v", err)
+	}
+
+	// Track whether we received an Authorization header on the fetch.
+	var receivedAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedAuth = r.Header.Get("Authorization")
+		// Return 401 — we only care that the header was sent, not that the fetch succeeds.
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(srv.Close)
+
+	auth := &gogithttp.BasicAuth{
+		Username: "x-access-token",
+		Password: "ghs_fetch_token_wiring",
+	}
+
+	// Fetch against the httptest server — it will fail (401) but auth must be sent.
+	_ = src.Fetch(srv.URL+"/repo.git", auth)
+
+	if receivedAuth == "" {
+		t.Fatal("no Authorization header sent to server on fetch — auth not wired")
+	}
+	expectedCredential := base64.StdEncoding.EncodeToString([]byte("x-access-token:ghs_fetch_token_wiring"))
+	if !strings.Contains(receivedAuth, expectedCredential) {
+		t.Errorf("Authorization header %q does not contain expected basic auth credential", receivedAuth)
+	}
+}
+
+// TestFetch_LocalPath_NoFetch verifies that calling Fetch on a Source opened
+// via Open (local path, no remote) returns nil without error — local-path sources
+// are never fetched.
+func TestFetch_LocalPath_NoFetch(t *testing.T) {
+	t.Parallel()
+
+	repoPath, _, _ := buildFixtureRepo(t)
+
+	src, err := gitsource.Open(repoPath)
+	if err != nil {
+		t.Fatalf("gitsource.Open: %v", err)
+	}
+
+	// A local-path Source has no remote; Fetch with empty remoteURL must be a no-op.
+	if err := src.Fetch("", nil); err != nil {
+		t.Errorf("Fetch on local-path source returned error: %v", err)
 	}
 }

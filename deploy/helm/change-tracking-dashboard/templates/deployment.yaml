@@ -52,6 +52,22 @@ spec:
             # LISTEN_ADDR: HTTP bind address for the feed server
             - name: LISTEN_ADDR
               value: ":8080"
+            {{- if .Values.githubApp.secretName }}
+            # GitHub App auth (US19): appID and installationID come from the
+            # Secret; the private key is mounted as a file.
+            - name: GITHUB_APP_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.githubApp.secretName }}
+                  key: appID
+            - name: GITHUB_APP_INSTALLATION_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.githubApp.secretName }}
+                  key: installationID
+            - name: GITHUB_APP_PRIVATE_KEY_FILE
+              value: /etc/github-app/privateKey
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /
@@ -72,6 +88,12 @@ spec:
             - name: config
               mountPath: /etc/dashboard
               readOnly: true
+            {{- if .Values.githubApp.secretName }}
+            # GitHub App private key (US19) — mounted from Secret as a file
+            - name: github-app-key
+              mountPath: /etc/github-app
+              readOnly: true
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
@@ -81,6 +103,16 @@ spec:
         - name: config
           configMap:
             name: {{ include "change-tracking-dashboard.fullname" . }}-tracker-config
+        {{- if .Values.githubApp.secretName }}
+        # GitHub App private key volume (US19) — provisioned by an ExternalSecret
+        # that syncs Vault path app/kargo/github-app (deploy task's responsibility).
+        # defaultMode 0400 (octal) = 256 (decimal): owner read-only, prevents
+        # other processes in the pod from reading the private key file.
+        - name: github-app-key
+          secret:
+            secretName: {{ .Values.githubApp.secretName }}
+            defaultMode: 0400
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
