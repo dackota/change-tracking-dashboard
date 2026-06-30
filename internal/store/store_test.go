@@ -93,8 +93,10 @@ func TestHighWaterMark(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 
+	const filePath = "apps/tenant-zero/dev/us-west-2/Chart.yaml"
+
 	// Reading before any write returns empty string.
-	sha, err := s.GetHighWaterMark("apps-repo")
+	sha, err := s.GetHighWaterMark("apps-repo", filePath)
 	if err != nil {
 		t.Fatalf("GetHighWaterMark (empty): %v", err)
 	}
@@ -103,12 +105,12 @@ func TestHighWaterMark(t *testing.T) {
 	}
 
 	// Write a mark.
-	if err := s.SetHighWaterMark("apps-repo", "abc123"); err != nil {
+	if err := s.SetHighWaterMark("apps-repo", filePath, "abc123"); err != nil {
 		t.Fatalf("SetHighWaterMark: %v", err)
 	}
 
 	// Read it back.
-	sha, err = s.GetHighWaterMark("apps-repo")
+	sha, err = s.GetHighWaterMark("apps-repo", filePath)
 	if err != nil {
 		t.Fatalf("GetHighWaterMark (after set): %v", err)
 	}
@@ -117,15 +119,64 @@ func TestHighWaterMark(t *testing.T) {
 	}
 
 	// Overwrite the mark.
-	if err := s.SetHighWaterMark("apps-repo", "def456"); err != nil {
+	if err := s.SetHighWaterMark("apps-repo", filePath, "def456"); err != nil {
 		t.Fatalf("SetHighWaterMark (overwrite): %v", err)
 	}
-	sha, err = s.GetHighWaterMark("apps-repo")
+	sha, err = s.GetHighWaterMark("apps-repo", filePath)
 	if err != nil {
 		t.Fatalf("GetHighWaterMark (overwrite): %v", err)
 	}
 	if sha != "def456" {
 		t.Errorf("GetHighWaterMark (overwrite): got %q, want def456", sha)
+	}
+}
+
+// TestHighWaterMark_PerFileGranularity verifies that the HWM is keyed at
+// (repo, filePath) granularity — two different files in the same repo each
+// resume independently and do not clobber each other's mark. This is the
+// critical correctness property that glob fan-out depends on: walking many
+// matched files through the same repo must not share one cursor.
+func TestHighWaterMark_PerFileGranularity(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+
+	const repo = "apps-repo"
+	const fileA = "a/x/Chart.yaml"
+	const fileB = "a/y/Chart.yaml"
+
+	if err := s.SetHighWaterMark(repo, fileA, "sha-a-1"); err != nil {
+		t.Fatalf("SetHighWaterMark (fileA): %v", err)
+	}
+	if err := s.SetHighWaterMark(repo, fileB, "sha-b-1"); err != nil {
+		t.Fatalf("SetHighWaterMark (fileB): %v", err)
+	}
+
+	gotA, err := s.GetHighWaterMark(repo, fileA)
+	if err != nil {
+		t.Fatalf("GetHighWaterMark (fileA): %v", err)
+	}
+	if gotA != "sha-a-1" {
+		t.Errorf("GetHighWaterMark(fileA) = %q, want sha-a-1 (must not be clobbered by fileB)", gotA)
+	}
+
+	gotB, err := s.GetHighWaterMark(repo, fileB)
+	if err != nil {
+		t.Fatalf("GetHighWaterMark (fileB): %v", err)
+	}
+	if gotB != "sha-b-1" {
+		t.Errorf("GetHighWaterMark(fileB) = %q, want sha-b-1", gotB)
+	}
+
+	// Advancing fileA's mark must not affect fileB's.
+	if err := s.SetHighWaterMark(repo, fileA, "sha-a-2"); err != nil {
+		t.Fatalf("SetHighWaterMark (fileA advance): %v", err)
+	}
+	gotB2, err := s.GetHighWaterMark(repo, fileB)
+	if err != nil {
+		t.Fatalf("GetHighWaterMark (fileB after fileA advance): %v", err)
+	}
+	if gotB2 != "sha-b-1" {
+		t.Errorf("GetHighWaterMark(fileB) after advancing fileA = %q, want unchanged sha-b-1", gotB2)
 	}
 }
 
