@@ -1,13 +1,18 @@
 package gitsource_test
 
 import (
+	"encoding/base64"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/gitsource"
 	"github.com/go-git/go-git/v5"
+	gogithttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
@@ -257,5 +262,99 @@ func TestWalkCommits_FilePath(t *testing.T) {
 		if snap.FilePath != "Chart.yaml" {
 			t.Errorf("FilePath = %q, want Chart.yaml", snap.FilePath)
 		}
+	}
+}
+
+// --- Authenticated remote clone tests ---
+
+// TestOpenOrClone_LocalPath_StillWorks verifies the existing local-path Open
+// path is unaffected when no auth is provided.
+func TestOpenOrClone_LocalPath_StillWorks(t *testing.T) {
+	t.Parallel()
+
+	repoPath, sha1, sha2 := buildFixtureRepo(t)
+	localDest := t.TempDir()
+
+	// Open a local repo path via OpenOrClone with nil auth.
+	src, err := gitsource.OpenOrClone(repoPath, localDest, nil)
+	if err != nil {
+		t.Fatalf("OpenOrClone (local): %v", err)
+	}
+
+	snapshots, err := src.WalkCommits("Chart.yaml", "", time.Time{})
+	if err != nil {
+		t.Fatalf("WalkCommits: %v", err)
+	}
+	if len(snapshots) != 2 {
+		t.Fatalf("expected 2 snapshots, got %d", len(snapshots))
+	}
+	if snapshots[0].CommitSha != sha1 || snapshots[1].CommitSha != sha2 {
+		t.Errorf("unexpected SHAs: %v", []string{snapshots[0].CommitSha, snapshots[1].CommitSha})
+	}
+}
+
+// TestOpenOrClone_RemoteHTTPS_SendsBasicAuth verifies that when a remote HTTPS
+// URL is given with BasicAuth credentials, go-git sends the Authorization header
+// to the server. We use an httptest.Server that records requests.
+func TestOpenOrClone_RemoteHTTPS_SendsBasicAuth(t *testing.T) {
+	t.Parallel()
+
+	// Track whether we received an Authorization header.
+	var receivedAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedAuth = r.Header.Get("Authorization")
+		// Return 401 to keep the test fast — we only care that the header was sent.
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(srv.Close)
+
+	localDest := t.TempDir()
+	auth := &gogithttp.BasicAuth{
+		Username: "x-access-token",
+		Password: "ghs_test_token_wiring",
+	}
+
+	// OpenOrClone will fail (server returns 401) but auth must have been attempted.
+	_, err := gitsource.OpenOrClone(srv.URL+"/repo.git", localDest, auth)
+	if err == nil {
+		t.Fatal("expected error from unauthenticated server, got nil")
+	}
+
+	// Verify the Authorization header was set with the expected credentials.
+	if receivedAuth == "" {
+		t.Fatal("no Authorization header sent to server — auth not wired")
+	}
+	expectedCredential := base64.StdEncoding.EncodeToString([]byte("x-access-token:ghs_test_token_wiring"))
+	if !strings.Contains(receivedAuth, expectedCredential) {
+		t.Errorf("Authorization header %q does not contain expected basic auth credential", receivedAuth)
+	}
+}
+
+// TestOpenOrClone_IdempotentOpen verifies that calling OpenOrClone a second time
+// on an already-cloned local destination opens the existing repo (no re-clone).
+func TestOpenOrClone_IdempotentOpen(t *testing.T) {
+	t.Parallel()
+
+	repoPath, sha1, _ := buildFixtureRepo(t)
+	localDest := t.TempDir()
+
+	// First call: clones to localDest.
+	_, err := gitsource.OpenOrClone(repoPath, localDest, nil)
+	if err != nil {
+		t.Fatalf("OpenOrClone (first): %v", err)
+	}
+
+	// Second call: must open the existing clone without error.
+	src2, err := gitsource.OpenOrClone(repoPath, localDest, nil)
+	if err != nil {
+		t.Fatalf("OpenOrClone (second / idempotent): %v", err)
+	}
+
+	snapshots, err := src2.WalkCommits("Chart.yaml", "", time.Time{})
+	if err != nil {
+		t.Fatalf("WalkCommits after idempotent open: %v", err)
+	}
+	if len(snapshots) < 1 || snapshots[0].CommitSha != sha1 {
+		t.Errorf("unexpected snapshots after idempotent open")
 	}
 }

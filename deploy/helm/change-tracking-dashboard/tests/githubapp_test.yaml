@@ -1,0 +1,78 @@
+suite: githubapp-auth
+templates:
+  - templates/deployment.yaml
+
+tests:
+  # --- Default: GitHub App auth disabled ---
+  - it: should NOT inject GITHUB_APP_ID when githubApp is disabled (default)
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GITHUB_APP_ID
+
+  - it: should NOT mount a github-app volume when githubApp is disabled (default)
+    asserts:
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: github-app-key
+
+  # --- Enabled: all wiring present ---
+  - it: should inject GITHUB_APP_ID env var from secret when githubApp is enabled
+    set:
+      githubApp.secretName: my-github-app-secret
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GITHUB_APP_ID
+            valueFrom:
+              secretKeyRef:
+                name: my-github-app-secret
+                key: appID
+
+  - it: should inject GITHUB_APP_INSTALLATION_ID env var from secret when githubApp is enabled
+    set:
+      githubApp.secretName: my-github-app-secret
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GITHUB_APP_INSTALLATION_ID
+            valueFrom:
+              secretKeyRef:
+                name: my-github-app-secret
+                key: installationID
+
+  - it: should inject GITHUB_APP_PRIVATE_KEY_FILE env var pointing to mount when githubApp is enabled
+    set:
+      githubApp.secretName: my-github-app-secret
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GITHUB_APP_PRIVATE_KEY_FILE
+            value: /etc/github-app/privateKey
+
+  - it: should mount the github-app-key volume at /etc/github-app when githubApp is enabled
+    set:
+      githubApp.secretName: my-github-app-secret
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: github-app-key
+            mountPath: /etc/github-app
+            readOnly: true
+
+  - it: should add a github-app-key volume from the secret when githubApp is enabled
+    set:
+      githubApp.secretName: my-github-app-secret
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: github-app-key
+            secret:
+              secretName: my-github-app-secret
