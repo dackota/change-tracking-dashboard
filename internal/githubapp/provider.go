@@ -98,7 +98,9 @@ func New(cfg Config) (*Provider, error) {
 		return nil, fmt.Errorf("githubapp: PrivateKeyPEM is not a valid PEM block")
 	}
 	if _, err := x509.ParsePKCS1PrivateKey(block.Bytes); err != nil {
-		return nil, fmt.Errorf("githubapp: invalid RSA private key: %w", err)
+		// Don't propagate the inner x509 error — it could echo key material
+		// details. Consistent with the AppsTransport error strip below.
+		return nil, fmt.Errorf("githubapp: invalid RSA private key")
 	}
 
 	baseURL := cfg.BaseURL

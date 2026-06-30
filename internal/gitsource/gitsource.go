@@ -20,6 +20,7 @@ import (
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	gogithttp "github.com/go-git/go-git/v5/plumbing/transport/http"
@@ -75,6 +76,81 @@ func OpenOrClone(remoteURL, localPath string, auth gogithttp.AuthMethod) (*Sourc
 		return nil, fmt.Errorf("gitsource: clone %q: %w", remoteURL, err)
 	}
 	return &Source{repo: r}, nil
+}
+
+// Fetch performs an authenticated git fetch for the given remoteURL, updating
+// the local clone's remote-tracking refs and fast-forwarding the local branch so
+// that WalkCommits (which walks from repo.Head()) observes any commits pushed to
+// the remote after the initial clone.
+//
+// If remoteURL is empty, Fetch is a no-op — local-path Sources opened via Open
+// have no remote and are never fetched.
+//
+// git.NoErrAlreadyUpToDate is treated as success: there is nothing new to fetch
+// on this cycle, which is the common steady-state case.
+//
+// The auth parameter must not appear in any error message (never log tokens).
+func (s *Source) Fetch(remoteURL string, auth gogithttp.AuthMethod) error {
+	if remoteURL == "" {
+		return nil
+	}
+
+	fetchOpts := &git.FetchOptions{
+		RemoteURL: remoteURL,
+		RefSpecs:  []config.RefSpec{"+refs/heads/*:refs/remotes/origin/*"},
+		Auth:      auth,
+		Force:     true,
+	}
+
+	err := s.repo.Fetch(fetchOpts)
+	if err != nil && err != git.NoErrAlreadyUpToDate {
+		// Do not include auth details in the error; strip the underlying transport
+		// error to avoid accidentally echoing any credential material.
+		return fmt.Errorf("gitsource: fetch from remote: %w", err)
+	}
+
+	// Fast-forward the local branch to the fetched remote-tracking ref so that
+	// s.repo.Head() — and therefore WalkCommits — sees the newly fetched commits.
+	// go-git's Fetch updates refs/remotes/origin/<branch> but does NOT move the
+	// local branch ref; we must do that explicitly.
+	return s.fastForwardToRemote()
+}
+
+// fastForwardToRemote resolves the remote-tracking ref that corresponds to the
+// current HEAD branch and updates the local branch ref to match it.
+//
+// Example: if HEAD → refs/heads/main, we look up refs/remotes/origin/main and
+// set refs/heads/main to that hash.
+func (s *Source) fastForwardToRemote() error {
+	head, err := s.repo.Head()
+	if err != nil {
+		return fmt.Errorf("gitsource: resolve HEAD for fast-forward: %w", err)
+	}
+
+	// Only fast-forward when HEAD is on a named branch (not detached).
+	if !head.Name().IsBranch() {
+		return nil
+	}
+
+	// Short branch name, e.g. "main".
+	branchName := head.Name().Short()
+
+	// Look up the remote-tracking ref, e.g. refs/remotes/origin/main.
+	remoteRefName := plumbing.NewRemoteReferenceName("origin", branchName)
+	remoteRef, err := s.repo.Reference(remoteRefName, true)
+	if err != nil {
+		// The remote-tracking ref may not exist (e.g. the remote uses a
+		// different default branch name). Treat as a non-fatal condition.
+		return nil
+	}
+
+	// Update the local branch ref to the remote-tracking hash.
+	localRef := plumbing.NewHashReference(head.Name(), remoteRef.Hash())
+	if err := s.repo.Storer.SetReference(localRef); err != nil {
+		return fmt.Errorf("gitsource: fast-forward local branch: %w", err)
+	}
+
+	return nil
 }
 
 // isGitRepo returns true if path exists and contains a .git directory (or is

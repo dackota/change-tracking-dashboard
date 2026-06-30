@@ -141,67 +141,113 @@ func run(configPath, dbPath, listenAddr string) error {
 	return srv.ListenAndServe()
 }
 
-// sourceCache is a small thread-safe map from repo path → *gitsource.Source.
+// cachedSource bundles a gitsource.Source with the remote URL it was cloned
+// from (empty string for local-path sources). The remoteURL is used on every
+// subsequent poll cycle to perform an authenticated fetch so that commits pushed
+// to the remote after the initial clone are observed by WalkCommits.
+type cachedSource struct {
+	src       *gitsource.Source
+	remoteURL string // empty for local-path sources — no fetch needed
+}
+
+// sourceCache is a small thread-safe map from repo path/URL → cachedSource.
 // Opening a gitsource is cheap (local disk), but we avoid re-opening the same
 // repo on every poll cycle.
 //
-// When a tokenProvider is set, remote HTTPS repo URLs are cloned into a
-// local cache directory and authenticated with a fresh installation token.
-// Local paths continue to use PlainOpen.
+// For remote HTTPS repos the cache also performs an authenticated fetch on every
+// get() call so that newly-pushed commits are visible within each poll cycle.
+// Local paths continue to use PlainOpen without any fetch.
+//
+// NOTE: clone directories are placed under os.TempDir() (typically tmpfs on
+// many Kubernetes nodes). They are therefore ephemeral: a pod restart re-clones
+// from scratch. This is intentional — the store's high-water-mark resumes
+// incremental polling correctly after a re-clone with no data loss.
 type sourceCache struct {
 	mu            sync.Mutex
-	sources       map[string]*gitsource.Source
+	sources       map[string]*cachedSource
 	tokenProvider *githubapp.Provider // nil when GitHub App auth is disabled
 }
 
 func newSourceCache(tp *githubapp.Provider) *sourceCache {
 	return &sourceCache{
-		sources:       make(map[string]*gitsource.Source),
+		sources:       make(map[string]*cachedSource),
 		tokenProvider: tp,
 	}
 }
 
-// get returns the cached Source for the given repo path or URL, opening or
-// cloning it if necessary.
+// get returns the Source for the given repo path or URL. On the first call it
+// opens or clones the repo; on every subsequent call for a remote-backed source
+// it performs an authenticated fetch so that newly-pushed commits are visible to
+// WalkCommits within the same poll cycle.
 func (c *sourceCache) get(repo string) (*gitsource.Source, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if src, ok := c.sources[repo]; ok {
-		return src, nil
+	if cs, ok := c.sources[repo]; ok {
+		// Already cloned — fetch from the remote (if any) to pick up new commits.
+		if cs.remoteURL != "" {
+			auth, err := c.buildAuth(repo)
+			if err != nil {
+				return nil, err
+			}
+			if err := cs.src.Fetch(cs.remoteURL, auth); err != nil {
+				return nil, fmt.Errorf("fetch %q: %w", repo, err)
+			}
+		}
+		return cs.src, nil
 	}
 
-	src, err := c.openOrClone(repo)
+	cs, err := c.openOrClone(repo)
 	if err != nil {
 		return nil, err
 	}
-	c.sources[repo] = src
-	return src, nil
+	c.sources[repo] = cs
+	return cs.src, nil
+}
+
+// buildAuth constructs the BasicAuth for the given remote repo URL. Returns nil
+// when no tokenProvider is configured (unauthenticated access). The token value
+// never appears in any returned error.
+func (c *sourceCache) buildAuth(repo string) (gogithttp.AuthMethod, error) {
+	if c.tokenProvider == nil {
+		return nil, nil
+	}
+	tok, err := c.tokenProvider.Token()
+	if err != nil {
+		return nil, fmt.Errorf("get installation token for %q: %w", repo, err)
+	}
+	return &gogithttp.BasicAuth{
+		Username: "x-access-token",
+		Password: tok,
+	}, nil
 }
 
 // openOrClone opens a local path directly, or clones a remote HTTPS URL with
 // optional GitHub App token auth into a local directory under the system temp dir.
-func (c *sourceCache) openOrClone(repo string) (*gitsource.Source, error) {
+func (c *sourceCache) openOrClone(repo string) (*cachedSource, error) {
 	if isRemoteURL(repo) {
-		var auth gogithttp.AuthMethod
-		if c.tokenProvider != nil {
-			tok, err := c.tokenProvider.Token()
-			if err != nil {
-				return nil, fmt.Errorf("get installation token for %q: %w", repo, err)
-			}
-			auth = &gogithttp.BasicAuth{
-				Username: "x-access-token",
-				Password: tok,
-			}
+		auth, err := c.buildAuth(repo)
+		if err != nil {
+			return nil, err
 		}
-		// Use a stable local clone directory derived from the repo URL so the
-		// source cache survives process restarts without re-cloning from scratch.
+		// Clone into a stable local directory derived from the repo URL.
+		// Clones are ephemeral (os.TempDir() / tmpfs on many k8s nodes);
+		// the store's high-water-mark resumes polling after a pod restart
+		// with no data loss — see sourceCache doc comment.
 		localPath := filepath.Join(os.TempDir(), "ctd-clones", sanitizeRepoURL(repo))
-		return gitsource.OpenOrClone(repo, localPath, auth)
+		src, err := gitsource.OpenOrClone(repo, localPath, auth)
+		if err != nil {
+			return nil, err
+		}
+		return &cachedSource{src: src, remoteURL: repo}, nil
 	}
 
-	// Local path: use the existing PlainOpen path.
-	return gitsource.Open(repo)
+	// Local path: use the existing PlainOpen path; no remote to fetch.
+	src, err := gitsource.Open(repo)
+	if err != nil {
+		return nil, err
+	}
+	return &cachedSource{src: src, remoteURL: ""}, nil
 }
 
 // isRemoteURL returns true for http:// and https:// repo URLs.
