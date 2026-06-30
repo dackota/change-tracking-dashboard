@@ -56,10 +56,17 @@ CREATE TABLE IF NOT EXISTS changes (
     committed_at  TEXT    NOT NULL
 );`
 
+// high_water_marks is keyed by (repo, file_path), not repo alone: a glob
+// tracker fans out across many files in the same repo, and each walked file
+// must resume from its own cursor — sharing one repo-level cursor would let
+// files clobber each other's resume point and either skip or re-process
+// commits depending on walk order.
 const schemaHWM = `
 CREATE TABLE IF NOT EXISTS high_water_marks (
-    repo TEXT PRIMARY KEY,
-    sha  TEXT NOT NULL
+    repo      TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    sha       TEXT NOT NULL,
+    PRIMARY KEY (repo, file_path)
 );`
 
 func (s *Store) migrate() error {
@@ -132,29 +139,31 @@ LIMIT ?`
 	return results, nil
 }
 
-// GetHighWaterMark returns the last persisted commit SHA for the given repo,
-// or an empty string if none has been set yet.
-func (s *Store) GetHighWaterMark(repo string) (string, error) {
-	const query = `SELECT sha FROM high_water_marks WHERE repo = ?`
+// GetHighWaterMark returns the last persisted commit SHA for the given
+// (repo, filePath) pair, or an empty string if none has been set yet. Keying
+// by file path (not just repo) lets a glob tracker's fanned-out files each
+// resume independently.
+func (s *Store) GetHighWaterMark(repo, filePath string) (string, error) {
+	const query = `SELECT sha FROM high_water_marks WHERE repo = ? AND file_path = ?`
 	var sha string
-	err := s.db.QueryRow(query, repo).Scan(&sha)
+	err := s.db.QueryRow(query, repo, filePath).Scan(&sha)
 	if err == sql.ErrNoRows {
 		return "", nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("store: get high water mark for %q: %w", repo, err)
+		return "", fmt.Errorf("store: get high water mark for %q/%q: %w", repo, filePath, err)
 	}
 	return sha, nil
 }
 
 // SetHighWaterMark records or overwrites the high-water-mark commit SHA for
-// the given repo.
-func (s *Store) SetHighWaterMark(repo, sha string) error {
+// the given (repo, filePath) pair.
+func (s *Store) SetHighWaterMark(repo, filePath, sha string) error {
 	const query = `
-INSERT INTO high_water_marks (repo, sha) VALUES (?, ?)
-ON CONFLICT(repo) DO UPDATE SET sha = excluded.sha`
-	if _, err := s.db.Exec(query, repo, sha); err != nil {
-		return fmt.Errorf("store: set high water mark for %q: %w", repo, err)
+INSERT INTO high_water_marks (repo, file_path, sha) VALUES (?, ?, ?)
+ON CONFLICT(repo, file_path) DO UPDATE SET sha = excluded.sha`
+	if _, err := s.db.Exec(query, repo, filePath, sha); err != nil {
+		return fmt.Errorf("store: set high water mark for %q/%q: %w", repo, filePath, err)
 	}
 	return nil
 }

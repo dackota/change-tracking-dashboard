@@ -319,7 +319,7 @@ func TestPoller_ResumesFromHighWaterMark(t *testing.T) {
 	st := newTestStore(t)
 
 	// Pre-seed the high-water mark to sha1, simulating a prior run that stopped there.
-	if err := st.SetHighWaterMark(repoPath, sha1); err != nil {
+	if err := st.SetHighWaterMark(repoPath, "Chart.yaml", sha1); err != nil {
 		t.Fatalf("SetHighWaterMark: %v", err)
 	}
 
@@ -457,7 +457,7 @@ func TestPoller_FirstRun_BackfillWindowExcludesOldCommits(t *testing.T) {
 	}
 
 	// HWM should be sha3 (the last commit walked).
-	hwm, err := st.GetHighWaterMark(repoPath)
+	hwm, err := st.GetHighWaterMark(repoPath, "Chart.yaml")
 	if err != nil {
 		t.Fatalf("GetHighWaterMark: %v", err)
 	}
@@ -488,7 +488,7 @@ func TestPoller_IncrementalRun_UnaffectedByBackfillWindow(t *testing.T) {
 	}
 
 	st := newTestStore(t)
-	if err := st.SetHighWaterMark(repoPath, sha1); err != nil {
+	if err := st.SetHighWaterMark(repoPath, "Chart.yaml", sha1); err != nil {
 		t.Fatalf("SetHighWaterMark: %v", err)
 	}
 
@@ -526,7 +526,7 @@ func TestPoller_IncrementalRun_UnaffectedByBackfillWindow(t *testing.T) {
 		t.Errorf("feed[1] = %v→%v, want 1.0.0→1.1.0 (sha2, dated before the cutoff)", got.OldValue, got.NewValue)
 	}
 
-	hwm, err := st.GetHighWaterMark(repoPath)
+	hwm, err := st.GetHighWaterMark(repoPath, "Chart.yaml")
 	if err != nil {
 		t.Fatalf("GetHighWaterMark: %v", err)
 	}
@@ -553,7 +553,7 @@ func TestPoller_HWMContentLookup_WorksForOutOfWindowHWM(t *testing.T) {
 	}
 
 	st := newTestStore(t)
-	if err := st.SetHighWaterMark(repoPath, sha1); err != nil {
+	if err := st.SetHighWaterMark(repoPath, "Chart.yaml", sha1); err != nil {
 		t.Fatalf("SetHighWaterMark: %v", err)
 	}
 
@@ -583,7 +583,7 @@ func TestPoller_HWMContentLookup_WorksForOutOfWindowHWM(t *testing.T) {
 		t.Fatalf("got %d changes, want 2", len(feed))
 	}
 
-	hwm, err := st.GetHighWaterMark(repoPath)
+	hwm, err := st.GetHighWaterMark(repoPath, "Chart.yaml")
 	if err != nil {
 		t.Fatalf("GetHighWaterMark: %v", err)
 	}
@@ -767,5 +767,263 @@ func TestPoller_KeyedEndToEnd(t *testing.T) {
 		if an.NewValue == nil || *an.NewValue != "2.0.0" {
 			t.Errorf("aidp-analytics: NewValue = %v, want 2.0.0", an.NewValue)
 		}
+	}
+}
+
+// --- Glob fan-out tests ---
+
+// buildGlobFanOutRepo creates a fixture repo with two files matching the glob
+// "a/*/Chart.yaml" (a/x/Chart.yaml, a/y/Chart.yaml) plus one non-matching file
+// (b/Chart.yaml). Each matching file gets two commits so the poller's
+// add-then-modify pipeline is exercised per file.
+func buildGlobFanOutRepo(t *testing.T) (repoPath string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	repo, err := git.PlainInit(dir, false)
+	if err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("worktree: %v", err)
+	}
+
+	writeAndCommit := func(relPath, content, msg string, when time.Time) string {
+		full := filepath.Join(dir, relPath)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir for %q: %v", relPath, err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %q: %v", relPath, err)
+		}
+		if _, err := wt.Add(relPath); err != nil {
+			t.Fatalf("git add %q: %v", relPath, err)
+		}
+		h, err := wt.Commit(msg, &git.CommitOptions{
+			Author: &object.Signature{Name: "dev", Email: "d@x.com", When: when},
+		})
+		if err != nil {
+			t.Fatalf("commit %q: %v", msg, err)
+		}
+		return h.String()
+	}
+
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// a/x/Chart.yaml: 1.0.0 -> 1.1.0
+	writeAndCommit("a/x/Chart.yaml", "version: \"1.0.0\"\n", "x init", base)
+	writeAndCommit("a/x/Chart.yaml", "version: \"1.1.0\"\n", "x bump", base.Add(time.Hour))
+
+	// a/y/Chart.yaml: 2.0.0 -> 2.1.0
+	writeAndCommit("a/y/Chart.yaml", "version: \"2.0.0\"\n", "y init", base.Add(2*time.Hour))
+	writeAndCommit("a/y/Chart.yaml", "version: \"2.1.0\"\n", "y bump", base.Add(3*time.Hour))
+
+	// b/Chart.yaml: does NOT match a/*/Chart.yaml — must be ignored entirely.
+	writeAndCommit("b/Chart.yaml", "version: \"9.9.9\"\n", "b init", base.Add(4*time.Hour))
+
+	return dir
+}
+
+// TestPoller_GlobFanOut_EmitsChangesPerMatchedFile verifies that a wildcard
+// FileGlob is expanded across the repo tree, and the existing
+// Extractor->Differ pipeline runs independently for each matching file, with
+// facets derived from each file's own path. The non-matching file must produce
+// no Changes at all.
+func TestPoller_GlobFanOut_EmitsChangesPerMatchedFile(t *testing.T) {
+	t.Parallel()
+
+	repoPath := buildGlobFanOutRepo(t)
+
+	src, err := gitsource.Open(repoPath)
+	if err != nil {
+		t.Fatalf("gitsource.Open: %v", err)
+	}
+
+	st := newTestStore(t)
+
+	tracker := domain.Tracker{
+		Repo:          repoPath,
+		FileGlob:      "a/*/Chart.yaml",
+		Field:         "chart-version",
+		ExtractorExpr: ".version",
+		FacetPattern:  `^a/(?P<app>[^/]+)/Chart\.yaml$`,
+		BackfillDays:  3650,
+	}
+
+	p := poller.New(src, st)
+	if err := p.Poll(tracker); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+
+	feed, err := st.QueryFeed(100)
+	if err != nil {
+		t.Fatalf("QueryFeed: %v", err)
+	}
+
+	// Each matched file has 2 commits -> one modified Change per file (1.0.0->1.1.0
+	// and 2.0.0->2.1.0). The non-matching b/Chart.yaml must contribute nothing.
+	if len(feed) != 2 {
+		t.Fatalf("got %d changes, want 2 (one per matched file); feed = %+v", len(feed), feed)
+	}
+
+	byApp := make(map[string]domain.Change, len(feed))
+	for _, c := range feed {
+		byApp[c.Facets["app"]] = c
+	}
+
+	x, ok := byApp["x"]
+	if !ok {
+		t.Fatalf("missing Change for app=x; feed = %+v", feed)
+	}
+	if x.FilePath != "a/x/Chart.yaml" {
+		t.Errorf("x.FilePath = %q, want a/x/Chart.yaml", x.FilePath)
+	}
+	if x.OldValue == nil || *x.OldValue != "1.0.0" {
+		t.Errorf("x.OldValue = %v, want 1.0.0", x.OldValue)
+	}
+	if x.NewValue == nil || *x.NewValue != "1.1.0" {
+		t.Errorf("x.NewValue = %v, want 1.1.0", x.NewValue)
+	}
+
+	y, ok := byApp["y"]
+	if !ok {
+		t.Fatalf("missing Change for app=y; feed = %+v", feed)
+	}
+	if y.FilePath != "a/y/Chart.yaml" {
+		t.Errorf("y.FilePath = %q, want a/y/Chart.yaml", y.FilePath)
+	}
+	if y.OldValue == nil || *y.OldValue != "2.0.0" {
+		t.Errorf("y.OldValue = %v, want 2.0.0", y.OldValue)
+	}
+	if y.NewValue == nil || *y.NewValue != "2.1.0" {
+		t.Errorf("y.NewValue = %v, want 2.1.0", y.NewValue)
+	}
+
+	// The non-matching file must never appear.
+	for _, c := range feed {
+		if c.FilePath == "b/Chart.yaml" {
+			t.Errorf("non-matching file b/Chart.yaml produced a Change: %+v", c)
+		}
+	}
+}
+
+// TestPoller_GlobFanOut_ResumePerFile verifies the critical per-file HWM
+// correctness property: after a first poll fans out across matched files, a
+// second poll with a NEW commit on only ONE matched file emits exactly that
+// file's new Change — the other matched file's already-processed history is
+// not recomputed, and the two files' resume cursors never clobber each other.
+func TestPoller_GlobFanOut_ResumePerFile(t *testing.T) {
+	t.Parallel()
+
+	repoPath := buildGlobFanOutRepo(t)
+
+	src, err := gitsource.Open(repoPath)
+	if err != nil {
+		t.Fatalf("gitsource.Open: %v", err)
+	}
+
+	st := newTestStore(t)
+
+	tracker := domain.Tracker{
+		Repo:          repoPath,
+		FileGlob:      "a/*/Chart.yaml",
+		Field:         "chart-version",
+		ExtractorExpr: ".version",
+		FacetPattern:  `^a/(?P<app>[^/]+)/Chart\.yaml$`,
+		BackfillDays:  3650,
+	}
+
+	p := poller.New(src, st)
+
+	// First poll: establishes both files' baselines (2 changes, as above).
+	if err := p.Poll(tracker); err != nil {
+		t.Fatalf("Poll (first): %v", err)
+	}
+	feedAfterFirst, err := st.QueryFeed(100)
+	if err != nil {
+		t.Fatalf("QueryFeed (first): %v", err)
+	}
+	if len(feedAfterFirst) != 2 {
+		t.Fatalf("after first poll: got %d changes, want 2", len(feedAfterFirst))
+	}
+
+	// Add a new commit to ONLY a/x/Chart.yaml.
+	xPath := filepath.Join(repoPath, "a", "x", "Chart.yaml")
+	if err := os.WriteFile(xPath, []byte("version: \"1.2.0\"\n"), 0o644); err != nil {
+		t.Fatalf("write x bump2: %v", err)
+	}
+	wt, err := func() (*git.Worktree, error) {
+		r, err := git.PlainOpen(repoPath)
+		if err != nil {
+			return nil, err
+		}
+		return r.Worktree()
+	}()
+	if err != nil {
+		t.Fatalf("worktree for second commit: %v", err)
+	}
+	if _, err := wt.Add("a/x/Chart.yaml"); err != nil {
+		t.Fatalf("git add x bump2: %v", err)
+	}
+	if _, err := wt.Commit("x bump2", &git.CommitOptions{
+		Author: &object.Signature{Name: "dev", Email: "d@x.com",
+			When: time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)},
+	}); err != nil {
+		t.Fatalf("commit x bump2: %v", err)
+	}
+
+	// Second poll: must only emit a/x/Chart.yaml's new change (1.1.0->1.2.0).
+	// a/y/Chart.yaml has no new commits and must not be reprocessed at all —
+	// proving its HWM was not clobbered by a/x/Chart.yaml's advance.
+	if err := p.Poll(tracker); err != nil {
+		t.Fatalf("Poll (second): %v", err)
+	}
+
+	feedAfterSecond, err := st.QueryFeed(100)
+	if err != nil {
+		t.Fatalf("QueryFeed (second): %v", err)
+	}
+	if len(feedAfterSecond) != 3 {
+		t.Fatalf("after second poll: got %d changes, want 3 (2 baseline + 1 new for x)", len(feedAfterSecond))
+	}
+
+	var newChanges []domain.Change
+	for _, c := range feedAfterSecond {
+		if c.OldValue != nil && *c.OldValue == "1.1.0" {
+			newChanges = append(newChanges, c)
+		}
+	}
+	if len(newChanges) != 1 {
+		t.Fatalf("expected exactly 1 new change (x: 1.1.0->1.2.0), got %d: %+v", len(newChanges), newChanges)
+	}
+	nc := newChanges[0]
+	if nc.FilePath != "a/x/Chart.yaml" {
+		t.Errorf("new change FilePath = %q, want a/x/Chart.yaml", nc.FilePath)
+	}
+	if nc.NewValue == nil || *nc.NewValue != "1.2.0" {
+		t.Errorf("new change NewValue = %v, want 1.2.0", nc.NewValue)
+	}
+	if nc.Facets["app"] != "x" {
+		t.Errorf("new change facet app = %q, want x", nc.Facets["app"])
+	}
+
+	// y's HWM must be untouched: GetHighWaterMark(repo, a/y/Chart.yaml) still
+	// resolves to its own last-processed commit, independent of x's advance.
+	hwmY, err := st.GetHighWaterMark(repoPath, "a/y/Chart.yaml")
+	if err != nil {
+		t.Fatalf("GetHighWaterMark (y): %v", err)
+	}
+	if hwmY == "" {
+		t.Error("HWM for a/y/Chart.yaml is empty after polls — per-file HWM not being set")
+	}
+
+	hwmX, err := st.GetHighWaterMark(repoPath, "a/x/Chart.yaml")
+	if err != nil {
+		t.Fatalf("GetHighWaterMark (x): %v", err)
+	}
+	if hwmX == hwmY {
+		t.Errorf("HWM for x (%q) and y (%q) must differ — they are independent per-file cursors", hwmX, hwmY)
 	}
 }

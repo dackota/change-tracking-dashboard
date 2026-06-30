@@ -12,8 +12,8 @@ import (
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/gitsource"
 	"github.com/go-git/go-git/v5"
-	gogithttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	gogithttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 )
 
 // buildFixtureRepo creates a temporary git repo with two commits to a Chart.yaml.
@@ -525,5 +525,104 @@ func TestFetch_LocalPath_NoFetch(t *testing.T) {
 	// A local-path Source has no remote; Fetch with empty remoteURL must be a no-op.
 	if err := src.Fetch("", nil); err != nil {
 		t.Errorf("Fetch on local-path source returned error: %v", err)
+	}
+}
+
+// --- MatchingFiles (glob fan-out) tests ---
+
+// buildGlobFixtureRepo creates a fixture repo with multiple files under "a/"
+// that match the glob "a/*/Chart.yaml", plus one file that does not match.
+func buildGlobFixtureRepo(t *testing.T) (repoPath string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	repo, err := git.PlainInit(dir, false)
+	if err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("worktree: %v", err)
+	}
+
+	files := map[string]string{
+		"a/x/Chart.yaml": "version: \"1.0.0\"\n",
+		"a/y/Chart.yaml": "version: \"2.0.0\"\n",
+		"a/y/notes.txt":  "not a chart\n",
+		"b/Chart.yaml":   "version: \"3.0.0\"\n", // does not match a/*/Chart.yaml
+	}
+
+	for rel, content := range files {
+		full := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir for %q: %v", rel, err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %q: %v", rel, err)
+		}
+		if _, err := wt.Add(rel); err != nil {
+			t.Fatalf("git add %q: %v", rel, err)
+		}
+	}
+
+	if _, err := wt.Commit("init", &git.CommitOptions{
+		Author: &object.Signature{Name: "alice", Email: "a@x.com",
+			When: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)},
+	}); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	return dir
+}
+
+// TestMatchingFiles_ReturnsOnlyGlobMatches verifies that MatchingFiles enumerates
+// the HEAD tree and returns exactly the blob paths matching the glob pattern,
+// excluding non-matching files (including files matching a deeper-than-the-pattern
+// or shallower-than-the-pattern shape).
+func TestMatchingFiles_ReturnsOnlyGlobMatches(t *testing.T) {
+	t.Parallel()
+
+	repoPath := buildGlobFixtureRepo(t)
+
+	src, err := gitsource.Open(repoPath)
+	if err != nil {
+		t.Fatalf("gitsource.Open: %v", err)
+	}
+
+	matches, err := src.MatchingFiles("a/*/Chart.yaml")
+	if err != nil {
+		t.Fatalf("MatchingFiles: %v", err)
+	}
+
+	want := []string{"a/x/Chart.yaml", "a/y/Chart.yaml"}
+	if len(matches) != len(want) {
+		t.Fatalf("MatchingFiles returned %v, want %v", matches, want)
+	}
+	for i, w := range want {
+		if matches[i] != w {
+			t.Errorf("matches[%d] = %q, want %q (matches=%v)", i, matches[i], w, matches)
+		}
+	}
+}
+
+// TestMatchingFiles_NoMatches verifies that a glob matching nothing returns an
+// empty (not nil-panicking, not erroring) slice.
+func TestMatchingFiles_NoMatches(t *testing.T) {
+	t.Parallel()
+
+	repoPath := buildGlobFixtureRepo(t)
+
+	src, err := gitsource.Open(repoPath)
+	if err != nil {
+		t.Fatalf("gitsource.Open: %v", err)
+	}
+
+	matches, err := src.MatchingFiles("nope/*/nothing.yaml")
+	if err != nil {
+		t.Fatalf("MatchingFiles: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Errorf("MatchingFiles (no match) = %v, want empty", matches)
 	}
 }

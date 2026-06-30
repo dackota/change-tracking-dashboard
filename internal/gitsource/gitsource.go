@@ -15,7 +15,9 @@ import (
 	"io"
 	"log"
 	"os"
+	"path"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
@@ -251,6 +253,58 @@ func (s *Source) WalkCommits(filePath, sinceCommitSha string, notBefore time.Tim
 	}
 
 	return raw, nil
+}
+
+// MatchingFiles enumerates every blob path in the repository's HEAD tree and
+// returns those whose path matches glob, using path.Match semantics (a single
+// "*" matches any sequence of non-separator characters within one path
+// segment; "**" is not supported — the deployed globs are single-segment
+// wildcards only). Paths are git-style forward-slash-separated, matching what
+// path.Match expects.
+//
+// The returned slice is sorted lexicographically for deterministic fan-out
+// ordering. Matching is scoped to files present at HEAD — a file deleted
+// before HEAD is not discovered, mirroring how a literal FileGlob only ever
+// tracked a file that currently exists.
+func (s *Source) MatchingFiles(glob string) ([]string, error) {
+	head, err := s.repo.Head()
+	if err != nil {
+		return nil, fmt.Errorf("gitsource: get HEAD: %w", err)
+	}
+
+	commit, err := s.repo.CommitObject(head.Hash())
+	if err != nil {
+		return nil, fmt.Errorf("gitsource: get HEAD commit: %w", err)
+	}
+
+	tree, err := commit.Tree()
+	if err != nil {
+		return nil, fmt.Errorf("gitsource: get HEAD tree: %w", err)
+	}
+
+	var matches []string
+	walker := tree.Files()
+	defer walker.Close()
+	for {
+		f, err := walker.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("gitsource: walk HEAD tree: %w", err)
+		}
+
+		ok, err := path.Match(glob, f.Name)
+		if err != nil {
+			return nil, fmt.Errorf("gitsource: match glob %q: %w", glob, err)
+		}
+		if ok {
+			matches = append(matches, f.Name)
+		}
+	}
+
+	sort.Strings(matches)
+	return matches, nil
 }
 
 // fileContentAtCommit extracts the raw bytes of filePath from the given commit's
