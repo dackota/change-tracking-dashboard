@@ -8,6 +8,7 @@ import (
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/changeset"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/filter"
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/store"
 )
 
 // csBase is the reference commit time for changeset query tests.
@@ -470,6 +471,340 @@ func TestQueryChangesets_MixedCommitYieldsOneChangesetWithDifferingKinds(t *test
 	}
 	if gotKinds[changeset.KindValue] != 1 {
 		t.Errorf("KindValue count = %d, want 1", gotKinds[changeset.KindValue])
+	}
+}
+
+// TestQueryChangesets_Pagination_LargeSetWithSmallPageWalksWithNoGapsOrOverlaps
+// stress-tests the CTE bound at a scale (commits far exceeding the page
+// size) that a naive unbounded-scan implementation and a correctly-bounded
+// one would both pass functionally, but which is exactly the shape of query
+// the MEDIUM was about: a small page size against a large table. It proves
+// the bound doesn't silently drop or duplicate commits partway through the
+// scan.
+func TestQueryChangesets_Pagination_LargeSetWithSmallPageWalksWithNoGapsOrOverlaps(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+
+	const totalCommits = 47
+	const pageSize = 5
+
+	var all []domain.Change
+	for i := 0; i < totalCommits; i++ {
+		all = append(all, domain.Change{
+			Repo: "apps-repo", FilePath: "values.yaml", Field: "f",
+			ChangeType:  domain.ChangeTypeModified,
+			OldValue:    ptr("a"),
+			NewValue:    ptr("b"),
+			CommitSha:   fmt.Sprintf("commit-%03d", i),
+			Author:      "alice",
+			CommittedAt: csBase.Add(time.Duration(i) * time.Hour),
+		})
+	}
+	seedChanges(t, s, all)
+
+	asOf := csBase.Add(time.Duration(totalCommits) * time.Hour)
+
+	var gotShas []string
+	seen := map[string]bool{}
+	cursor := ""
+	maxPages := totalCommits/pageSize + 2 // hard cap to avoid an infinite loop on a bug
+	for pages := 0; pages < maxPages; pages++ {
+		page, err := s.QueryChangesets(asOf, filter.FilterSpec{}, cursor, pageSize)
+		if err != nil {
+			t.Fatalf("QueryChangesets (cursor=%q): %v", cursor, err)
+		}
+		for _, cs := range page.Changesets {
+			if seen[cs.CommitSha] {
+				t.Fatalf("commit %q returned more than once across pages (overlap)", cs.CommitSha)
+			}
+			seen[cs.CommitSha] = true
+			gotShas = append(gotShas, cs.CommitSha)
+		}
+		if page.NextCursor == "" {
+			break
+		}
+		cursor = page.NextCursor
+	}
+
+	if len(gotShas) != totalCommits {
+		t.Fatalf("walked %d Changesets across all pages, want %d (no gaps/overlaps)", len(gotShas), totalCommits)
+	}
+	for i := 0; i < totalCommits; i++ {
+		want := fmt.Sprintf("commit-%03d", totalCommits-1-i)
+		if gotShas[i] != want {
+			t.Fatalf("gotShas[%d] = %q, want %q (most-recent-first order broken)", i, gotShas[i], want)
+		}
+	}
+}
+
+// TestQueryChangesets_IncludeFilter_AppliesUnderSmallPageBound verifies that
+// the FilterSpec's include clause is applied inside the bounded CTE itself
+// (not just to the final in-memory result): with a small page size, filtered-
+// out commits must not consume slots in the bounded distinct-commit scan and
+// must never surface in the page.
+func TestQueryChangesets_IncludeFilter_AppliesUnderSmallPageBound(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+
+	var all []domain.Change
+	for i := 0; i < 10; i++ {
+		env := "prod"
+		if i%2 == 0 {
+			env = "dev"
+		}
+		all = append(all, domain.Change{
+			Repo: "apps-repo", FilePath: "values.yaml", Field: "f",
+			ChangeType:  domain.ChangeTypeModified,
+			OldValue:    ptr("a"),
+			NewValue:    ptr("b"),
+			Facets:      map[string]string{"env": env},
+			CommitSha:   fmt.Sprintf("commit-%02d", i),
+			Author:      "alice",
+			CommittedAt: csBase.Add(time.Duration(i) * time.Hour),
+		})
+	}
+	seedChanges(t, s, all)
+
+	spec, err := filter.Parse(map[string][]string{"env": {"dev"}}, map[string]struct{}{"env": {}})
+	if err != nil {
+		t.Fatalf("filter.Parse: %v", err)
+	}
+
+	page, err := s.QueryChangesets(csBase.Add(10*time.Hour), spec, "", 2)
+	if err != nil {
+		t.Fatalf("QueryChangesets: %v", err)
+	}
+
+	if len(page.Changesets) != 2 {
+		t.Fatalf("got %d Changesets, want 2", len(page.Changesets))
+	}
+	for _, cs := range page.Changesets {
+		if len(cs.Changes) == 0 || cs.Changes[0].Facets["env"] != "dev" {
+			t.Errorf("Changeset %q has env facet %q, want dev", cs.CommitSha, cs.Changes[0].Facets["env"])
+		}
+	}
+	// Newest dev commits are commit-08 (i=8) and commit-06 (i=6).
+	if page.Changesets[0].CommitSha != "commit-08" {
+		t.Errorf("Changesets[0].CommitSha = %q, want commit-08", page.Changesets[0].CommitSha)
+	}
+	if page.Changesets[1].CommitSha != "commit-06" {
+		t.Errorf("Changesets[1].CommitSha = %q, want commit-06", page.Changesets[1].CommitSha)
+	}
+	if page.NextCursor == "" {
+		t.Fatal("NextCursor is empty, want non-empty (more dev commits remain)")
+	}
+}
+
+// TestQueryChangesets_FilterAppliesPerChangeRowWithinACommit is the
+// regression case for the bounded-scan fix: a single commit whose Changes
+// carry heterogeneous facets must have the filter applied per Change row,
+// not just used to pick which commits make the page. Bounding the SQL scan
+// by distinct commit must not regress the pre-existing per-row filtering
+// semantics — a commit that matches the filter overall must still surface
+// only its matching Changes, exactly as the original (per-row-filtered,
+// unbounded) query did.
+func TestQueryChangesets_FilterAppliesPerChangeRowWithinACommit(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+
+	const commitSha = "commit-mixed-facets"
+	devChange := domain.Change{
+		Repo: "apps-repo", FilePath: "dev/values.yaml", Field: "image-tag-dev",
+		ChangeType: domain.ChangeTypeModified, OldValue: ptr("a"), NewValue: ptr("b"),
+		Facets:      map[string]string{"env": "dev"},
+		CommitSha:   commitSha,
+		Author:      "alice",
+		CommittedAt: csBase,
+	}
+	sbxChange := domain.Change{
+		Repo: "apps-repo", FilePath: "sbx/values.yaml", Field: "image-tag-sbx",
+		ChangeType: domain.ChangeTypeModified, OldValue: ptr("c"), NewValue: ptr("d"),
+		Facets:      map[string]string{"env": "sbx"},
+		CommitSha:   commitSha,
+		Author:      "alice",
+		CommittedAt: csBase,
+	}
+	seedChanges(t, s, []domain.Change{devChange, sbxChange})
+
+	asOf := csBase.Add(time.Hour)
+
+	t.Run("include env=dev returns only the dev Change", func(t *testing.T) {
+		spec, err := filter.Parse(map[string][]string{"env": {"dev"}}, map[string]struct{}{"env": {}})
+		if err != nil {
+			t.Fatalf("filter.Parse: %v", err)
+		}
+
+		page, err := s.QueryChangesets(asOf, spec, "", 100)
+		if err != nil {
+			t.Fatalf("QueryChangesets: %v", err)
+		}
+		if len(page.Changesets) != 1 {
+			t.Fatalf("got %d Changesets, want 1", len(page.Changesets))
+		}
+		cs := page.Changesets[0]
+		if len(cs.Changes) != 1 {
+			t.Fatalf("commit-mixed-facets Changeset has %d Changes, want 1 (only the env=dev match)", len(cs.Changes))
+		}
+		if cs.Changes[0].Field != "image-tag-dev" {
+			t.Errorf("Changes[0].Field = %q, want image-tag-dev", cs.Changes[0].Field)
+		}
+	})
+
+	t.Run("exclude env=-sbx keeps the commit but drops the sbx Change", func(t *testing.T) {
+		spec, err := filter.Parse(map[string][]string{"env": {"-sbx"}}, map[string]struct{}{"env": {}})
+		if err != nil {
+			t.Fatalf("filter.Parse: %v", err)
+		}
+
+		page, err := s.QueryChangesets(asOf, spec, "", 100)
+		if err != nil {
+			t.Fatalf("QueryChangesets: %v", err)
+		}
+		if len(page.Changesets) != 1 {
+			t.Fatalf("got %d Changesets, want 1 (commit survives via its non-excluded Change)", len(page.Changesets))
+		}
+		cs := page.Changesets[0]
+		if len(cs.Changes) != 1 {
+			t.Fatalf("commit-mixed-facets Changeset has %d Changes, want 1 (env=sbx Change must not reappear)", len(cs.Changes))
+		}
+		if cs.Changes[0].Field != "image-tag-dev" {
+			t.Errorf("Changes[0].Field = %q, want image-tag-dev (the non-excluded Change)", cs.Changes[0].Field)
+		}
+	})
+}
+
+// TestQueryChangesets_MultiChangeCommitAtPageBoundaryStaysWhole verifies
+// that the SQL-level bound (LIMIT over distinct commits, joined back to
+// fetch every Change row for those commits) never splits a commit's
+// Changeset across a page boundary, even when that commit produced many
+// Change rows and lands exactly at the edge of a small page.
+func TestQueryChangesets_MultiChangeCommitAtPageBoundaryStaysWhole(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+
+	const pageSize = 2
+	const changesInBoundaryCommit = 5
+
+	var all []domain.Change
+	// Two newer single-change commits ahead of the boundary commit.
+	all = append(all,
+		domain.Change{
+			Repo: "apps-repo", FilePath: "values.yaml", Field: "f",
+			ChangeType: domain.ChangeTypeModified, OldValue: ptr("a"), NewValue: ptr("b"),
+			CommitSha: "commit-newest", Author: "alice", CommittedAt: csBase.Add(3 * time.Hour),
+		},
+		domain.Change{
+			Repo: "apps-repo", FilePath: "values.yaml", Field: "f",
+			ChangeType: domain.ChangeTypeModified, OldValue: ptr("a"), NewValue: ptr("b"),
+			CommitSha: "commit-second", Author: "bob", CommittedAt: csBase.Add(2 * time.Hour),
+		},
+	)
+	// The boundary commit itself: falls right at the pageSize-th slot, and
+	// produced many Change rows — if the bound limited raw rows instead of
+	// distinct commits, this commit would be split mid-Changeset.
+	for i := 0; i < changesInBoundaryCommit; i++ {
+		all = append(all, domain.Change{
+			Repo: "apps-repo", FilePath: "values.yaml", Field: fmt.Sprintf("field-%d", i),
+			ChangeType: domain.ChangeTypeModified, OldValue: ptr("a"), NewValue: ptr("b"),
+			CommitSha: "commit-boundary", Author: "carol", CommittedAt: csBase.Add(time.Hour),
+		})
+	}
+	// An older commit that must land on the next page.
+	all = append(all, domain.Change{
+		Repo: "apps-repo", FilePath: "values.yaml", Field: "f",
+		ChangeType: domain.ChangeTypeModified, OldValue: ptr("a"), NewValue: ptr("b"),
+		CommitSha: "commit-oldest", Author: "dana", CommittedAt: csBase,
+	})
+
+	seedChanges(t, s, all)
+
+	page, err := s.QueryChangesets(csBase.Add(4*time.Hour), filter.FilterSpec{}, "", pageSize)
+	if err != nil {
+		t.Fatalf("QueryChangesets: %v", err)
+	}
+
+	if len(page.Changesets) != pageSize {
+		t.Fatalf("got %d Changesets, want %d", len(page.Changesets), pageSize)
+	}
+	if page.Changesets[0].CommitSha != "commit-newest" {
+		t.Errorf("Changesets[0].CommitSha = %q, want commit-newest", page.Changesets[0].CommitSha)
+	}
+	if page.Changesets[1].CommitSha != "commit-second" {
+		t.Errorf("Changesets[1].CommitSha = %q, want commit-second", page.Changesets[1].CommitSha)
+	}
+	if page.NextCursor == "" {
+		t.Fatal("NextCursor is empty, want non-empty (more commits remain)")
+	}
+
+	nextPage, err := s.QueryChangesets(csBase.Add(4*time.Hour), filter.FilterSpec{}, page.NextCursor, pageSize)
+	if err != nil {
+		t.Fatalf("QueryChangesets (page 2): %v", err)
+	}
+	if len(nextPage.Changesets) != pageSize {
+		t.Fatalf("page 2: got %d Changesets, want %d", len(nextPage.Changesets), pageSize)
+	}
+	if nextPage.Changesets[0].CommitSha != "commit-boundary" {
+		t.Fatalf("page 2 Changesets[0].CommitSha = %q, want commit-boundary", nextPage.Changesets[0].CommitSha)
+	}
+	if len(nextPage.Changesets[0].Changes) != changesInBoundaryCommit {
+		t.Errorf("commit-boundary Changeset has %d Changes, want all %d (must not be split by the page bound)",
+			len(nextPage.Changesets[0].Changes), changesInBoundaryCommit)
+	}
+	if nextPage.Changesets[1].CommitSha != "commit-oldest" {
+		t.Errorf("page 2 Changesets[1].CommitSha = %q, want commit-oldest", nextPage.Changesets[1].CommitSha)
+	}
+}
+
+// TestQueryChangesets_NonPositiveLimitIsClampedToHardMax verifies the store
+// closes the unbounded-materialization MEDIUM itself (defense in depth): a
+// caller passing limit <= 0 must not get every matching Changeset back in one
+// unbounded scan. Instead the store enforces its own hard maximum page size,
+// returning at most that many Changesets and a NextCursor so the rest can
+// still be reached by paging.
+func TestQueryChangesets_NonPositiveLimitIsClampedToHardMax(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+
+	const totalCommits = store.MaxChangesetPageSize + 5
+	var all []domain.Change
+	for i := 0; i < totalCommits; i++ {
+		all = append(all, domain.Change{
+			Repo: "apps-repo", FilePath: "values.yaml", Field: "f",
+			ChangeType:  domain.ChangeTypeModified,
+			OldValue:    ptr("a"),
+			NewValue:    ptr("b"),
+			CommitSha:   fmt.Sprintf("commit-%03d", i),
+			Author:      "alice",
+			CommittedAt: csBase.Add(time.Duration(i) * time.Hour),
+		})
+	}
+	seedChanges(t, s, all)
+
+	asOf := csBase.Add(time.Duration(totalCommits) * time.Hour)
+
+	page, err := s.QueryChangesets(asOf, filter.FilterSpec{}, "", 0)
+	if err != nil {
+		t.Fatalf("QueryChangesets (limit=0): %v", err)
+	}
+	if len(page.Changesets) != store.MaxChangesetPageSize {
+		t.Fatalf("got %d Changesets, want the hard max %d (limit<=0 must not be unbounded)", len(page.Changesets), store.MaxChangesetPageSize)
+	}
+	if page.NextCursor == "" {
+		t.Error("NextCursor is empty, want non-empty (more Changesets remain beyond the hard max)")
+	}
+
+	// An oversized explicit limit must be clamped the same way.
+	pageOversized, err := s.QueryChangesets(asOf, filter.FilterSpec{}, "", store.MaxChangesetPageSize*10)
+	if err != nil {
+		t.Fatalf("QueryChangesets (oversized limit): %v", err)
+	}
+	if len(pageOversized.Changesets) != store.MaxChangesetPageSize {
+		t.Fatalf("got %d Changesets for an oversized limit, want the hard max %d", len(pageOversized.Changesets), store.MaxChangesetPageSize)
 	}
 }
 
