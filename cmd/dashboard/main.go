@@ -126,8 +126,10 @@ func run(configPath, dbPath, listenAddr string) error {
 
 	// --- HTTP ---
 	handler := web.NewHandler(st)
+	changesetsHandler := web.NewChangesetsHandler(st)
 	mux := http.NewServeMux()
 	mux.Handle("/", handler)
+	mux.Handle("/api/changesets", changesetsHandler)
 
 	srv := &http.Server{
 		Addr:         listenAddr,
