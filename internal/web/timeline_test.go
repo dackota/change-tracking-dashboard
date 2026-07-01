@@ -1,6 +1,7 @@
 package web_test
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,7 +16,7 @@ import (
 func TestTimelineHandler_ReturnsHTMLShell(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewTimelineHandler()
+	h := web.NewTimelineHandler(newTestStore(t))
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
@@ -43,6 +44,113 @@ func TestTimelineHandler_ReturnsHTMLShell(t *testing.T) {
 	for _, cdnMarker := range []string{"cdn.", "unpkg.com", "jsdelivr", "googleapis.com", "http://", "https://"} {
 		if strings.Contains(body, cdnMarker) {
 			t.Errorf("body contains a possible external URL marker %q — script must be first-party only", cdnMarker)
+		}
+	}
+}
+
+// TestTimelineHandler_RendersOneControlPerFacetValue verifies that the shell
+// renders one tri-state control per known facet value — sourced from
+// store.FacetOptions() — carrying data-facet/data-value attributes so
+// timeline.js can wire click-to-cycle behavior without any server-side
+// template logic beyond rendering the known set.
+func TestTimelineHandler_RendersOneControlPerFacetValue(t *testing.T) {
+	t.Parallel()
+
+	st := newTestStore(t)
+	seedChangeWithFacets(t, st, "commit-a", map[string]string{"env": "dev", "tier": "sbx"})
+	seedChangeWithFacets(t, st, "commit-b", map[string]string{"env": "prod"})
+
+	h := web.NewTimelineHandler(st)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+
+	body := rr.Body.String()
+	for _, want := range []struct{ facet, value string }{
+		{"env", "dev"},
+		{"env", "prod"},
+		{"tier", "sbx"},
+	} {
+		wantAttr := fmt.Sprintf(`data-facet="%s" data-value="%s"`, want.facet, want.value)
+		if !strings.Contains(body, wantAttr) {
+			t.Errorf("body missing control for facet=%s value=%s (want attr %q); got:\n%s", want.facet, want.value, wantAttr, body)
+		}
+	}
+}
+
+// TestTimelineHandler_EmptyStore_RendersNoFacetControlsWithoutError verifies
+// that an empty store (no Changes, so no known facets) still renders the
+// shell successfully with no facet controls — an edge case that must not
+// panic or 500.
+func TestTimelineHandler_EmptyStore_RendersNoFacetControlsWithoutError(t *testing.T) {
+	t.Parallel()
+
+	h := web.NewTimelineHandler(newTestStore(t))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), `data-facet`) {
+		t.Errorf("expected no facet controls for an empty store; got:\n%s", rr.Body.String())
+	}
+}
+
+// TestTimelineHandler_FacetValueIsHTMLEscaped verifies that a facet value
+// containing HTML-significant characters is rendered escaped (via
+// html/template auto-escaping), never string-concatenated raw into the page.
+func TestTimelineHandler_FacetValueIsHTMLEscaped(t *testing.T) {
+	t.Parallel()
+
+	st := newTestStore(t)
+	const maliciousValue = `"><script>alert(1)</script>`
+	seedChangeWithFacets(t, st, "commit-xss", map[string]string{"env": maliciousValue})
+
+	h := web.NewTimelineHandler(st)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+
+	body := rr.Body.String()
+	if strings.Contains(body, "<script>alert(1)</script>") {
+		t.Errorf("facet value rendered unescaped — raw <script> tag present in body:\n%s", body)
+	}
+}
+
+// TestTimelineHandler_FacetControlsHaveNoInlineEventHandlers verifies the
+// rendered facet controls carry no inline event-handler attribute (e.g.
+// onclick=...) — click-to-cycle behavior must be wired entirely from the
+// external timeline.js script, matching the CSP's script-src 'self' with no
+// 'unsafe-inline' for scripts.
+func TestTimelineHandler_FacetControlsHaveNoInlineEventHandlers(t *testing.T) {
+	t.Parallel()
+
+	st := newTestStore(t)
+	seedChangeWithFacets(t, st, "commit-a", map[string]string{"env": "dev"})
+
+	h := web.NewTimelineHandler(st)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+
+	body := rr.Body.String()
+	for _, forbidden := range []string{"onclick=", "onchange=", "javascript:"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("body contains inline event-handler marker %q — behavior must be wired from timeline.js only", forbidden)
 		}
 	}
 }
@@ -80,7 +188,7 @@ func TestStaticHandler_ServesEmbeddedTimelineJS(t *testing.T) {
 func TestTimelineHandler_CSPPermitsOnlySelfScript(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewTimelineHandler()
+	h := web.NewTimelineHandler(newTestStore(t))
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -152,7 +260,7 @@ func TestStaticHandler_SecurityHeaders(t *testing.T) {
 func TestTimelineHandler_RootPathOnly(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewTimelineHandler()
+	h := web.NewTimelineHandler(newTestStore(t))
 	req := httptest.NewRequest(http.MethodGet, "/?anything=ignored", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)

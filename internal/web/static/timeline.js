@@ -10,20 +10,29 @@
 //   - implements zoom/pan between a broad overview and a tight window
 //   - clusters dense regions into a single counted marker that splits apart
 //     on zoom-in
+//   - cycles each server-rendered facet control through include -> exclude
+//     -> off and assembles the resulting filter into request params
+//   - renders the "Changes before T" panel: a most-recent-first, paginated
+//     list of Changesets committed before the as-of marker, honoring the
+//     active facet filters
 //   - exposes a minimal, obvious seam for the downstream detail-view slice
 //     (onFlagClick) — no per-kind Changeset detail rendering happens here
 //
 // The as-of marker is a pure client-side view concern, decoupled from what
-// data is loaded: the backdrop (the full set of Changesets rendered on the
-// track) is fetched independently of the marker position — always up to
-// "now" (the endpoint's own asOf-omitted default) — so it always spans both
-// sides of an incident marker sitting somewhere in the past. /api/changesets'
-// `committedAt < asOf` semantics are for the downstream "Changes before T"
-// list slice, not for this backdrop: moving or typing the marker here only
-// changes which flags render dimmed, never what is fetched.
+// data is loaded for the backdrop: the backdrop (the full set of Changesets
+// rendered on the track) is fetched independently of the marker position —
+// always up to "now" (the endpoint's own asOf-omitted default) — so it
+// always spans both sides of an incident marker sitting somewhere in the
+// past. /api/changesets' `committedAt < asOf` semantics are for the
+// "Changes before T" panel below, not for this backdrop: moving or typing
+// the marker only changes which flags render dimmed and what the panel
+// fetches — it never changes what the backdrop fetches. The active facet
+// filters, by contrast, drive BOTH the backdrop and the panel: changing a
+// facet control re-fetches both.
 //
 // No external CDN, no network fetch other than this page's own
-// /api/changesets endpoint.
+// /api/changesets endpoint. Facet/label text is always inserted via
+// textContent, never innerHTML — no rendered value is ever parsed as HTML.
 
 (function () {
   'use strict';
@@ -56,6 +65,14 @@
   var MARKER_HANDLE_Y = 10;
   var MARKER_HANDLE_RADIUS = 7;
 
+  // The tri-state cycle every facet control walks through on each click, in
+  // order. 'off' means no filter is applied for that facet/value pair.
+  var FACET_STATE_CYCLE = ['off', 'include', 'exclude'];
+
+  // Page size requested per "Changes before T" panel fetch (both the initial
+  // load and each "Load more" click).
+  var CHANGES_BEFORE_PAGE_LIMIT = 25;
+
   var root = null;
   var svg = null;
   var trackWidth = 800;
@@ -72,12 +89,85 @@
     hasFitWindow: false
   };
 
+  // facetState[facet][value] = 'include' | 'exclude'. A facet/value pair
+  // absent from its inner map is 'off' — the default for every
+  // server-rendered control until the user clicks it.
+  var facetState = {};
+
+  // changesBeforePanel tracks the "Changes before T" list's own paging
+  // cursor and DOM handles, independent of the backdrop's state above.
+  var changesBeforePanel = {
+    listEl: null,
+    loadMoreBtn: null,
+    nextCursor: '',
+    loading: false
+  };
+
   function repoColor(repo) {
     return REPO_COLORS[repo] || DEFAULT_COLOR;
   }
 
   function windowStart() {
     return state.windowEnd - state.windowMs;
+  }
+
+  // cycleFacetState advances the tri-state for one facet/value pair to the
+  // next state in FACET_STATE_CYCLE, mutating facetState in place (pruning
+  // the entry entirely once it cycles back to 'off' so buildFilterParams
+  // never has to distinguish an explicit 'off' from an absent entry).
+  function cycleFacetState(facet, value) {
+    var current = (facetState[facet] && facetState[facet][value]) || 'off';
+    var next = FACET_STATE_CYCLE[(FACET_STATE_CYCLE.indexOf(current) + 1) % FACET_STATE_CYCLE.length];
+
+    if (next === 'off') {
+      if (facetState[facet]) {
+        delete facetState[facet][value];
+        if (Object.keys(facetState[facet]).length === 0) {
+          delete facetState[facet];
+        }
+      }
+    } else {
+      if (!facetState[facet]) {
+        facetState[facet] = {};
+      }
+      facetState[facet][value] = next;
+    }
+
+    return next;
+  }
+
+  // buildFilterParams translates the active facetState into the
+  // <facet>=<value> (include) / <facet>=-<value> (exclude) request params
+  // the JSON endpoint already understands, as an array of [key, value]
+  // pairs (rather than a pre-joined query string) so callers can append
+  // additional params (asOf, cursor, limit) before serializing.
+  function buildFilterParams() {
+    var pairs = [];
+    for (var facet in facetState) {
+      if (!Object.prototype.hasOwnProperty.call(facetState, facet)) {
+        continue;
+      }
+      var values = facetState[facet];
+      for (var value in values) {
+        if (!Object.prototype.hasOwnProperty.call(values, value)) {
+          continue;
+        }
+        var encoded = values[value] === 'exclude' ? '-' + value : value;
+        pairs.push([facet, encoded]);
+      }
+    }
+    return pairs;
+  }
+
+  // buildQueryString joins an array of [key, value] pairs (as returned by
+  // buildFilterParams, optionally extended with more pairs) into a URL query
+  // string, percent-encoding each part.
+  function buildQueryString(pairs) {
+    return pairs
+      .map(function (pair) {
+        return encodeURIComponent(pair[0]) + '=' + encodeURIComponent(pair[1]);
+      })
+      .join('&');
   }
 
   // xForTime maps an epoch-ms timestamp to an x pixel coordinate within the
@@ -92,13 +182,18 @@
   // full set of Changesets to render on the track. It deliberately omits
   // asOf (defaulting to "now" server-side) so the result always spans both
   // sides of an as-of marker placed anywhere in the past; the marker never
-  // drives this fetch (see the file-level comment). The endpoint already
+  // drives this fetch (see the file-level comment). The active facet
+  // filters DO drive this fetch — changing a control re-fetches the
+  // backdrop with the current include/exclude params. The endpoint already
   // returns most-recent-first, page-capped results; the timeline renders
   // whatever the first page contains within the current viewport. This
   // keeps all query/pagination policy server-side.
   function fetchBackdrop(onDone) {
+    var qs = buildQueryString(buildFilterParams());
+    var url = qs ? API_PATH + '?' + qs : API_PATH;
+
     var xhr = new XMLHttpRequest();
-    xhr.open('GET', API_PATH, true);
+    xhr.open('GET', url, true);
     xhr.onload = function () {
       if (xhr.status !== 200) {
         onDone([]);
@@ -317,13 +412,129 @@
     fetchBackdrop(renderBackdrop);
   }
 
-  // setAsOf updates the marker position and re-renders only. It never
-  // refetches: the backdrop is independent of the marker (see the
-  // file-level comment), so moving/typing the marker only changes which
-  // already-loaded flags render dimmed.
+  // setAsOf updates the marker position, re-renders the backdrop dimming,
+  // and reloads the "Changes before T" panel from scratch for the new T.
+  // It never refetches the backdrop itself: the backdrop is independent of
+  // the marker (see the file-level comment), so moving/typing the marker
+  // only changes which already-loaded flags render dimmed there.
   function setAsOf(epochMs) {
     state.asOf = epochMs;
     render();
+    reloadChangesBeforePanel();
+  }
+
+  // formatChangesetSummary builds the plain-text label for one row of the
+  // "Changes before T" panel: commit, repo, author, and change count. Always
+  // assigned via textContent by the caller — never parsed as HTML.
+  function formatChangesetSummary(cs) {
+    var changeCount = (cs.changes || []).length;
+    return (
+      cs.committedAt +
+      '  ' +
+      cs.repo +
+      '@' +
+      cs.commitSha.slice(0, 8) +
+      ' (' +
+      cs.author +
+      ') — ' +
+      changeCount +
+      (changeCount === 1 ? ' change' : ' changes')
+    );
+  }
+
+  // appendChangesBeforeRows renders one <li> per Changeset, appended to the
+  // panel's list in the order given (the endpoint already returns
+  // most-recent-first, so no client-side sorting is needed). Text is set via
+  // textContent so no Changeset field is ever parsed as HTML.
+  function appendChangesBeforeRows(changesets) {
+    if (!changesBeforePanel.listEl) {
+      return;
+    }
+    changesets.forEach(function (cs) {
+      var li = document.createElement('li');
+      li.textContent = formatChangesetSummary(cs);
+      changesBeforePanel.listEl.appendChild(li);
+    });
+  }
+
+  // fetchChangesBefore calls /api/changesets with asOf=T (the marker,
+  // defaulting to "now" when unset) plus the active facet filters and the
+  // given cursor — this is the one data path that DOES pass asOf, unlike
+  // fetchBackdrop. limit bounds this page; the caller walks nextCursor to
+  // page through the full, unbounded retained history.
+  function fetchChangesBefore(cursor, onDone) {
+    var asOfMs = state.asOf === null ? Date.now() : state.asOf;
+    var pairs = buildFilterParams();
+    pairs.push(['asOf', new Date(asOfMs).toISOString()]);
+    pairs.push(['limit', String(CHANGES_BEFORE_PAGE_LIMIT)]);
+    if (cursor) {
+      pairs.push(['cursor', cursor]);
+    }
+    var url = API_PATH + '?' + buildQueryString(pairs);
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', url, true);
+    xhr.onload = function () {
+      if (xhr.status !== 200) {
+        onDone({ changesets: [], nextCursor: '' });
+        return;
+      }
+      try {
+        var body = JSON.parse(xhr.responseText);
+        onDone({ changesets: body.changesets || [], nextCursor: body.nextCursor || '' });
+      } catch (e) {
+        onDone({ changesets: [], nextCursor: '' });
+      }
+    };
+    xhr.onerror = function () {
+      onDone({ changesets: [], nextCursor: '' });
+    };
+    xhr.send();
+  }
+
+  // updateLoadMoreVisibility shows/hides the panel's "Load more" button
+  // based on whether a further page is available.
+  function updateLoadMoreVisibility() {
+    if (!changesBeforePanel.loadMoreBtn) {
+      return;
+    }
+    changesBeforePanel.loadMoreBtn.style.display = changesBeforePanel.nextCursor ? '' : 'none';
+  }
+
+  // loadMoreChangesBefore fetches and appends the next page of the
+  // "Changes before T" panel using the stored cursor. Guards against
+  // overlapping requests (e.g. a double-click) with the loading flag.
+  function loadMoreChangesBefore() {
+    if (changesBeforePanel.loading || !changesBeforePanel.nextCursor) {
+      return;
+    }
+    changesBeforePanel.loading = true;
+    fetchChangesBefore(changesBeforePanel.nextCursor, function (page) {
+      changesBeforePanel.loading = false;
+      appendChangesBeforeRows(page.changesets);
+      changesBeforePanel.nextCursor = page.nextCursor;
+      updateLoadMoreVisibility();
+    });
+  }
+
+  // reloadChangesBeforePanel clears the panel and fetches the first page
+  // from scratch — called whenever T (the as-of marker) or the active facet
+  // filters change, since both affect which Changesets belong in the list.
+  function reloadChangesBeforePanel() {
+    if (!changesBeforePanel.listEl) {
+      return;
+    }
+    while (changesBeforePanel.listEl.firstChild) {
+      changesBeforePanel.listEl.removeChild(changesBeforePanel.listEl.firstChild);
+    }
+    changesBeforePanel.nextCursor = '';
+    changesBeforePanel.loading = true;
+    fetchChangesBefore('', function (page) {
+      changesBeforePanel.loading = false;
+      appendChangesBeforeRows(page.changesets);
+      changesBeforePanel.nextCursor = page.nextCursor;
+      updateLoadMoreVisibility();
+    });
   }
 
   function zoom(factor, pivotClientX) {
@@ -417,6 +628,43 @@
     });
   }
 
+  // onFilterChanged is called whenever a facet control's tri-state changes.
+  // Both the backdrop and the "Changes before T" panel are driven by the
+  // active filter set, so both are re-fetched.
+  function onFilterChanged() {
+    loadBackdrop();
+    reloadChangesBeforePanel();
+  }
+
+  // attachFacetControlInteractions wires click-to-cycle behavior onto every
+  // server-rendered facet control (button[data-facet][data-value]) found
+  // within container. Each click advances that control's tri-state, updates
+  // its data-state attribute (which the embedded stylesheet uses to color
+  // the include/exclude states), and re-fetches both data paths that the
+  // active filter set drives.
+  function attachFacetControlInteractions(container) {
+    var controls = container.querySelectorAll('[data-facet][data-value]');
+    for (var i = 0; i < controls.length; i++) {
+      (function (btn) {
+        btn.addEventListener('click', function () {
+          var next = cycleFacetState(btn.getAttribute('data-facet'), btn.getAttribute('data-value'));
+          btn.setAttribute('data-state', next);
+          onFilterChanged();
+        });
+      })(controls[i]);
+    }
+  }
+
+  // attachChangesBeforePanel locates the panel's list and "Load more"
+  // elements (rendered by the server-side shell) and wires the button.
+  function attachChangesBeforePanel() {
+    changesBeforePanel.listEl = document.getElementById('changes-before-list');
+    changesBeforePanel.loadMoreBtn = document.getElementById('changes-before-load-more');
+    if (changesBeforePanel.loadMoreBtn) {
+      changesBeforePanel.loadMoreBtn.addEventListener('click', loadMoreChangesBefore);
+    }
+  }
+
   function init() {
     root = document.getElementById('timeline-root');
     if (!root) {
@@ -449,7 +697,15 @@
     root.appendChild(svg);
 
     attachInteractions(root, input);
+
+    var facetControlsContainer = document.getElementById('facet-controls');
+    if (facetControlsContainer) {
+      attachFacetControlInteractions(facetControlsContainer);
+    }
+    attachChangesBeforePanel();
+
     loadBackdrop();
+    reloadChangesBeforePanel();
   }
 
   if (document.readyState === 'loading') {

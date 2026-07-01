@@ -126,7 +126,7 @@ func run(configPath, dbPath, listenAddr string) error {
 	}()
 
 	// --- HTTP ---
-	timelineHandler := web.NewTimelineHandler()
+	timelineHandler := web.NewTimelineHandler(st)
 	staticHandler := web.NewStaticHandler()
 	changesetsHandler := web.NewChangesetsHandler(st)
 	mux := http.NewServeMux()
