@@ -1,17 +1,21 @@
 // timeline.js — vendored, embedded (go:embed) client-side rendering for the
 // Change Tracking Dashboard timeline. This is the dashboard's only
 // client-side script; it is deliberately kept thin. All querying, grouping,
-// classification, and filtering logic lives server-side (store/changeset/
-// filter and the GET /api/changesets JSON endpoint) — this file only:
-//   - fetches Changesets from /api/changesets (the only network call made)
+// classification, filtering, and per-kind (chart vs value) rendering logic
+// lives server-side (store/changeset/filter and the GET /api/changesets and
+// GET /api/changesets/detail endpoints) — this file only:
+//   - fetches Changesets from /api/changesets
 //   - renders one flag per Changeset on a single time track, colored by repo
 //   - manages the as-of marker (typed input + a visible drag handle), dimming
 //     everything after it
 //   - implements zoom/pan between a broad overview and a tight window
 //   - clusters dense regions into a single counted marker that splits apart
 //     on zoom-in
-//   - exposes a minimal, obvious seam for the downstream detail-view slice
-//     (onFlagClick) — no per-kind Changeset detail rendering happens here
+//   - on a flag click, fetches the server-rendered detail HTML from
+//     /api/changesets/detail (per Changeset clicked) and injects it into a
+//     detail panel — no per-kind Changeset detail rendering happens here;
+//     the server has already rendered and HTML-escaped everything, so this
+//     is a plain innerHTML assignment of trusted, first-party markup
 //
 // The as-of marker is a pure client-side view concern, decoupled from what
 // data is loaded: the backdrop (the full set of Changesets rendered on the
@@ -23,12 +27,13 @@
 // changes which flags render dimmed, never what is fetched.
 //
 // No external CDN, no network fetch other than this page's own
-// /api/changesets endpoint.
+// /api/changesets and /api/changesets/detail endpoints.
 
 (function () {
   'use strict';
 
   var API_PATH = '/api/changesets';
+  var DETAIL_API_PATH = '/api/changesets/detail';
 
   // Repo -> color. Only the two repos named in the PRD are given fixed
   // colors; anything else falls back to a neutral color so an unexpected
@@ -159,18 +164,64 @@
     return clusters;
   }
 
-  // onFlagClick is the seam for the downstream changeset-detail-view slice.
-  // It currently surfaces the minimal Changeset info needed to identify what
-  // was clicked; per-kind (value vs chart) detail dispatch/rendering is
-  // explicitly out of scope for this slice.
+  // detailPanel holds the server-rendered HTML for the Changeset(s) behind
+  // the most recently clicked flag/cluster. Created lazily on first click.
+  var detailPanel = null;
+
+  function ensureDetailPanel() {
+    if (!detailPanel && root) {
+      detailPanel = document.createElement('div');
+      detailPanel.id = 'timeline-detail-panel';
+      root.appendChild(detailPanel);
+    }
+    return detailPanel;
+  }
+
+  // fetchChangesetDetail calls the server-rendered detail endpoint for one
+  // Changeset (identified by repo + commitSha) and passes the raw HTML body
+  // to onDone. All per-kind (chart vs value) dispatch/rendering already
+  // happened server-side — this is a plain fetch, no client-side markup
+  // construction.
+  function fetchChangesetDetail(repo, commitSha, onDone) {
+    var xhr = new XMLHttpRequest();
+    var url =
+      DETAIL_API_PATH +
+      '?repo=' + encodeURIComponent(repo) +
+      '&commitSha=' + encodeURIComponent(commitSha);
+    xhr.open('GET', url, true);
+    xhr.onload = function () {
+      if (xhr.status !== 200) {
+        onDone('');
+        return;
+      }
+      onDone(xhr.responseText);
+    };
+    xhr.onerror = function () {
+      onDone('');
+    };
+    xhr.send();
+  }
+
+  // onFlagClick fetches the server-rendered detail view for every Changeset
+  // behind the clicked flag/cluster and injects the resulting HTML into the
+  // detail panel. The server (GET /api/changesets/detail) has already
+  // dispatched each Change to its per-kind (chart vs value) rendering and
+  // HTML-escaped every interpolated value, so assigning the response as
+  // innerHTML here injects only trusted, first-party markup — never
+  // untrusted Change data built into HTML client-side.
   function onFlagClick(changesets) {
-    var summary = changesets
-      .map(function (cs) {
-        return cs.repo + '@' + cs.commitSha.slice(0, 8) + ' (' + cs.author + ')';
-      })
-      .join('\n');
-    // eslint-disable-next-line no-console
-    console.log('[timeline] flag clicked — Changeset(s):\n' + summary);
+    var panel = ensureDetailPanel();
+    if (!panel) {
+      return;
+    }
+    panel.innerHTML = '';
+    changesets.forEach(function (cs) {
+      fetchChangesetDetail(cs.repo, cs.commitSha, function (html) {
+        if (html) {
+          panel.insertAdjacentHTML('beforeend', html);
+        }
+      });
+    });
   }
 
   function render() {
