@@ -1,6 +1,7 @@
 package filter_test
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -217,6 +218,63 @@ func TestParse_UnknownFacetKey_RejectedWithGenericError(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), unknownKey) {
 		t.Errorf("Parse error echoes the invalid key back (leaking): %v", err)
+	}
+}
+
+// TestIncludesExcludes_ExposeSortedValuesForSQLTranslation verifies that
+// Includes() and Excludes() expose the parsed sets as facet name -> sorted
+// values slices, so a store-layer SQL translator can iterate them
+// deterministically without reaching into FilterSpec's private fields.
+func TestIncludesExcludes_ExposeSortedValuesForSQLTranslation(t *testing.T) {
+	t.Parallel()
+
+	spec, err := filter.Parse(
+		map[string][]string{
+			"env":  {"dev", "prod"},
+			"tier": {"-sbx", "-staging"},
+		},
+		map[string]struct{}{"env": {}, "tier": {}},
+	)
+	if err != nil {
+		t.Fatalf("Parse: unexpected error: %v", err)
+	}
+
+	wantIncludes := map[string][]string{"env": {"dev", "prod"}}
+	if got := spec.Includes(); !reflect.DeepEqual(got, wantIncludes) {
+		t.Errorf("Includes() = %v, want %v", got, wantIncludes)
+	}
+
+	wantExcludes := map[string][]string{"tier": {"sbx", "staging"}}
+	if got := spec.Excludes(); !reflect.DeepEqual(got, wantExcludes) {
+		t.Errorf("Excludes() = %v, want %v", got, wantExcludes)
+	}
+}
+
+// TestIncludesExcludes_ReturnIndependentCopies verifies that mutating a map
+// returned by Includes() or Excludes() does not affect the FilterSpec's
+// subsequent behavior or later calls — the accessors must not leak internal
+// state by reference.
+func TestIncludesExcludes_ReturnIndependentCopies(t *testing.T) {
+	t.Parallel()
+
+	spec, err := filter.Parse(
+		map[string][]string{"env": {"dev"}},
+		map[string]struct{}{"env": {}},
+	)
+	if err != nil {
+		t.Fatalf("Parse: unexpected error: %v", err)
+	}
+
+	got := spec.Includes()
+	got["env"][0] = "mutated"
+	got["injected"] = []string{"x"}
+
+	again := spec.Includes()
+	if again["env"][0] != "dev" {
+		t.Errorf("Includes() leaked a mutation from a previous call: got %v", again)
+	}
+	if _, present := again["injected"]; present {
+		t.Errorf("Includes() leaked an injected key from a previous call: got %v", again)
 	}
 }
 
