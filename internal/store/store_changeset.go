@@ -18,6 +18,15 @@ import (
 // store failure (map to HTTP 500).
 var ErrInvalidCursor = errors.New("store: invalid cursor")
 
+// MaxChangesetPageSize is the store's own hard upper bound on the number of
+// Changesets materialized by a single QueryChangesets call, independent of
+// whatever limit the caller passes (including limit <= 0, which historically
+// meant "unbounded"). This is defense in depth: callers such as the web
+// layer already clamp the page size before calling in, but the store must
+// not rely on that — a distant asOf with no filter could otherwise force an
+// unbounded scan of every matching row in the changes table.
+const MaxChangesetPageSize = 500
+
 // ChangesetPage is one page of a QueryChangesets result: the Changesets
 // themselves plus an opaque cursor for fetching the next page. NextCursor is
 // empty when there is no further page.
@@ -43,23 +52,36 @@ func (s *Store) QueryChangesets(asOf time.Time, spec filter.FilterSpec, cursor s
 		return ChangesetPage{}, err
 	}
 
-	// Fetch every matching Change row from the seek position forward (mirrors
-	// QueryFilteredFeed's full-scan-then-limit approach), then group into
-	// Changesets and slice off one page. Limiting Change rows directly would
-	// risk truncating a commit's Changeset mid-way; limiting after grouping
-	// guarantees a page boundary always lands on a commit boundary.
-	changes, err := s.queryChangesForChangesets(asOf, spec, seek)
+	// Clamp to the store's hard maximum regardless of what the caller asked
+	// for — including limit <= 0, which used to mean "unbounded". This is
+	// the effective page size the SQL query itself is bounded to fetch
+	// (distinct commits), not just the size of the slice returned to the
+	// caller.
+	effectiveLimit := limit
+	if effectiveLimit <= 0 || effectiveLimit > MaxChangesetPageSize {
+		effectiveLimit = MaxChangesetPageSize
+	}
+
+	// Fetch only the Change rows belonging to the (effectiveLimit + 1)
+	// distinct commits needed for this page, from the seek position forward
+	// — never the full matching set. Fetching one extra commit lets us
+	// detect whether a further page exists without a second round trip.
+	// Limiting raw Change rows directly would risk truncating a commit's
+	// Changeset mid-way; bounding by distinct commit and joining back for
+	// all of that commit's rows guarantees a page boundary always lands on
+	// a commit boundary.
+	changes, err := s.queryChangesForChangesets(asOf, spec, seek, effectiveLimit+1)
 	if err != nil {
 		return ChangesetPage{}, err
 	}
 
 	sets := changeset.Assemble(changes)
 
-	if limit <= 0 || len(sets) <= limit {
+	if len(sets) <= effectiveLimit {
 		return ChangesetPage{Changesets: sets, NextCursor: ""}, nil
 	}
 
-	page := sets[:limit]
+	page := sets[:effectiveLimit]
 	last := page[len(page)-1]
 	return ChangesetPage{
 		Changesets: page,
@@ -78,35 +100,85 @@ type seekPosition struct {
 
 // queryChangesForChangesets fetches the Change rows to be grouped into
 // Changesets: strictly before asOf, matching spec's facet constraints, and
-// strictly after seek (if active) in changeset.Assemble's sort order.
-func (s *Store) queryChangesForChangesets(asOf time.Time, spec filter.FilterSpec, seek seekPosition) ([]domain.Change, error) {
-	const baseQuery = `
-SELECT repo, file_path, field, key_val, change_type,
-       old_value, new_value, facets_json, commit_sha, author, committed_at
-FROM changes
-WHERE committed_at < ?`
-
-	var sb strings.Builder
-	sb.WriteString(baseQuery)
-	params := []any{asOf.UTC().Format(time.RFC3339Nano)}
+// strictly after seek (if active) in changeset.Assemble's sort order —
+// bounded to the Change rows belonging to at most commitLimit distinct
+// commits, rather than every matching row in the table.
+//
+// The bound is expressed as a CTE that selects the first commitLimit
+// distinct (committed_at, commit_sha) keys — in the same order and under the
+// same asOf/seek/filter WHERE clauses as the original full query — then
+// joins back to the changes table to fetch matching rows for exactly those
+// commits. Limiting distinct commits (not raw rows) is what guarantees a
+// commit's Changeset is never split by the bound: either some of its
+// matching Change rows are fetched, or none are — the same as the original
+// unbounded query's per-row filtering, just scoped to fewer commits.
+//
+// The facet filter clauses are applied twice: once inside the CTE (to pick
+// which distinct commits count towards the page) and again on the outer
+// join (to drop that commit's non-matching Change rows). asOf and seek are
+// only needed in the CTE — the join to page_commits already restricts the
+// outer rows to exactly the commits the CTE selected — but the filter must
+// be re-applied on the outer side, since a single commit can carry Changes
+// with heterogeneous facets and only the matching ones belong in the page.
+func (s *Store) queryChangesForChangesets(asOf time.Time, spec filter.FilterSpec, seek seekPosition, commitLimit int) ([]domain.Change, error) {
+	var cteWhere strings.Builder
+	cteWhere.WriteString("WHERE committed_at < ?")
+	cteParams := []any{asOf.UTC().Format(time.RFC3339Nano)}
 
 	if seek.active {
 		// Continue strictly past the last Changeset of the previous page, in
 		// the same (committed_at DESC, commit_sha ASC) order: either an
 		// earlier commit, or the same commit timestamp with a
 		// lexicographically greater SHA (the next tie-break slot).
-		sb.WriteString("\nAND (committed_at < ? OR (committed_at = ? AND commit_sha > ?))")
+		cteWhere.WriteString("\nAND (committed_at < ? OR (committed_at = ? AND commit_sha > ?))")
 		seekTS := seek.committedAt.UTC().Format(time.RFC3339Nano)
-		params = append(params, seekTS, seekTS, seek.commitSha)
+		cteParams = append(cteParams, seekTS, seekTS, seek.commitSha)
 	}
 
-	if err := appendFilterClauses(&sb, &params, spec); err != nil {
+	if err := appendFilterClauses(&cteWhere, &cteParams, spec); err != nil {
 		return nil, err
 	}
 
-	sb.WriteString("\nORDER BY committed_at DESC, commit_sha ASC")
+	// The outer WHERE re-applies only the facet filter clauses (not asOf/
+	// seek, which the join to page_commits already enforces), built fresh so
+	// its own param slice stays independent of the CTE's.
+	var outerWhere strings.Builder
+	var outerParams []any
+	if err := appendFilterClauses(&outerWhere, &outerParams, spec); err != nil {
+		return nil, err
+	}
+	// appendFilterClauses always emits clauses prefixed with "\nAND ", built
+	// for appending after an existing condition — anchor it to a tautology
+	// so the outer WHERE is well-formed whether or not spec has any filters.
+	outerWhereClause := "WHERE 1 = 1" + outerWhere.String()
 
-	rows, err := s.db.Query(sb.String(), params...)
+	// page_commits: the distinct (committed_at, commit_sha) keys for exactly
+	// the commits this page needs, capped by a bound ? parameter (never
+	// string-concatenated). Joining changes back against this CTE (rather
+	// than selecting rows directly with a raw row LIMIT) is what keeps every
+	// row of a selected commit together; re-applying the filter on the outer
+	// SELECT keeps per-Change-row filtering identical to the original
+	// unbounded query.
+	query := fmt.Sprintf(`WITH page_commits AS (
+  SELECT DISTINCT committed_at, commit_sha
+  FROM changes
+  %s
+  ORDER BY committed_at DESC, commit_sha ASC
+  LIMIT ?
+)
+SELECT c.repo, c.file_path, c.field, c.key_val, c.change_type,
+       c.old_value, c.new_value, c.facets_json, c.commit_sha, c.author, c.committed_at
+FROM changes c
+JOIN page_commits p ON p.committed_at = c.committed_at AND p.commit_sha = c.commit_sha
+%s
+ORDER BY c.committed_at DESC, c.commit_sha ASC`, cteWhere.String(), outerWhereClause)
+
+	// Positional param order must match the "?" order in query: the CTE's
+	// WHERE clause, then its LIMIT, then the outer WHERE's filter clause.
+	params := append(append([]any{}, cteParams...), commitLimit)
+	params = append(params, outerParams...)
+
+	rows, err := s.db.Query(query, params...)
 	if err != nil {
 		return nil, fmt.Errorf("store: query changesets: %w", err)
 	}
