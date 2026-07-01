@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -10,6 +11,12 @@ import (
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/filter"
 )
+
+// ErrInvalidCursor is returned (wrapped) by QueryChangesets when the given
+// cursor fails to decode. Callers (e.g. the web layer) can use errors.Is to
+// distinguish a caller-input problem (map to HTTP 400) from an underlying
+// store failure (map to HTTP 500).
+var ErrInvalidCursor = errors.New("store: invalid cursor")
 
 // ChangesetPage is one page of a QueryChangesets result: the Changesets
 // themselves plus an opaque cursor for fetching the next page. NextCursor is
@@ -141,17 +148,17 @@ func decodeCursor(cursor string) (seekPosition, error) {
 
 	raw, err := base64.RawURLEncoding.DecodeString(cursor)
 	if err != nil {
-		return seekPosition{}, fmt.Errorf("store: invalid cursor")
+		return seekPosition{}, fmt.Errorf("%w: %v", ErrInvalidCursor, err)
 	}
 
 	parts := strings.SplitN(string(raw), cursorSeparator, 2)
 	if len(parts) != 2 {
-		return seekPosition{}, fmt.Errorf("store: invalid cursor")
+		return seekPosition{}, ErrInvalidCursor
 	}
 
 	ts, err := time.Parse(time.RFC3339Nano, parts[0])
 	if err != nil {
-		return seekPosition{}, fmt.Errorf("store: invalid cursor")
+		return seekPosition{}, fmt.Errorf("%w: %v", ErrInvalidCursor, err)
 	}
 
 	return seekPosition{committedAt: ts, commitSha: parts[1], active: true}, nil
