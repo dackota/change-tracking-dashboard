@@ -1,5 +1,6 @@
 // Package main is the entry point for the change-tracking-dashboard binary.
-// It wires Config → Git source(s) → Poller → Store → Web and serves the feed.
+// It wires Config → Git source(s) → Poller → Store → Web and serves the
+// timeline page.
 //
 // Tracker configuration is loaded from a ConfigMap YAML file (path via the
 // CONFIG_PATH environment variable). The file is watched and hot-reloaded on
@@ -125,10 +126,12 @@ func run(configPath, dbPath, listenAddr string) error {
 	}()
 
 	// --- HTTP ---
-	handler := web.NewHandler(st)
+	timelineHandler := web.NewTimelineHandler()
+	staticHandler := web.NewStaticHandler()
 	changesetsHandler := web.NewChangesetsHandler(st)
 	mux := http.NewServeMux()
-	mux.Handle("/", handler)
+	mux.Handle("/", timelineHandler)
+	mux.Handle("/static/", staticHandler)
 	mux.Handle("/api/changesets", changesetsHandler)
 
 	srv := &http.Server{
