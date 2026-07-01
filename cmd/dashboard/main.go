@@ -129,10 +129,12 @@ func run(configPath, dbPath, listenAddr string) error {
 	timelineHandler := web.NewTimelineHandler(st)
 	staticHandler := web.NewStaticHandler()
 	changesetsHandler := web.NewChangesetsHandler(st)
+	changesetDetailHandler := web.NewChangesetDetailHandler(st)
 	mux := http.NewServeMux()
 	mux.Handle("/", timelineHandler)
 	mux.Handle("/static/", staticHandler)
 	mux.Handle("/api/changesets", changesetsHandler)
+	mux.Handle("/api/changesets/detail", changesetDetailHandler)
 
 	srv := &http.Server{
 		Addr:         listenAddr,
