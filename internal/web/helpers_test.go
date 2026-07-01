@@ -4,7 +4,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/store"
 )
 
@@ -22,6 +24,29 @@ func newTestStore(t *testing.T) *store.Store {
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	return s
+}
+
+// seedChangeWithFacets saves a single Change carrying the given facets, with
+// a synthetic committedAt one hour in the past so it always satisfies a
+// default (asOf-omitted) query. commitSha lets callers distinguish which
+// seeded Change matched in assertions.
+func seedChangeWithFacets(t *testing.T, s *store.Store, commitSha string, facets map[string]string) {
+	t.Helper()
+	c := domain.Change{
+		Repo:        "apps-repo",
+		FilePath:    "values.yaml",
+		Field:       "f",
+		ChangeType:  domain.ChangeTypeModified,
+		OldValue:    ptr("a"),
+		NewValue:    ptr("b"),
+		Facets:      facets,
+		CommitSha:   commitSha,
+		Author:      "alice",
+		CommittedAt: time.Now().Add(-time.Hour),
+	}
+	if err := s.SaveChange(c); err != nil {
+		t.Fatalf("SaveChange: %v", err)
+	}
 }
 
 // extractDirective returns the value portion of a single named directive
