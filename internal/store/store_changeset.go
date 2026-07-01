@@ -198,6 +198,45 @@ ORDER BY c.committed_at DESC, c.commit_sha ASC`, cteWhere.String(), outerWhereCl
 	return results, nil
 }
 
+// GetChangeset looks up a single Changeset by (repo, commitSha) — every
+// Change that commit produced, assembled and classified the same way
+// QueryChangesets does. found is false (with a nil error) when no Change row
+// matches; an unknown commit is a normal "nothing here" outcome, not a store
+// failure.
+func (s *Store) GetChangeset(repo, commitSha string) (changeset.Changeset, bool, error) {
+	const query = `
+SELECT repo, file_path, field, key_val, change_type,
+       old_value, new_value, facets_json, commit_sha, author, committed_at
+FROM changes
+WHERE repo = ? AND commit_sha = ?
+ORDER BY id ASC`
+
+	rows, err := s.db.Query(query, repo, commitSha)
+	if err != nil {
+		return changeset.Changeset{}, false, fmt.Errorf("store: query changeset %q/%q: %w", repo, commitSha, err)
+	}
+	defer rows.Close()
+
+	var changes []domain.Change
+	for rows.Next() {
+		c, err := scanChange(rows)
+		if err != nil {
+			return changeset.Changeset{}, false, fmt.Errorf("store: scan change (changeset detail): %w", err)
+		}
+		changes = append(changes, c)
+	}
+	if err := rows.Err(); err != nil {
+		return changeset.Changeset{}, false, fmt.Errorf("store: rows error (changeset detail): %w", err)
+	}
+
+	if len(changes) == 0 {
+		return changeset.Changeset{}, false, nil
+	}
+
+	sets := changeset.Assemble(changes)
+	return sets[0], true, nil
+}
+
 // cursorSeparator joins the two fields of an encoded cursor. Chosen because
 // neither an RFC3339Nano timestamp nor a git SHA can contain it.
 const cursorSeparator = "|"
