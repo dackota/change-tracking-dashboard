@@ -143,11 +143,12 @@ func TestRender_VendoredDependency_RendersOffline(t *testing.T) {
 		t.Fatalf("Render: %v", err)
 	}
 
-	if !strings.Contains(result.Manifest, "name: umbrella-chart-configmap") {
-		t.Errorf("Manifest missing umbrella chart's own resource:\n%s", result.Manifest)
+	normalized := result.Normalized()
+	if !strings.Contains(normalized, "name: umbrella-chart-configmap") {
+		t.Errorf("Normalized() missing umbrella chart's own resource:\n%s", normalized)
 	}
-	if !strings.Contains(result.Manifest, "name: spike-subchart-deployment") {
-		t.Errorf("Manifest missing vendored subchart's resource — offline render of committed charts/*.tgz failed:\n%s", result.Manifest)
+	if !strings.Contains(normalized, "name: spike-subchart-deployment") {
+		t.Errorf("Normalized() missing vendored subchart's resource — offline render of committed charts/*.tgz failed:\n%s", normalized)
 	}
 }
 
@@ -200,13 +201,17 @@ func TestRender_ClientOnly_NoClusterContact_RendersManifest(t *testing.T) {
 		t.Fatalf("Render: %v", err)
 	}
 
-	if !strings.Contains(result.Manifest, "kind: ConfigMap") {
-		t.Errorf("Manifest missing expected ConfigMap kind:\n%s", result.Manifest)
+	if len(result.Manifests) != 1 {
+		t.Fatalf("len(result.Manifests) = %d, want 1:\n%s", len(result.Manifests), result.Normalized())
 	}
-	if !strings.Contains(result.Manifest, "name: spike-chart-configmap") {
-		t.Errorf("Manifest missing expected ConfigMap name:\n%s", result.Manifest)
+	got := result.Manifests[0]
+	if got.Kind != "ConfigMap" {
+		t.Errorf("Manifests[0].Kind = %q, want %q", got.Kind, "ConfigMap")
 	}
-	if !strings.Contains(result.Manifest, `message: "hello-from-chartrender-spike"`) {
-		t.Errorf("Manifest missing expected rendered value:\n%s", result.Manifest)
+	if got.Name != "spike-chart-configmap" {
+		t.Errorf("Manifests[0].Name = %q, want %q", got.Name, "spike-chart-configmap")
+	}
+	if !strings.Contains(got.YAML, `message: hello-from-chartrender-spike`) {
+		t.Errorf("Manifests[0].YAML missing expected rendered value:\n%s", got.YAML)
 	}
 }
