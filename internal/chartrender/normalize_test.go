@@ -198,6 +198,36 @@ data:
 	}
 }
 
+// TestRender_Normalizes_PreservesLargeIntegerPrecision proves the "canonical,
+// lossless" promise: an unquoted integer above 2^53 (float64's exact-integer
+// range) survives re-serialization with its exact digits, rather than being
+// rounded through a float64 intermediate representation. A round-trip through
+// float64 would silently corrupt the manifest and could make two distinct
+// large integers indistinguishable downstream in manifestdiff.
+func TestRender_Normalizes_PreservesLargeIntegerPrecision(t *testing.T) {
+	// Not t.Parallel(): blockNetworkAndCluster uses t.Setenv, which forbids it.
+	blockNetworkAndCluster(t)
+
+	chartDir := writeChartWithTemplate(t, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bignum-cm
+unquotedBig: 123456789012345678
+`)
+
+	result, err := chartrender.Render(chartDir, nil)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	if len(result.Manifests) != 1 {
+		t.Fatalf("len(result.Manifests) = %d, want 1:\n%s", len(result.Manifests), result.Normalized())
+	}
+	if !strings.Contains(result.Manifests[0].YAML, "unquotedBig: 123456789012345678") {
+		t.Errorf("Manifests[0].YAML lost precision on a large integer, want exact digits preserved:\n%s", result.Manifests[0].YAML)
+	}
+}
+
 // TestRender_Normalizes_ExcludesHookOnlyResources proves that a
 // hook-annotated resource (e.g. a pre-install Job) — which Helm's own
 // renderResources already routes to a separate hooks list rather than the

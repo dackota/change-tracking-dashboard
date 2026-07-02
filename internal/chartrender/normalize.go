@@ -1,13 +1,19 @@
 package chartrender
 
 import (
+	"bytes"
 	"fmt"
 	"sort"
 	"strings"
 
+	"gopkg.in/yaml.v3"
 	"helm.sh/helm/v3/pkg/releaseutil"
-	"sigs.k8s.io/yaml"
 )
+
+// canonicalIndent is the indentation width used when re-serializing a
+// document as canonical YAML, matching the 2-space style Kubernetes manifests
+// conventionally use.
+const canonicalIndent = 2
 
 // Manifest is a single Kubernetes object extracted from a chart render.
 type Manifest struct {
@@ -19,9 +25,12 @@ type Manifest struct {
 	Namespace string
 	Name      string
 	// YAML is this object alone, re-serialized with canonical (alphabetical)
-	// key ordering. sigs.k8s.io/yaml round-trips through JSON, whose
-	// marshaler sorts map keys, so a chart author reordering keys in the
-	// source template never shows up as a spurious diff downstream.
+	// key ordering. gopkg.in/yaml.v3's encoder sorts map keys — same as
+	// sigs.k8s.io/yaml's JSON round-trip did — so a chart author reordering
+	// keys in the source template never shows up as a spurious diff
+	// downstream. Unlike a JSON round-trip, decoding through yaml.v3 keeps
+	// integers as int64/uint64 rather than float64, so integers above
+	// float64's 2^53 exact-integer range survive re-serialization intact.
 	YAML string
 }
 
@@ -53,11 +62,11 @@ func (r *Result) Normalized() string {
 // documentIdentity is the subset of a Kubernetes object's fields normalize
 // needs in order to sort and identify a rendered document.
 type documentIdentity struct {
-	Kind     string `json:"kind"`
+	Kind     string `yaml:"kind"`
 	Metadata struct {
-		Name      string `json:"name"`
-		Namespace string `json:"namespace"`
-	} `json:"metadata"`
+		Name      string `yaml:"name"`
+		Namespace string `yaml:"namespace"`
+	} `yaml:"metadata"`
 }
 
 // normalize splits raw — the concatenated manifest text a client-only Helm
@@ -89,14 +98,19 @@ func normalize(raw string) ([]Manifest, error) {
 }
 
 // normalizeDocument turns one raw, "# Source:"-commented YAML document into
-// a Manifest. ok is false for a document that carries no Kubernetes object
-// (blank, or comment-only) and must be dropped rather than surfaced.
+// a Manifest. ok is false for a document that carries no Kubernetes object at
+// all (blank, comment-only, or an empty mapping) and must be dropped rather
+// than surfaced. A document that has real content but no kind — e.g. a stray
+// mid-manifest "---" splitting one object's fields across two documents — is
+// never dropped: normalizeDocument returns an error for it, since silently
+// dropping real content would produce a truncated Result in violation of
+// Render's "never a partial result" invariant.
 func normalizeDocument(raw string) (m Manifest, ok bool, err error) {
 	var obj interface{}
 	if err := yaml.Unmarshal([]byte(raw), &obj); err != nil {
 		return Manifest{}, false, fmt.Errorf("chartrender: parse rendered document: %w", err)
 	}
-	if obj == nil {
+	if isEmptyDocument(obj) {
 		return Manifest{}, false, nil
 	}
 
@@ -105,10 +119,10 @@ func normalizeDocument(raw string) (m Manifest, ok bool, err error) {
 		return Manifest{}, false, fmt.Errorf("chartrender: parse rendered document: %w", err)
 	}
 	if id.Kind == "" {
-		return Manifest{}, false, nil
+		return Manifest{}, false, fmt.Errorf("chartrender: rendered document has no kind: %v", obj)
 	}
 
-	canonical, err := yaml.Marshal(obj)
+	canonical, err := marshalCanonical(obj)
 	if err != nil {
 		return Manifest{}, false, fmt.Errorf("chartrender: re-serialize rendered document: %w", err)
 	}
@@ -117,8 +131,38 @@ func normalizeDocument(raw string) (m Manifest, ok bool, err error) {
 		Kind:      id.Kind,
 		Namespace: id.Metadata.Namespace,
 		Name:      id.Metadata.Name,
-		YAML:      string(canonical),
+		YAML:      canonical,
 	}, true, nil
+}
+
+// isEmptyDocument reports whether obj is the decoded form of a document that
+// legitimately carries no Kubernetes object: nil (blank or comment-only raw
+// text) or an empty mapping (e.g. "{}"). Any other decoded value — including
+// a non-empty mapping missing a kind — has real content and must not be
+// treated as empty.
+func isEmptyDocument(obj interface{}) bool {
+	if obj == nil {
+		return true
+	}
+	m, isMap := obj.(map[string]interface{})
+	return isMap && len(m) == 0
+}
+
+// marshalCanonical re-serializes obj as YAML with sorted map keys (yaml.v3's
+// encoder sorts them) and a fixed 2-space indent, so the result is
+// byte-deterministic regardless of the key order or indentation the source
+// template used.
+func marshalCanonical(obj interface{}) (string, error) {
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(canonicalIndent)
+	if err := enc.Encode(obj); err != nil {
+		return "", err
+	}
+	if err := enc.Close(); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
 }
 
 // sortManifests sorts in place by (Kind, Namespace, Name), falling back to

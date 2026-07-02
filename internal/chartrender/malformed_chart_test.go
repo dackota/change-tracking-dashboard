@@ -84,6 +84,48 @@ func TestRender_MalformedChart_ClassifiesFailure(t *testing.T) {
 	}
 }
 
+// TestRender_MalformedChart_NoKindDocumentWithContentClassifiesFailure proves
+// that a stray mid-manifest "---" that splits one Kubernetes object into two
+// documents — the first carrying kind/metadata, the second carrying only
+// unrelated fields (real content, but no kind) — is never silently dropped as
+// if it were an empty/bookkeeping-only document. Render must classify this as
+// a malformed-chart failure rather than return a truncated Result, honoring
+// the package's documented "never a partial result" invariant.
+func TestRender_MalformedChart_NoKindDocumentWithContentClassifiesFailure(t *testing.T) {
+	// Not t.Parallel(): blockNetworkAndCluster uses t.Setenv, which forbids it.
+	blockNetworkAndCluster(t)
+
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "Chart.yaml"), "apiVersion: v2\nname: stray-separator-chart\nversion: 0.1.0\n")
+	mustWriteFile(t, filepath.Join(dir, "templates", "resources.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: split-cm
+---
+data:
+  foo: bar
+`)
+
+	result, err := chartrender.Render(dir, nil)
+	if result != nil {
+		t.Errorf("Render result = %+v, want nil on malformed-chart failure (a stray \"---\" must never yield a truncated success)", result)
+	}
+	if err == nil {
+		t.Fatal("Render err = nil, want a classified malformed-chart failure")
+	}
+
+	var failure *chartrender.Failure
+	if !errors.As(err, &failure) {
+		t.Fatalf("Render err = %v (%T), want *chartrender.Failure", err, err)
+	}
+	if failure.Reason != chartrender.ReasonMalformedChart {
+		t.Errorf("failure.Reason = %q, want %q", failure.Reason, chartrender.ReasonMalformedChart)
+	}
+	if failure.ChartDir != dir {
+		t.Errorf("failure.ChartDir = %q, want %q", failure.ChartDir, dir)
+	}
+}
+
 // TestRender_MalformedChart_DependencyNotVendoredTakesPrecedence proves that
 // the dependency-not-vendored check still fires first: a chart missing a
 // vendored dependency is classified as dependency-not-vendored even though,
