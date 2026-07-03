@@ -229,6 +229,57 @@ func TestDiff_TruncateFallback_NeverSplitsAMultibyteRune(t *testing.T) {
 	}
 }
 
+// TestDiff_BlockWithoutTrailingNewline_DoesNotMergeIntoNextManifest is a
+// regression test for a CRITICAL bug: renderPairs concatenated each
+// per-identity block directly, so when an earlier-sorted manifest's YAML
+// lacked a trailing newline, the next manifest's content was appended onto
+// the same physical line — a consumer splitting Unified on "\n" would see a
+// line with no leading +/-/space marker, and two unrelated manifests glued
+// together. Manifest.YAML is unvalidated caller input, so this must be
+// handled regardless of whether real chartrender output always terminates
+// its YAML (it does; but Diff cannot assume every caller does).
+func TestDiff_BlockWithoutTrailingNewline_DoesNotMergeIntoNextManifest(t *testing.T) {
+	t.Parallel()
+
+	// "a" sorts before "b"; "a"'s YAML deliberately has no trailing newline.
+	first := manifestdiff.Manifest{
+		Kind: "ConfigMap", Namespace: "default", Name: "a",
+		YAML: "line-one-no-newline",
+	}
+	second := manifestdiff.Manifest{
+		Kind: "ConfigMap", Namespace: "default", Name: "b",
+		YAML: "line-two\n",
+	}
+
+	result := manifestdiff.Diff(manifestdiff.Params{
+		New: []manifestdiff.Manifest{first, second},
+	})
+
+	const want = "+line-one-no-newline\n+line-two\n"
+	if result.Unified != want {
+		t.Fatalf("Unified = %q, want %q (manifests must not merge onto one line)", result.Unified, want)
+	}
+
+	for _, line := range strings.Split(strings.TrimSuffix(result.Unified, "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		if c := line[0]; c != '+' && c != '-' && c != ' ' {
+			t.Errorf("line %q does not start with +, -, or a space", line)
+		}
+	}
+
+	if result.Summary.LinesAdded != 2 {
+		t.Errorf("Summary.LinesAdded = %d, want 2 (the raw newline terminator must not be counted)", result.Summary.LinesAdded)
+	}
+	if result.Summary.LinesRemoved != 0 {
+		t.Errorf("Summary.LinesRemoved = %d, want 0", result.Summary.LinesRemoved)
+	}
+	if result.Summary.ManifestsChanged != 2 {
+		t.Errorf("Summary.ManifestsChanged = %d, want 2", result.Summary.ManifestsChanged)
+	}
+}
+
 // TestDiff_OversizedInput_TruncatesButKeepsTrueSummaryTotals proves user
 // story 8: when the rendered unified diff would exceed a small configured
 // MaxUnifiedBytes, Diff sets Truncated and cuts Unified down to the ceiling

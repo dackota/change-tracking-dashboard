@@ -15,31 +15,40 @@ import (
 // line. Pairs are concatenated directly with no separator token between
 // them, so no artificial boundary line can ever enter the diffed content or
 // be miscounted as an addition or removal.
+//
+// A manifest's YAML is caller-supplied, unvalidated text and may not end in
+// "\n". renderPairs guarantees every block it writes is newline-terminated
+// before moving on to the next one, so two manifests can never be glued onto
+// the same physical line — that terminator is written raw (no +/-/space
+// prefix) and is never counted as an added or removed line.
 func renderPairs(pairs []pair) (unified string, added, removed int) {
 	var b strings.Builder
 	totalAdded, totalRemoved := 0, 0
 
 	for _, p := range pairs {
+		var block string
+		var a, r int
+
 		switch {
 		case p.inOld && p.inNew:
 			if p.oldYAML == p.newYAML {
 				continue // identical manifest: no diff content at all
 			}
-			block, a, r := lineDiff(p.oldYAML, p.newYAML)
-			b.WriteString(block)
-			totalAdded += a
-			totalRemoved += r
+			block, a, r = lineDiff(p.oldYAML, p.newYAML)
 
 		case p.inOld: // removed: every line of the old YAML is a "-" line
-			block, r := renderWhole(p.oldYAML, "-")
-			b.WriteString(block)
-			totalRemoved += r
+			block, r = renderWhole(p.oldYAML, "-")
 
 		case p.inNew: // added: every line of the new YAML is a "+" line
-			block, a := renderWhole(p.newYAML, "+")
-			b.WriteString(block)
-			totalAdded += a
+			block, a = renderWhole(p.newYAML, "+")
 		}
+
+		b.WriteString(block)
+		if block != "" && !strings.HasSuffix(block, "\n") {
+			b.WriteString("\n") // raw terminator: not a diff line, never counted
+		}
+		totalAdded += a
+		totalRemoved += r
 	}
 
 	return b.String(), totalAdded, totalRemoved

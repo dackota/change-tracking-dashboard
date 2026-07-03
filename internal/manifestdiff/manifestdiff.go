@@ -42,8 +42,8 @@ type Params struct {
 	// caller's slices.
 	Old []Manifest
 	New []Manifest
-	// MaxUnifiedBytes bounds the emitted Unified diff text. Zero means
-	// DefaultMaxUnifiedBytes.
+	// MaxUnifiedBytes bounds the emitted Unified diff text. Zero or negative
+	// means DefaultMaxUnifiedBytes.
 	MaxUnifiedBytes int
 }
 
