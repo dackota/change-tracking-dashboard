@@ -37,9 +37,9 @@ type Manifest struct {
 // positional arguments) so future options — e.g. a hunk-context size — can
 // be added without breaking callers.
 type Params struct {
-	// Old and New are the two manifest sets to compare. Diff sorts a
-	// defensive copy of each by identity before comparing; it never mutates
-	// the caller's slices.
+	// Old and New are the two manifest sets to compare. Diff pairs them by
+	// identity (Kind, Namespace, Name), not position; it never mutates the
+	// caller's slices.
 	Old []Manifest
 	New []Manifest
 	// MaxUnifiedBytes bounds the emitted Unified diff text. Zero means
@@ -84,12 +84,10 @@ func Diff(p Params) Result {
 		maxBytes = DefaultMaxUnifiedBytes
 	}
 
-	oldSorted := sortedCopy(p.Old)
-	newSorted := sortedCopy(p.New)
+	pairs := pairManifests(p.Old, p.New)
 
-	manifestsChanged := countChangedManifests(oldSorted, newSorted)
-
-	unified, added, removed := lineDiff(concatManifests(oldSorted), concatManifests(newSorted))
+	manifestsChanged := countChangedManifests(pairs)
+	unified, added, removed := renderPairs(pairs)
 
 	truncated := false
 	if len(unified) > maxBytes {

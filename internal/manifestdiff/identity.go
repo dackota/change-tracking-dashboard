@@ -1,67 +1,74 @@
 package manifestdiff
 
-import (
-	"sort"
-	"strings"
-)
+import "sort"
 
 // identity is a manifest's (Kind, Namespace, Name) triple — the key manifests
-// are paired by, regardless of input order. Diff assumes identity is unique
-// within a single side's manifest set, matching chartrender's guarantee that
-// a normalized manifest set has no duplicate (Kind, Namespace, Name).
+// are paired by, regardless of input order. pairManifests assumes identity is
+// unique within a single side's manifest set, matching chartrender's
+// guarantee that a normalized manifest set has no duplicate
+// (Kind, Namespace, Name); a duplicate identity on one side silently keeps
+// the last manifest seen for that identity, an accepted, documented
+// consequence of that upstream invariant.
 type identity struct {
 	Kind      string
 	Namespace string
 	Name      string
 }
 
-// sortedCopy returns a new slice containing manifests sorted by
-// (Kind, Namespace, Name, YAML) — the same order chartrender's normalization
-// uses. It never mutates manifests: Diff must not mutate the caller's
-// slices, and defensive sorting proves manifest identity, not input order,
-// drives the comparison.
-func sortedCopy(manifests []Manifest) []Manifest {
-	out := make([]Manifest, len(manifests))
-	copy(out, manifests)
-	sort.Slice(out, func(i, j int) bool {
-		a, b := out[i], out[j]
+// pair is one identity's YAML on each side, with presence flags
+// distinguishing "absent from this side" from "present with empty YAML"
+// (which should not occur in well-formed input, but pair does not assume it
+// can't).
+type pair struct {
+	id      identity
+	oldYAML string
+	inOld   bool
+	newYAML string
+	inNew   bool
+}
+
+// pairManifests pairs old and new manifests by identity and returns one pair
+// per identity present in either side, sorted by (Kind, Namespace, Name).
+// Pairing by identity rather than position — and never concatenating the two
+// sides into a single blob — is what lets a reordered-but-equal manifest set
+// produce no diff, and what keeps an add/remove from ever perturbing an
+// unrelated manifest's line counts: each identity's comparison is fully
+// self-contained, with no separator token between identities to leak into
+// the diffed content or its counts.
+func pairManifests(oldManifests, newManifests []Manifest) []pair {
+	oldByID := indexByIdentity(oldManifests)
+	newByID := indexByIdentity(newManifests)
+
+	ids := make(map[identity]struct{}, len(oldByID)+len(newByID))
+	for id := range oldByID {
+		ids[id] = struct{}{}
+	}
+	for id := range newByID {
+		ids[id] = struct{}{}
+	}
+
+	sortedIDs := make([]identity, 0, len(ids))
+	for id := range ids {
+		sortedIDs = append(sortedIDs, id)
+	}
+	sort.Slice(sortedIDs, func(i, j int) bool {
+		a, b := sortedIDs[i], sortedIDs[j]
 		if a.Kind != b.Kind {
 			return a.Kind < b.Kind
 		}
 		if a.Namespace != b.Namespace {
 			return a.Namespace < b.Namespace
 		}
-		if a.Name != b.Name {
-			return a.Name < b.Name
-		}
-		return a.YAML < b.YAML
+		return a.Name < b.Name
 	})
-	return out
-}
 
-// countChangedManifests returns the number of manifests whose YAML differs
-// between old and new, plus manifests present only in new (added) plus
-// manifests present only in old (removed) — the manifests-changed count.
-func countChangedManifests(old, new []Manifest) int {
-	oldByID := indexByIdentity(old)
-	newByID := indexByIdentity(new)
-
-	changed := 0
-	for id, oldYAML := range oldByID {
-		newYAML, ok := newByID[id]
-		switch {
-		case !ok:
-			changed++ // removed
-		case oldYAML != newYAML:
-			changed++ // modified
-		}
+	pairs := make([]pair, 0, len(sortedIDs))
+	for _, id := range sortedIDs {
+		oldYAML, inOld := oldByID[id]
+		newYAML, inNew := newByID[id]
+		pairs = append(pairs, pair{id: id, oldYAML: oldYAML, inOld: inOld, newYAML: newYAML, inNew: inNew})
 	}
-	for id := range newByID {
-		if _, ok := oldByID[id]; !ok {
-			changed++ // added
-		}
-	}
-	return changed
+	return pairs
 }
 
 // indexByIdentity maps each manifest's identity to its YAML for O(1)
@@ -74,21 +81,20 @@ func indexByIdentity(manifests []Manifest) map[identity]string {
 	return out
 }
 
-// concatManifests joins an identity-sorted manifest set into a single
-// "---\n"-separated text — the unit lineDiff compares. Because both sides are
-// sorted by the same identity order, two manifest sets with identical
-// content produce byte-identical text regardless of the order manifests
-// arrived in.
-func concatManifests(manifests []Manifest) string {
-	var b strings.Builder
-	for i, m := range manifests {
-		if i > 0 {
-			b.WriteString("---\n")
+// countChangedManifests returns the manifests-changed count: manifests
+// present on both sides whose YAML differs, plus manifests added, plus
+// manifests removed. It is derived from the same pairs renderPairs consumes
+// so the two can never disagree about which identities changed.
+func countChangedManifests(pairs []pair) int {
+	changed := 0
+	for _, p := range pairs {
+		if p.inOld && p.inNew {
+			if p.oldYAML != p.newYAML {
+				changed++
+			}
+			continue
 		}
-		b.WriteString(m.YAML)
-		if len(m.YAML) > 0 && !strings.HasSuffix(m.YAML, "\n") {
-			b.WriteString("\n")
-		}
+		changed++ // present on exactly one side: added or removed
 	}
-	return b.String()
+	return changed
 }

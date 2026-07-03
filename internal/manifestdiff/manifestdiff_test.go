@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/manifestdiff"
 )
@@ -122,6 +123,109 @@ func TestDiff_AddedAndRemovedManifests_ReflectedInSummaryAndDiff(t *testing.T) {
 	}
 	if !strings.Contains(result.Unified, "+  name: new-svc\n") {
 		t.Errorf("Unified missing added manifest's line, got:\n%s", result.Unified)
+	}
+}
+
+// TestDiff_UnequalManifestCounts_NoSeparatorInflation is a regression test
+// for a CRITICAL bug: an earlier implementation concatenated each side's
+// manifests with a literal "---\n" separator and line-diffed the two
+// concatenated blobs. When a manifest was added or removed alongside other,
+// unrelated manifests, the number of separators differed between Old and
+// New, so a separator line itself was miscounted as a spurious +/- line —
+// inflating LinesRemoved/LinesAdded by 1 per net add/remove and injecting a
+// fabricated "----" line into Unified. Pairing and diffing per identity (with
+// no separator token at all) must never do this.
+func TestDiff_UnequalManifestCounts_NoSeparatorInflation(t *testing.T) {
+	t.Parallel()
+
+	steady := manifestdiff.Manifest{
+		Kind: "ConfigMap", Namespace: "default", Name: "steady",
+		YAML: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: steady\ndata:\n  x: \"1\"\n",
+	}
+	// removed has exactly 4 real YAML lines.
+	removed := manifestdiff.Manifest{
+		Kind: "ConfigMap", Namespace: "default", Name: "removed-cm",
+		YAML: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: removed-cm\n",
+	}
+	// added has exactly 4 real YAML lines.
+	added := manifestdiff.Manifest{
+		Kind: "ConfigMap", Namespace: "default", Name: "added-cm",
+		YAML: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: added-cm\n",
+	}
+	const realLineCount = 4
+
+	t.Run("removal alongside a coexisting manifest", func(t *testing.T) {
+		t.Parallel()
+
+		result := manifestdiff.Diff(manifestdiff.Params{
+			Old: []manifestdiff.Manifest{steady, removed}, // 2 manifests
+			New: []manifestdiff.Manifest{steady},          // 1 manifest
+		})
+
+		if result.Summary.LinesRemoved != realLineCount {
+			t.Errorf("Summary.LinesRemoved = %d, want %d (exactly removed-cm's lines, no separator inflation)",
+				result.Summary.LinesRemoved, realLineCount)
+		}
+		if result.Summary.LinesAdded != 0 {
+			t.Errorf("Summary.LinesAdded = %d, want 0", result.Summary.LinesAdded)
+		}
+		if strings.Contains(result.Unified, "----") {
+			t.Errorf("Unified contains a fabricated separator line, got:\n%s", result.Unified)
+		}
+	})
+
+	t.Run("addition alongside a coexisting manifest", func(t *testing.T) {
+		t.Parallel()
+
+		result := manifestdiff.Diff(manifestdiff.Params{
+			Old: []manifestdiff.Manifest{steady},        // 1 manifest
+			New: []manifestdiff.Manifest{steady, added}, // 2 manifests
+		})
+
+		if result.Summary.LinesAdded != realLineCount {
+			t.Errorf("Summary.LinesAdded = %d, want %d (exactly added-cm's lines, no separator inflation)",
+				result.Summary.LinesAdded, realLineCount)
+		}
+		if result.Summary.LinesRemoved != 0 {
+			t.Errorf("Summary.LinesRemoved = %d, want 0", result.Summary.LinesRemoved)
+		}
+		if strings.Contains(result.Unified, "----") {
+			t.Errorf("Unified contains a fabricated separator line, got:\n%s", result.Unified)
+		}
+	})
+}
+
+// TestDiff_TruncateFallback_NeverSplitsAMultibyteRune is a regression test
+// for a MEDIUM bug: when the truncation ceiling lands inside a single line
+// with no earlier newline to back up to (truncateAtLineBoundary's hard-cut
+// fallback), a raw byte cut could split a multi-byte UTF-8 rune and yield
+// invalid UTF-8. Diff must always back the cut up to a valid rune boundary.
+func TestDiff_TruncateFallback_NeverSplitsAMultibyteRune(t *testing.T) {
+	t.Parallel()
+
+	// "aé" (3 bytes: 'a', then 'é' as two UTF-8 bytes) with no trailing
+	// newline is a single line, so the rendered "+"-prefixed block is
+	// "+aé" (4 bytes) with no newline anywhere for truncateAtLineBoundary to
+	// back up to — forcing the hard-cut fallback path.
+	solo := manifestdiff.Manifest{Kind: "ConfigMap", Namespace: "default", Name: "solo", YAML: "aé"}
+
+	// A 3-byte ceiling cuts "+aé" right after the first byte of 'é'
+	// (0xC3), which is not a valid UTF-8 boundary on its own.
+	const tinyCeiling = 3
+
+	result := manifestdiff.Diff(manifestdiff.Params{
+		New:             []manifestdiff.Manifest{solo},
+		MaxUnifiedBytes: tinyCeiling,
+	})
+
+	if !result.Truncated {
+		t.Fatalf("Truncated = false, want true")
+	}
+	if !utf8.ValidString(result.Unified) {
+		t.Errorf("Unified is not valid UTF-8: %q (bytes: % x)", result.Unified, result.Unified)
+	}
+	if want := "+a"; result.Unified != want {
+		t.Errorf("Unified = %q, want %q (backed up past the split rune)", result.Unified, want)
 	}
 }
 
