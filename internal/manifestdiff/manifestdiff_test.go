@@ -9,6 +9,30 @@ import (
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/manifestdiff"
 )
 
+// assertEveryLineIsPrefixed fails the test if any non-empty physical line in
+// unified (splitting on "\n") does not start with exactly one of "+", "-",
+// or " ". It is the shared guard for the "every diff line is
+// newline-terminated at emission, so no two lines can ever fuse onto one
+// physical line" invariant, used across every shape of input that can
+// exercise it (a changed pair, an added-only manifest, a removed-only
+// manifest, and manifests lacking a trailing newline in their YAML).
+func assertEveryLineIsPrefixed(t *testing.T, unified string) {
+	t.Helper()
+
+	trimmed := strings.TrimSuffix(unified, "\n")
+	if trimmed == "" {
+		return
+	}
+	for _, line := range strings.Split(trimmed, "\n") {
+		if line == "" {
+			continue
+		}
+		if c := line[0]; c != '+' && c != '-' && c != ' ' {
+			t.Errorf("line %q does not start with +, -, or a space (fused or unterminated line); full Unified:\n%s", line, unified)
+		}
+	}
+}
+
 // TestDiff_KnownChange_ProducesUnifiedDiffAndSummary proves the core
 // behavior: two manifest sets that share one unchanged ConfigMap and one
 // ConfigMap whose YAML differs produce a unified +/- diff for the changed
@@ -260,14 +284,7 @@ func TestDiff_BlockWithoutTrailingNewline_DoesNotMergeIntoNextManifest(t *testin
 		t.Fatalf("Unified = %q, want %q (manifests must not merge onto one line)", result.Unified, want)
 	}
 
-	for _, line := range strings.Split(strings.TrimSuffix(result.Unified, "\n"), "\n") {
-		if line == "" {
-			continue
-		}
-		if c := line[0]; c != '+' && c != '-' && c != ' ' {
-			t.Errorf("line %q does not start with +, -, or a space", line)
-		}
-	}
+	assertEveryLineIsPrefixed(t, result.Unified)
 
 	if result.Summary.LinesAdded != 2 {
 		t.Errorf("Summary.LinesAdded = %d, want 2 (the raw newline terminator must not be counted)", result.Summary.LinesAdded)
@@ -277,6 +294,85 @@ func TestDiff_BlockWithoutTrailingNewline_DoesNotMergeIntoNextManifest(t *testin
 	}
 	if result.Summary.ManifestsChanged != 2 {
 		t.Errorf("Summary.ManifestsChanged = %d, want 2", result.Summary.ManifestsChanged)
+	}
+}
+
+// TestDiff_ChangedPair_NonTerminatedYAML_DoesNotFuseDiffLines is a
+// regression test for a CRITICAL bug one level deeper than the
+// inter-manifest gluing above: renderUnified concatenated diffmatchpatch's
+// rendered lines back-to-back. Every line token carries its own trailing
+// "\n" except the final token of whichever side (old or new) lacks a
+// trailing newline — and diffmatchpatch orders ops delete-before-insert, so
+// that unterminated token is often NOT the last op rendered, letting the
+// next op's text glue onto the same physical line (e.g.
+// "-line1+line1\n+line2\n" fusing a "-" onto a "+"). This must hold in
+// either direction: whichever side lacks the trailing newline.
+func TestDiff_ChangedPair_NonTerminatedYAML_DoesNotFuseDiffLines(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		oldYAML string
+		newYAML string
+		want    string
+	}{
+		{
+			name:    "old side lacks trailing newline",
+			oldYAML: "line1",
+			newYAML: "line1\nline2",
+			want:    "-line1\n+line1\n+line2\n",
+		},
+		{
+			name:    "new side lacks trailing newline",
+			oldYAML: "line1\nline2",
+			newYAML: "line1",
+			want:    "-line1\n-line2\n+line1\n",
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := manifestdiff.Diff(manifestdiff.Params{
+				Old: []manifestdiff.Manifest{{Kind: "ConfigMap", Namespace: "default", Name: "changed", YAML: tc.oldYAML}},
+				New: []manifestdiff.Manifest{{Kind: "ConfigMap", Namespace: "default", Name: "changed", YAML: tc.newYAML}},
+			})
+
+			assertEveryLineIsPrefixed(t, result.Unified)
+
+			if result.Unified != tc.want {
+				t.Errorf("Unified = %q, want %q (a delete/insert op boundary must not fuse lines)", result.Unified, tc.want)
+			}
+		})
+	}
+}
+
+// TestDiff_MixedManifests_EveryPhysicalLineIsPrefixed is a universal
+// invariant test for the whole newline-termination bug class, rather than
+// any one reported input: a single fixture exercises all three renderPairs
+// branches at once — a changed pair, an added-only manifest, and a
+// removed-only manifest — with at least one manifest's YAML lacking a
+// trailing newline, and asserts every physical line in Unified still starts
+// with exactly one of "+", "-", or " ".
+func TestDiff_MixedManifests_EveryPhysicalLineIsPrefixed(t *testing.T) {
+	t.Parallel()
+
+	oldChanged := manifestdiff.Manifest{Kind: "ConfigMap", Namespace: "default", Name: "changed", YAML: "old-no-newline"}
+	newChanged := manifestdiff.Manifest{Kind: "ConfigMap", Namespace: "default", Name: "changed", YAML: "new-line-one\nnew-line-two"}
+	removedOnly := manifestdiff.Manifest{Kind: "Service", Namespace: "default", Name: "removed-svc", YAML: "removed-no-newline"}
+	addedOnly := manifestdiff.Manifest{Kind: "Service", Namespace: "default", Name: "added-svc", YAML: "added-line\n"}
+
+	result := manifestdiff.Diff(manifestdiff.Params{
+		Old: []manifestdiff.Manifest{oldChanged, removedOnly},
+		New: []manifestdiff.Manifest{newChanged, addedOnly},
+	})
+
+	assertEveryLineIsPrefixed(t, result.Unified)
+
+	if result.Summary.ManifestsChanged != 3 {
+		t.Errorf("Summary.ManifestsChanged = %d, want 3 (1 changed, 1 added, 1 removed)", result.Summary.ManifestsChanged)
 	}
 }
 

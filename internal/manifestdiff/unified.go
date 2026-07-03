@@ -16,11 +16,11 @@ import (
 // them, so no artificial boundary line can ever enter the diffed content or
 // be miscounted as an addition or removal.
 //
-// A manifest's YAML is caller-supplied, unvalidated text and may not end in
-// "\n". renderPairs guarantees every block it writes is newline-terminated
-// before moving on to the next one, so two manifests can never be glued onto
-// the same physical line — that terminator is written raw (no +/-/space
-// prefix) and is never counted as an added or removed line.
+// Every block renderPairs concatenates is already guaranteed to end in "\n"
+// (see writeDiffLine): each one is built entirely out of writeDiffLine
+// calls, and that guarantee holds regardless of whether the manifest's own
+// (caller-supplied, unvalidated) YAML ended in a newline. So blocks can
+// simply be concatenated here with no additional boundary handling.
 func renderPairs(pairs []pair) (unified string, added, removed int) {
 	var b strings.Builder
 	totalAdded, totalRemoved := 0, 0
@@ -44,14 +44,30 @@ func renderPairs(pairs []pair) (unified string, added, removed int) {
 		}
 
 		b.WriteString(block)
-		if block != "" && !strings.HasSuffix(block, "\n") {
-			b.WriteString("\n") // raw terminator: not a diff line, never counted
-		}
 		totalAdded += a
 		totalRemoved += r
 	}
 
 	return b.String(), totalAdded, totalRemoved
+}
+
+// writeDiffLine writes exactly one logical diff line to b: prefix, then
+// line, then a "\n" terminator if line doesn't already end in one.
+//
+// This is the single chokepoint every prefixed diff line in this package
+// passes through — renderUnified's insert/delete/equal loop and renderWhole
+// both call it for every line they emit. A manifest's YAML is
+// caller-supplied, unvalidated text and is not guaranteed to end in "\n";
+// enforcing the terminator here, at the moment each line is written, means
+// no line — whichever diff op or manifest it came from — can ever be left
+// unterminated for a subsequent write to glue onto. The appended terminator
+// is never itself counted as an added or removed line.
+func writeDiffLine(b *strings.Builder, prefix, line string) {
+	b.WriteString(prefix)
+	b.WriteString(line)
+	if !strings.HasSuffix(line, "\n") {
+		b.WriteString("\n")
+	}
 }
 
 // renderWhole prefixes every line of text with prefix (e.g. "+" or "-") and
@@ -61,8 +77,7 @@ func renderPairs(pairs []pair) (unified string, added, removed int) {
 func renderWhole(text, prefix string) (block string, lineCount int) {
 	var b strings.Builder
 	for _, line := range splitPreservingNewlines(text) {
-		b.WriteString(prefix)
-		b.WriteString(line)
+		writeDiffLine(&b, prefix, line)
 		lineCount++
 	}
 	return b.String(), lineCount
@@ -96,22 +111,30 @@ func lineDiff(oldText, newText string) (unified string, added, removed int) {
 // unified +/- diff: each line of an insert op is "+"-prefixed, each line of
 // a delete op is "-"-prefixed, and each line of an equal op is " "-prefixed
 // context — the familiar git diff / helm diff style.
+//
+// diffmatchpatch orders ops delete-before-insert, so the op whose text lacks
+// a trailing newline (whichever side — old or new — didn't end in one) is
+// often not the last op rendered; every line still goes through
+// writeDiffLine, so that op's line is terminated before the next op's lines
+// are written, regardless of op order.
 func renderUnified(diffs []diffmatchpatch.Diff) (unified string, added, removed int) {
 	var b strings.Builder
 	for _, d := range diffs {
+		prefix := " " // diffmatchpatch.DiffEqual: context
+		switch d.Type {
+		case diffmatchpatch.DiffInsert:
+			prefix = "+"
+		case diffmatchpatch.DiffDelete:
+			prefix = "-"
+		}
+
 		for _, line := range splitPreservingNewlines(d.Text) {
+			writeDiffLine(&b, prefix, line)
 			switch d.Type {
 			case diffmatchpatch.DiffInsert:
-				b.WriteString("+")
-				b.WriteString(line)
 				added++
 			case diffmatchpatch.DiffDelete:
-				b.WriteString("-")
-				b.WriteString(line)
 				removed++
-			default: // diffmatchpatch.DiffEqual
-				b.WriteString(" ")
-				b.WriteString(line)
 			}
 		}
 	}
