@@ -5,8 +5,10 @@ go 1.25.6
 require (
 	github.com/bradleyfalzon/ghinstallation/v2 v2.19.0
 	github.com/go-git/go-git/v5 v5.19.1
+	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/itchyny/gojq v0.12.19
 	github.com/sergi/go-diff v1.3.2-0.20230802210424-5b0b94c5c0d3
+	golang.org/x/sync v0.20.0
 	gopkg.in/yaml.v3 v3.0.1
 	helm.sh/helm/v3 v3.20.2
 	modernc.org/sqlite v1.53.0
@@ -114,7 +116,6 @@ require (
 	golang.org/x/crypto v0.50.0 // indirect
 	golang.org/x/net v0.53.0 // indirect
 	golang.org/x/oauth2 v0.30.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.44.0 // indirect
 	golang.org/x/term v0.42.0 // indirect
 	golang.org/x/text v0.36.0 // indirect

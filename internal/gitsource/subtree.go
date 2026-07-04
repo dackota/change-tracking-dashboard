@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,44 @@ import (
 // distinguish this from a real failure via errors.Is(err, gitsource.ErrNoParent)
 // and should treat it as "no prior version to diff," not an error condition.
 var ErrNoParent = errors.New("gitsource: commit has no parent (root commit)")
+
+// ErrMaterializeBoundsExceeded indicates a MaterializeSubtreeBounded call
+// aborted because the subtree being materialized exceeded one of the caller's
+// configured ceilings (total bytes, file count, or recursion depth). Callers
+// distinguish this from every other materialization failure (a real I/O
+// error, a missing subtree) via errors.Is(err, gitsource.ErrMaterializeBoundsExceeded).
+var ErrMaterializeBoundsExceeded = errors.New("gitsource: subtree materialization exceeded configured bounds")
+
+// MaterializeBounds caps the resources MaterializeSubtreeBounded may spend
+// materializing a single tenant chart subtree: the total bytes written
+// across every file, the number of files written, and the tree's recursion
+// depth. Untrusted repository content is otherwise unbounded on all three
+// axes (an adversarial or corrupted tree could otherwise exhaust host disk
+// or blow the goroutine stack via deep nesting), so a caller extracting
+// untrusted content must always set real ceilings — MaterializeBounds has no
+// "unbounded" zero-value meaning; the zero value (all limits 0) rejects
+// everything immediately.
+type MaterializeBounds struct {
+	// MaxTotalBytes is the maximum total bytes MaterializeSubtreeBounded may
+	// write across every materialized file.
+	MaxTotalBytes int64
+	// MaxFiles is the maximum number of files MaterializeSubtreeBounded may
+	// write.
+	MaxFiles int
+	// MaxDepth is the maximum tree recursion depth MaterializeSubtreeBounded
+	// will descend. The subtree root is depth 0.
+	MaxDepth int
+}
+
+// unboundedMaterializeBounds are the ceilings MaterializeSubtree (the
+// pre-existing, unbounded entry point) applies internally: effectively no
+// limit, so its documented behavior is unchanged by the addition of bounds
+// enforcement at the shared materializeTree/materializeBlob chokepoint.
+var unboundedMaterializeBounds = MaterializeBounds{
+	MaxTotalBytes: math.MaxInt64,
+	MaxFiles:      math.MaxInt,
+	MaxDepth:      math.MaxInt,
+}
 
 // FirstParent resolves the first parent of the commit identified by
 // commitSha, per ADR 0002: a merge commit's first parent is
@@ -66,6 +105,30 @@ func (s *Source) resolveCommit(commitSha string) (*object.Commit, error) {
 // tree entry that would escape destDir causes MaterializeSubtree to return an
 // error; no file is ever written outside destDir.
 func (s *Source) MaterializeSubtree(commitSha, subtreePath, destDir string) error {
+	return s.MaterializeSubtreeBounded(commitSha, subtreePath, destDir, unboundedMaterializeBounds)
+}
+
+// MaterializeSubtreeBounded behaves exactly like MaterializeSubtree, except
+// it additionally enforces bounds on total bytes written, file count, and
+// recursion depth — closing the DoS a hostile or corrupted repository could
+// otherwise mount against MaterializeSubtree's unbounded recursive walk (an
+// arbitrarily large or deeply nested tenant subtree would otherwise exhaust
+// host disk or the goroutine stack).
+//
+// The check is enforced at the single chokepoint every materialization call
+// funnels through (materializeTree/materializeBlob below), not case-by-case:
+// MaterializeSubtree itself is now a thin wrapper calling this function with
+// effectively unbounded limits, so both entry points share one enforcement
+// path and can never disagree about containment or bounds.
+//
+// If bounds.MaxTotalBytes, MaxFiles, or MaxDepth would be exceeded,
+// MaterializeSubtreeBounded returns an error satisfying
+// errors.Is(err, ErrMaterializeBoundsExceeded) and stops immediately: no
+// file that would push the running total over MaxTotalBytes is ever written
+// (the ceiling is checked against each blob's declared size before any of
+// its bytes are copied), so destDir never grows past the configured ceiling
+// because of this call.
+func (s *Source) MaterializeSubtreeBounded(commitSha, subtreePath, destDir string, bounds MaterializeBounds) error {
 	commit, err := s.resolveCommit(commitSha)
 	if err != nil {
 		return err
@@ -81,7 +144,19 @@ func (s *Source) MaterializeSubtree(commitSha, subtreePath, destDir string) erro
 		return fmt.Errorf("gitsource: subtree %q not found at commit %q: %w", subtreePath, commitSha, err)
 	}
 
-	return materializeTree(s.repo.Storer, subtree, "", destDir)
+	state := &materializeState{bounds: bounds}
+	return materializeTree(s.repo.Storer, subtree, "", destDir, 0, state)
+}
+
+// materializeState tracks resource usage across an entire
+// MaterializeSubtreeBounded call — shared by pointer across every recursive
+// materializeTree/materializeBlob invocation in that call, so bytesWritten
+// and filesWritten are running totals over the whole subtree, not per-directory
+// counts.
+type materializeState struct {
+	bounds       MaterializeBounds
+	bytesWritten int64
+	filesWritten int
 }
 
 // materializeTree recursively writes every blob under tree into destDir,
@@ -90,7 +165,15 @@ func (s *Source) MaterializeSubtree(commitSha, subtreePath, destDir string) erro
 // Tree.Files()/TreeWalker helpers, so securePath is the sole containment
 // check exercised — not a side effect of an upstream library validation that
 // could change or be absent in a different git backend.
-func materializeTree(store storer.EncodedObjectStorer, tree *object.Tree, relPrefix, destDir string) error {
+//
+// depth is the current recursion depth (the subtree root passed to
+// MaterializeSubtreeBounded is depth 0); state carries the bounds ceiling and
+// the running byte/file counters shared across the whole call.
+func materializeTree(store storer.EncodedObjectStorer, tree *object.Tree, relPrefix, destDir string, depth int, state *materializeState) error {
+	if depth > state.bounds.MaxDepth {
+		return fmt.Errorf("gitsource: tree %q at depth %d: %w (max depth %d)", relPrefix, depth, ErrMaterializeBoundsExceeded, state.bounds.MaxDepth)
+	}
+
 	for _, entry := range tree.Entries {
 		relPath := entry.Name
 		if relPrefix != "" {
@@ -103,11 +186,11 @@ func materializeTree(store storer.EncodedObjectStorer, tree *object.Tree, relPre
 			if err != nil {
 				return fmt.Errorf("gitsource: read subtree %q: %w", relPath, err)
 			}
-			if err := materializeTree(store, child, relPath, destDir); err != nil {
+			if err := materializeTree(store, child, relPath, destDir, depth+1, state); err != nil {
 				return err
 			}
 		case isMaterializableFile(entry.Mode):
-			if err := materializeBlob(store, entry, relPath, destDir); err != nil {
+			if err := materializeBlob(store, entry, relPath, destDir, state); err != nil {
 				return err
 			}
 		default:
@@ -127,8 +210,12 @@ func isMaterializableFile(mode filemode.FileMode) bool {
 }
 
 // materializeBlob writes a single blob's content to destDir/relPath,
-// validating containment first.
-func materializeBlob(store storer.EncodedObjectStorer, entry object.TreeEntry, relPath, destDir string) error {
+// validating containment and the configured bounds first. The file-count and
+// total-byte ceilings are both checked before any byte of this blob is
+// copied: a blob whose size would push state.bytesWritten past
+// state.bounds.MaxTotalBytes is never opened for writing at all, so a single
+// oversized file can't partially land on disk before being rejected.
+func materializeBlob(store storer.EncodedObjectStorer, entry object.TreeEntry, relPath, destDir string, state *materializeState) error {
 	dest, err := securePath(destDir, relPath)
 	if err != nil {
 		return fmt.Errorf("gitsource: materialize %q: %w", relPath, err)
@@ -139,6 +226,13 @@ func materializeBlob(store storer.EncodedObjectStorer, entry object.TreeEntry, r
 		return fmt.Errorf("gitsource: read blob %q: %w", relPath, err)
 	}
 
+	if state.filesWritten+1 > state.bounds.MaxFiles {
+		return fmt.Errorf("gitsource: materialize %q: %w (max files %d)", relPath, ErrMaterializeBoundsExceeded, state.bounds.MaxFiles)
+	}
+	if state.bytesWritten+blob.Size > state.bounds.MaxTotalBytes {
+		return fmt.Errorf("gitsource: materialize %q: %w (max total bytes %d)", relPath, ErrMaterializeBoundsExceeded, state.bounds.MaxTotalBytes)
+	}
+
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return fmt.Errorf("gitsource: create parent dir for %q: %w", relPath, err)
 	}
@@ -146,6 +240,9 @@ func materializeBlob(store storer.EncodedObjectStorer, entry object.TreeEntry, r
 	if err := writeBlobToFile(blob, dest); err != nil {
 		return fmt.Errorf("gitsource: write %q: %w", relPath, err)
 	}
+
+	state.filesWritten++
+	state.bytesWritten += blob.Size
 
 	return nil
 }
