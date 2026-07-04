@@ -17,6 +17,15 @@ import (
 // caller-exclusive temp directory and renders it. ok is false when a
 // terminal classified Outcome was reached (the caller should return it
 // immediately); ok is true when manifests holds a successful render.
+//
+// This function is the single chokepoint for the temp-dir cleanup-lifecycle
+// invariant (both compute's old-side and new-side calls flow through it):
+// destDir is cleaned up exactly once on EVERY termination — success, a
+// classified materialize error, bounds-exceeded, a render timeout, ctx
+// cancellation (queued or after acquire), and a panic originating in either
+// repo.MaterializeSubtreeBounded (synchronous, guarded below) or the render
+// (guarded inside renderBounded's goroutine) — never leaked, never removed
+// while a render still reads it, never double-removed.
 func (e *Engine) materializeAndRender(ctx context.Context, repo ChartRepo, req Request, sha string, bounds gitsource.MaterializeBounds, side string) (manifests []manifestdiff.Manifest, outcome Outcome, ok bool) {
 	destDir, cleanup, err := newExclusiveTempDir()
 	if err != nil {
@@ -24,10 +33,45 @@ func (e *Engine) materializeAndRender(ctx context.Context, repo ChartRepo, req R
 		return nil, Outcome{Kind: CouldNotRender}, false
 	}
 
+	// handedOff tracks whether ownership of destDir's cleanup has passed to
+	// renderBounded, which cleans it up exactly once, only after any render
+	// goroutine it starts has genuinely stopped touching it (see
+	// renderBounded's doc). Until that handoff happens (set true immediately
+	// before the renderBounded call below), this deferred guard is the
+	// safety net that fires cleanup on every OTHER way this function can
+	// end — most importantly a panic unwinding past the handoff, since
+	// deferred functions still run during a panic. repo.MaterializeSubtreeBounded's
+	// own doc says it walks untrusted, attacker-controlled repository
+	// content, so a go-git panic on a corrupt or adversarial object is in
+	// threat model, not a hypothetical. Once handedOff is true this guard is
+	// a no-op: renderBounded owns destDir and must be the only thing that
+	// removes it, so a still-running render is never removed out from under
+	// itself (the HIGH-2 race this must not reintroduce).
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			cleanup()
+		}
+	}()
+
+	// recover upholds Diff's documented "never panics" contract (engine.go)
+	// for this synchronous path. repo.MaterializeSubtreeBounded runs here
+	// directly, not in a goroutine — unlike the render, which already
+	// recovers inside renderBounded's own goroutine. Any panic here is
+	// folded into the same safe CouldNotRender bucket as any other
+	// unclassified failure. Deferred functions all run during a panic
+	// unwind (LIFO), so the cleanup guard above still fires after this one
+	// recovers — the leak half and the panic half of this bug class are
+	// closed together, at the same chokepoint, regardless of the two
+	// defers' relative order.
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("chartdiff: materialize (%s side) panicked repo=%q tenant=%q sha=%q: %v", side, req.RepoName, req.TenantPath, sha, r)
+			manifests, outcome, ok = nil, Outcome{Kind: CouldNotRender}, false
+		}
+	}()
+
 	if err := repo.MaterializeSubtreeBounded(sha, req.TenantPath, destDir, bounds); err != nil {
-		// No render goroutine was ever started against destDir — safe to
-		// clean up directly, right here.
-		cleanup()
 		if errors.Is(err, gitsource.ErrMaterializeBoundsExceeded) {
 			return nil, Outcome{Kind: ExceededLimits}, false
 		}
@@ -38,6 +82,7 @@ func (e *Engine) materializeAndRender(ctx context.Context, repo ChartRepo, req R
 	// From here on, renderBounded owns destDir's cleanup: a render goroutine
 	// may be started against it, and destDir must not be removed until that
 	// goroutine has actually stopped touching it (see renderBounded's doc).
+	handedOff = true
 	result, err, timedOut := e.renderBounded(ctx, destDir, cleanup)
 	if timedOut {
 		log.Printf("chartdiff: render (%s side) repo=%q tenant=%q sha=%q exceeded timeout %v", side, req.RepoName, req.TenantPath, sha, e.cfg.RenderTimeout)

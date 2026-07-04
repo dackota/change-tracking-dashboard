@@ -91,6 +91,15 @@ func NewEngine(cfg Config, renderer Renderer) (*Engine, error) {
 //     safe bucket — the specific cause is logged server-side, never
 //     returned) -> CouldNotRender.
 //   - both sides render -> OK, with the manifestdiff.Result.
+//
+// Known limitation: e.group.Do coalesces concurrent Diff calls for the same
+// key onto a single computation, which runs under only the *leader's* ctx
+// (the caller whose call actually triggered computeAndCache). A follower
+// call coalesced onto that in-flight computation waits for it to finish
+// regardless of its own ctx being cancelled — singleflight has no per-caller
+// cancellation. This is inherent to singleflight, pre-existing, and not
+// addressed here; it does not affect the leader, and a follower is still
+// bounded by the leader's own render timeout / bounds checks.
 func (e *Engine) Diff(ctx context.Context, repo ChartRepo, req Request) Outcome {
 	parentSha, err := repo.FirstParent(req.CommitSha)
 	if err != nil {
