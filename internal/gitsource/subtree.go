@@ -34,8 +34,13 @@ var ErrMaterializeBoundsExceeded = errors.New("gitsource: subtree materializatio
 // axes (an adversarial or corrupted tree could otherwise exhaust host disk
 // or blow the goroutine stack via deep nesting), so a caller extracting
 // untrusted content must always set real ceilings — MaterializeBounds has no
-// "unbounded" zero-value meaning; the zero value (all limits 0) rejects
-// everything immediately.
+// "unbounded" zero-value meaning. Every check is enforced per-entry
+// (materializeTree checks depth before descending into a child tree;
+// materializeBlob checks file count and byte total before writing a file),
+// not upfront against the whole subtree — so the zero value (all limits 0)
+// rejects any subtree that actually contains at least one file or nested
+// directory, but an empty subtree materializes trivially with no error
+// (there is nothing to check against the ceiling).
 type MaterializeBounds struct {
 	// MaxTotalBytes is the maximum total bytes MaterializeSubtreeBounded may
 	// write across every materialized file.
@@ -211,10 +216,15 @@ func isMaterializableFile(mode filemode.FileMode) bool {
 
 // materializeBlob writes a single blob's content to destDir/relPath,
 // validating containment and the configured bounds first. The file-count and
-// total-byte ceilings are both checked before any byte of this blob is
-// copied: a blob whose size would push state.bytesWritten past
-// state.bounds.MaxTotalBytes is never opened for writing at all, so a single
-// oversized file can't partially land on disk before being rejected.
+// total-byte ceilings are both checked against the blob's declared Size
+// before any byte of this blob is copied: a blob whose declared size would
+// push state.bytesWritten past state.bounds.MaxTotalBytes is never opened
+// for writing at all, so a single oversized file can't partially land on
+// disk before being rejected. The actual copy (writeBlobToFile) then
+// re-enforces the same remaining-budget ceiling against the bytes it
+// actually copies, not just the blob's declared Size — defense-in-depth
+// against a size-lying or corrupted blob, so the on-disk ceiling never
+// depends solely on trusting that declared value.
 func materializeBlob(store storer.EncodedObjectStorer, entry object.TreeEntry, relPath, destDir string, state *materializeState) error {
 	dest, err := securePath(destDir, relPath)
 	if err != nil {
@@ -237,26 +247,32 @@ func materializeBlob(store storer.EncodedObjectStorer, entry object.TreeEntry, r
 		return fmt.Errorf("gitsource: create parent dir for %q: %w", relPath, err)
 	}
 
-	if err := writeBlobToFile(blob, dest); err != nil {
+	remaining := state.bounds.MaxTotalBytes - state.bytesWritten
+	written, err := writeBlobToFile(blob, dest, remaining)
+	if err != nil {
+		if errors.Is(err, ErrMaterializeBoundsExceeded) {
+			return fmt.Errorf("gitsource: materialize %q: %w (max total bytes %d)", relPath, ErrMaterializeBoundsExceeded, state.bounds.MaxTotalBytes)
+		}
 		return fmt.Errorf("gitsource: write %q: %w", relPath, err)
 	}
 
 	state.filesWritten++
-	state.bytesWritten += blob.Size
+	state.bytesWritten += written
 
 	return nil
 }
 
 // writeBlobToFile copies blob's raw bytes to dest via an io.Reader (never a
 // string conversion, so binary content such as a vendored charts/*.tgz round
-// trips byte-for-byte). Both Close calls are checked, not deferred-and-
-// ignored: a write can fail silently at Close time (e.g. a flush error), and
-// swallowing that would corrupt the binary-fidelity guarantee this function
-// exists to provide.
-func writeBlobToFile(blob *object.Blob, dest string) (err error) {
+// trips byte-for-byte), never writing more than maxBytes regardless of how
+// much content the blob actually holds. It delegates the copy itself to
+// copyBounded — the single chokepoint that ties the on-disk byte ceiling to
+// bytes actually copied, not to the blob's self-reported (and, in principle,
+// forgeable or corrupted) Size.
+func writeBlobToFile(blob *object.Blob, dest string, maxBytes int64) (written int64, err error) {
 	r, err := blob.Reader()
 	if err != nil {
-		return fmt.Errorf("open blob reader: %w", err)
+		return 0, fmt.Errorf("open blob reader: %w", err)
 	}
 	defer func() {
 		if cerr := r.Close(); cerr != nil && err == nil {
@@ -264,9 +280,21 @@ func writeBlobToFile(blob *object.Blob, dest string) (err error) {
 		}
 	}()
 
+	return copyBounded(r, dest, maxBytes)
+}
+
+// copyBounded copies from r to a freshly created file at dest, writing at
+// most maxBytes. If r still has unread data once maxBytes has been copied,
+// copyBounded returns ErrMaterializeBoundsExceeded — the ceiling this
+// enforces holds against the actual byte stream, so it can never be defeated
+// by a source whose declared size understates what it actually produces.
+// Both Close calls are checked, not deferred-and-ignored: a write can fail
+// silently at Close time (e.g. a flush error), and swallowing that would
+// corrupt the binary-fidelity guarantee writeBlobToFile exists to provide.
+func copyBounded(r io.Reader, dest string, maxBytes int64) (written int64, err error) {
 	out, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
-		return fmt.Errorf("create %q: %w", dest, err)
+		return 0, fmt.Errorf("create %q: %w", dest, err)
 	}
 	defer func() {
 		if cerr := out.Close(); cerr != nil && err == nil {
@@ -274,11 +302,21 @@ func writeBlobToFile(blob *object.Blob, dest string) (err error) {
 		}
 	}()
 
-	if _, err = io.Copy(out, r); err != nil {
-		return fmt.Errorf("copy content: %w", err)
+	written, copyErr := io.CopyN(out, r, maxBytes)
+	if copyErr != nil && !errors.Is(copyErr, io.EOF) {
+		return written, fmt.Errorf("copy content: %w", copyErr)
 	}
-
-	return nil
+	if copyErr == nil {
+		// io.CopyN copied exactly maxBytes with no error, which leaves it
+		// ambiguous whether r had exactly maxBytes or more left unread —
+		// probe for one more byte to tell those apart without ever writing
+		// it to dest.
+		var probe [1]byte
+		if n, _ := r.Read(probe[:]); n > 0 {
+			return written, ErrMaterializeBoundsExceeded
+		}
+	}
+	return written, nil
 }
 
 // securePath resolves relPath (an untrusted git tree entry name, possibly

@@ -23,9 +23,11 @@ func (e *Engine) materializeAndRender(ctx context.Context, repo ChartRepo, req R
 		log.Printf("chartdiff: create temp materialize dir (%s side) repo=%q tenant=%q sha=%q: %v", side, req.RepoName, req.TenantPath, sha, err)
 		return nil, Outcome{Kind: CouldNotRender}, false
 	}
-	defer cleanup()
 
 	if err := repo.MaterializeSubtreeBounded(sha, req.TenantPath, destDir, bounds); err != nil {
+		// No render goroutine was ever started against destDir — safe to
+		// clean up directly, right here.
+		cleanup()
 		if errors.Is(err, gitsource.ErrMaterializeBoundsExceeded) {
 			return nil, Outcome{Kind: ExceededLimits}, false
 		}
@@ -33,7 +35,10 @@ func (e *Engine) materializeAndRender(ctx context.Context, repo ChartRepo, req R
 		return nil, Outcome{Kind: CouldNotRender}, false
 	}
 
-	result, err, timedOut := e.renderBounded(ctx, destDir)
+	// From here on, renderBounded owns destDir's cleanup: a render goroutine
+	// may be started against it, and destDir must not be removed until that
+	// goroutine has actually stopped touching it (see renderBounded's doc).
+	result, err, timedOut := e.renderBounded(ctx, destDir, cleanup)
 	if timedOut {
 		log.Printf("chartdiff: render (%s side) repo=%q tenant=%q sha=%q exceeded timeout %v", side, req.RepoName, req.TenantPath, sha, e.cfg.RenderTimeout)
 		return nil, Outcome{Kind: ExceededLimits}, false
@@ -79,26 +84,65 @@ type renderResult struct {
 }
 
 // renderBounded runs a single Renderer.Render call under both the
-// concurrency semaphore and the per-render timeout.
+// concurrency semaphore and the per-render timeout, against the
+// caller-exclusive chartDir materializeAndRender created — and owns cleaning
+// that directory up via cleanup exactly once, at the right time (see below).
+//
+// Acquiring the semaphore slot itself respects ctx: under a saturated queue
+// (every ConcurrencyCap slot busy), a caller whose ctx is already cancelled
+// or expires while queued for a slot must not block on the acquire — the
+// select below races the slot send against ctx.Done(), so cancellation while
+// still queued is noticed immediately, before ever touching the renderer or
+// the timeout timer. No render goroutine was ever started in that case, so
+// cleanup runs directly, right there.
 //
 // Render runs in its own goroutine because chartrender.Render is
 // synchronous and cannot be interrupted mid-render (the Helm SDK has no
-// cancellation hook). On timeout, renderBounded returns immediately
-// (timedOut == true) so the caller isn't blocked — but the semaphore slot is
-// released only when the goroutine itself finishes (the deferred release is
-// inside the goroutine, not after the select), so a timed-out render still
-// counts against ConcurrencyCap until it actually completes. This is a
-// deliberate, documented trade-off: it keeps the cap bounding real
-// concurrent Helm work rather than leaking unbounded goroutines, at the cost
-// that a genuinely non-terminating render would eventually starve the
-// semaphore. Real Helm templates terminate on finite input, so this is
-// accepted as a v1 limitation (ADR 0002).
-func (e *Engine) renderBounded(ctx context.Context, chartDir string) (result *chartrender.Result, err error, timedOut bool) {
-	e.sem <- struct{}{} // acquire a concurrency slot, blocking until one is free
+// cancellation hook). On timeout or ctx cancellation, renderBounded returns
+// immediately (timedOut == true) so the caller isn't blocked — but the
+// goroutine keeps running against chartDir until Render itself returns, so
+// cleanup must not run yet: doing so would remove chartDir out from under a
+// render that is still reading it. Because done is a buffered, single-value
+// channel, it is received from in exactly one place: either the select below
+// (the fast path, once Render finishes before the deadline) or the small
+// worker goroutine spawned on the timeout/cancel branch (which blocks on
+// <-done until the abandoned render actually finishes, then cleans up) —
+// never both. This guarantees cleanup happens exactly once, and only after
+// the goroutine has genuinely stopped touching chartDir, without needing a
+// sync.Once or shared mutable flag to coordinate the two paths.
+//
+// The semaphore slot is released only when the goroutine itself finishes
+// (the deferred release is inside the goroutine, not after the select), so a
+// timed-out render still counts against ConcurrencyCap until it actually
+// completes. This is a deliberate, documented trade-off: it keeps the cap
+// bounding real concurrent Helm work rather than leaking unbounded
+// goroutines, at the cost that a genuinely non-terminating render would
+// eventually starve the semaphore. Real Helm templates terminate on finite
+// input, so this is accepted as a v1 limitation (ADR 0002).
+func (e *Engine) renderBounded(ctx context.Context, chartDir string, cleanup func()) (result *chartrender.Result, err error, timedOut bool) {
+	select {
+	case e.sem <- struct{}{}: // acquired a concurrency slot
+	case <-ctx.Done():
+		cleanup() // gave up queued for a slot; never touched the renderer
+		return nil, nil, true
+	}
 
 	done := make(chan renderResult, 1)
 	go func() {
 		defer func() { <-e.sem }() // release only once the render itself finishes
+		// A hostile or malformed chart could trigger a panic deep in the
+		// Helm SDK, well outside this package's control. recover folds that
+		// into a plain error — which (not being a *chartrender.Failure)
+		// falls through materializeAndRender's classification to the same
+		// safe CouldNotRender bucket as any other unclassified render
+		// failure — rather than letting an unrecovered goroutine panic take
+		// down the whole dashboard process.
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("chartdiff: render panicked (chart dir %q): %v", chartDir, r)
+				done <- renderResult{err: fmt.Errorf("chartdiff: render panicked: %v", r)}
+			}
+		}()
 		res, renderErr := e.renderer.Render(chartDir, nil)
 		done <- renderResult{result: res, err: renderErr}
 	}()
@@ -108,10 +152,19 @@ func (e *Engine) renderBounded(ctx context.Context, chartDir string) (result *ch
 
 	select {
 	case out := <-done:
+		cleanup() // the render has fully finished; safe to remove chartDir now.
 		return out.result, out.err, false
 	case <-timer.C:
+		go func() {
+			<-done // wait for the abandoned render to actually stop touching chartDir
+			cleanup()
+		}()
 		return nil, nil, true
 	case <-ctx.Done():
+		go func() {
+			<-done
+			cleanup()
+		}()
 		return nil, nil, true
 	}
 }

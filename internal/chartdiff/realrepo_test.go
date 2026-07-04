@@ -259,3 +259,42 @@ func TestDiff_RealRepo_RootCommit_ReturnsNoPriorVersion(t *testing.T) {
 		t.Errorf("outcome.Kind = %q, want %q", outcome.Kind, chartdiff.NoPriorVersion)
 	}
 }
+
+// TestDiff_RealRepo_MaterializationBoundExceeded_ReturnsExceededLimits proves
+// Config's materialization ceilings (MaxMaterializedBytes/Files/Depth) are
+// really wired end-to-end from Engine.Diff through to a real
+// gitsource.Source's MaterializeSubtreeBounded — not just proven against a
+// fakeChartRepo that returns the sentinel error directly (as
+// classification_test.go and classification_property_test.go do). A tiny
+// MaxMaterializedBytes against the real, vendored-tgz-carrying tenant
+// subtree from buildDepBumpAndVendoredChartSwapRepo must exceed the ceiling
+// and classify as ExceededLimits.
+func TestDiff_RealRepo_MaterializationBoundExceeded_ReturnsExceededLimits(t *testing.T) {
+	t.Parallel()
+
+	repoPath, _, sha2 := buildDepBumpAndVendoredChartSwapRepo(t)
+
+	src, err := gitsource.Open(repoPath)
+	if err != nil {
+		t.Fatalf("gitsource.Open: %v", err)
+	}
+
+	engine, err := chartdiff.NewEngine(chartdiff.Config{
+		MaxMaterializedBytes: 1, // far smaller than the real tenant subtree (Chart.yaml alone exceeds this)
+		MaxMaterializedFiles: 1000,
+		MaxMaterializedDepth: 20,
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	outcome := engine.Diff(context.Background(), src, chartdiff.Request{
+		RepoName:   "tenant-repo",
+		TenantPath: "tenant",
+		CommitSha:  sha2,
+	})
+
+	if outcome.Kind != chartdiff.ExceededLimits {
+		t.Errorf("outcome.Kind = %q, want %q (a 1-byte MaxMaterializedBytes ceiling against a real tenant subtree with real vendored content)", outcome.Kind, chartdiff.ExceededLimits)
+	}
+}

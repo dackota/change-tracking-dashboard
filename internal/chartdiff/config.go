@@ -98,19 +98,19 @@ func (c Config) Resolved() (Config, error) {
 func (c Config) validate() error {
 	switch {
 	case c.RenderTimeout < 0:
-		return fmt.Errorf("chartdiff: RenderTimeout must be positive, got %v", c.RenderTimeout)
+		return fmt.Errorf("chartdiff: RenderTimeout must not be negative, got %v", c.RenderTimeout)
 	case c.ConcurrencyCap < 0:
-		return fmt.Errorf("chartdiff: ConcurrencyCap must be positive, got %d", c.ConcurrencyCap)
+		return fmt.Errorf("chartdiff: ConcurrencyCap must not be negative, got %d", c.ConcurrencyCap)
 	case c.MaxUnifiedBytes < 0:
-		return fmt.Errorf("chartdiff: MaxUnifiedBytes must be positive, got %d", c.MaxUnifiedBytes)
+		return fmt.Errorf("chartdiff: MaxUnifiedBytes must not be negative, got %d", c.MaxUnifiedBytes)
 	case c.CacheEntries < 0:
-		return fmt.Errorf("chartdiff: CacheEntries must be positive, got %d", c.CacheEntries)
+		return fmt.Errorf("chartdiff: CacheEntries must not be negative, got %d", c.CacheEntries)
 	case c.MaxMaterializedBytes < 0:
-		return fmt.Errorf("chartdiff: MaxMaterializedBytes must be positive, got %d", c.MaxMaterializedBytes)
+		return fmt.Errorf("chartdiff: MaxMaterializedBytes must not be negative, got %d", c.MaxMaterializedBytes)
 	case c.MaxMaterializedFiles < 0:
-		return fmt.Errorf("chartdiff: MaxMaterializedFiles must be positive, got %d", c.MaxMaterializedFiles)
+		return fmt.Errorf("chartdiff: MaxMaterializedFiles must not be negative, got %d", c.MaxMaterializedFiles)
 	case c.MaxMaterializedDepth < 0:
-		return fmt.Errorf("chartdiff: MaxMaterializedDepth must be positive, got %d", c.MaxMaterializedDepth)
+		return fmt.Errorf("chartdiff: MaxMaterializedDepth must not be negative, got %d", c.MaxMaterializedDepth)
 	}
 	return nil
 }
