@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/chartdiff"
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/gitsource"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/web"
 	"github.com/go-git/go-git/v5"
@@ -190,8 +191,28 @@ func TestChartDiffHandler_RealRepo_SuccessPath_DepBumpAndVendoredChartSwap(t *te
 		t.Fatalf("chartdiff.NewEngine: %v", err)
 	}
 
+	// Seed the store with the Changeset the security gate requires: only a
+	// (repo, commitSha) pair the poller has already ingested may reach the
+	// resolver/engine. This proves the real end-to-end wiring (a real
+	// store.Store satisfying web.ChangesetExistenceChecker, exactly as
+	// cmd/dashboard wires it) still lets the legitimate path through.
+	st := newTestStore(t)
+	if err := st.SaveChange(domain.Change{
+		Repo:        "tenant-repo",
+		FilePath:    "tenant/Chart.yaml",
+		Field:       "dependency",
+		ChangeType:  domain.ChangeTypeModified,
+		OldValue:    ptr("0.1.0"),
+		NewValue:    ptr("0.2.0"),
+		CommitSha:   sha2,
+		Author:      "bob",
+		CommittedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("seed matching changeset: %v", err)
+	}
+
 	resolver := &fakeChartRepoResolver{fn: func(string) (chartdiff.ChartRepo, error) { return src, nil }}
-	h := web.NewChartDiffHandler(engine, resolver)
+	h := web.NewChartDiffHandler(engine, resolver, st)
 
 	url := "/api/changesets/detail/chart-diff?repo=tenant-repo&commitSha=" + sha2 + "&path=tenant"
 	req := httptest.NewRequest(http.MethodGet, url, nil)

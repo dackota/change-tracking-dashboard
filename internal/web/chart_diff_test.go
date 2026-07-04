@@ -6,11 +6,14 @@ import (
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/quick"
 
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/changeset"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/chartdiff"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/gitsource"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/manifestdiff"
@@ -46,6 +49,61 @@ func (stubChartRepo) MaterializeSubtreeBounded(string, string, string, gitsource
 	return nil
 }
 
+// fakeChangesetExistenceChecker is a web.ChangesetExistenceChecker test
+// double: GetChangeset delegates to a caller-supplied func. The zero value
+// (fn nil) panics if invoked — used deliberately in tests that must prove the
+// checker is never consulted for a given code path.
+type fakeChangesetExistenceChecker struct {
+	fn func(repo, commitSha string) (changeset.Changeset, bool, error)
+}
+
+func (f *fakeChangesetExistenceChecker) GetChangeset(repo, commitSha string) (changeset.Changeset, bool, error) {
+	return f.fn(repo, commitSha)
+}
+
+// alwaysFoundChecker is a fakeChangesetExistenceChecker that reports every
+// (repo, commitSha) pair as an already-ingested Changeset — the common shape
+// for tests that only care about resolver/engine/rendering behavior, not
+// about the existence gate itself.
+func alwaysFoundChecker() *fakeChangesetExistenceChecker {
+	return &fakeChangesetExistenceChecker{fn: func(string, string) (changeset.Changeset, bool, error) {
+		return changeset.Changeset{}, true, nil
+	}}
+}
+
+// neverFoundChecker is a fakeChangesetExistenceChecker that reports every
+// (repo, commitSha) pair as never ingested — the shape the existence-gate
+// tests use to assert the resolver/engine are never reached.
+func neverFoundChecker() *fakeChangesetExistenceChecker {
+	return &fakeChangesetExistenceChecker{fn: func(string, string) (changeset.Changeset, bool, error) {
+		return changeset.Changeset{}, false, nil
+	}}
+}
+
+// spyChartRepoResolver is a web.ChartRepoResolver test double that records
+// whether it was ever invoked — used to prove the existence gate short-
+// circuits before ResolveChartRepo runs, not just that the HTTP response
+// looks right.
+type spyChartRepoResolver struct {
+	called bool
+}
+
+func (s *spyChartRepoResolver) ResolveChartRepo(string) (chartdiff.ChartRepo, error) {
+	s.called = true
+	return stubChartRepo{}, nil
+}
+
+// spyChartDiffEngine is a web.ChartDiffEngine test double that records
+// whether it was ever invoked, for the same reason as spyChartRepoResolver.
+type spyChartDiffEngine struct {
+	called bool
+}
+
+func (s *spyChartDiffEngine) Diff(context.Context, chartdiff.ChartRepo, chartdiff.Request) chartdiff.Outcome {
+	s.called = true
+	return chartdiff.Outcome{Kind: chartdiff.OK}
+}
+
 // defaultChartDiffURL is the well-formed query string every test below
 // reuses unless it's specifically exercising request validation.
 const defaultChartDiffURL = "/api/changesets/detail/chart-diff?repo=r&commitSha=sha&path=tenant"
@@ -57,7 +115,7 @@ const defaultChartDiffURL = "/api/changesets/detail/chart-diff?repo=r&commitSha=
 func newChartDiffHandlerForOutcome(outcome chartdiff.Outcome) *web.ChartDiffHandler {
 	engine := &fakeChartDiffEngine{fn: func(context.Context, chartdiff.ChartRepo, chartdiff.Request) chartdiff.Outcome { return outcome }}
 	resolver := &fakeChartRepoResolver{fn: func(string) (chartdiff.ChartRepo, error) { return stubChartRepo{}, nil }}
-	return web.NewChartDiffHandler(engine, resolver)
+	return web.NewChartDiffHandler(engine, resolver, alwaysFoundChecker())
 }
 
 // serveChartDiff issues a GET to url against h and returns the recorded
@@ -72,13 +130,16 @@ func serveChartDiff(h http.Handler, url string) *httptest.ResponseRecorder {
 // TestChartDiffHandler_MissingRequiredParam_Returns400Generic verifies that
 // omitting any of the three required query params (repo, commitSha, path) is
 // rejected as a malformed request (400) with the shared generic body, never
-// echoing caller input — mirroring changeset_detail.go's own convention.
+// echoing caller input — mirroring changeset_detail.go's own convention. The
+// zero-value checker/resolver/engine fakes (nil fn) would panic if invoked,
+// proving validation short-circuits before the existence gate even runs.
 func TestChartDiffHandler_MissingRequiredParam_Returns400Generic(t *testing.T) {
 	t.Parallel()
 
 	engine := &fakeChartDiffEngine{}
 	resolver := &fakeChartRepoResolver{}
-	h := web.NewChartDiffHandler(engine, resolver)
+	checker := &fakeChangesetExistenceChecker{}
+	h := web.NewChartDiffHandler(engine, resolver, checker)
 
 	cases := []struct {
 		name string
@@ -115,7 +176,7 @@ func TestChartDiffHandler_ResolverFailure_Returns500GenericWithoutLeakingDetail(
 	engine := &fakeChartDiffEngine{}
 	sentinel := errors.New("clone failed: /var/secret/internal/path unreachable")
 	resolver := &fakeChartRepoResolver{fn: func(string) (chartdiff.ChartRepo, error) { return nil, sentinel }}
-	h := web.NewChartDiffHandler(engine, resolver)
+	h := web.NewChartDiffHandler(engine, resolver, alwaysFoundChecker())
 
 	rr := serveChartDiff(h, defaultChartDiffURL)
 
@@ -128,6 +189,167 @@ func TestChartDiffHandler_ResolverFailure_Returns500GenericWithoutLeakingDetail(
 	}
 	if strings.Contains(body, "/var/secret") || strings.Contains(body, "clone failed") {
 		t.Errorf("error body leaks internal detail: %q", body)
+	}
+}
+
+// TestChartDiffHandler_ExistenceCheckError_Returns500GenericWithoutLeakingDetail
+// verifies that a ChangesetExistenceChecker failure (e.g. a store error)
+// surfaces as a generic 500 without leaking the underlying error text, and —
+// critically — never falls through to ResolveChartRepo/Diff on a checker
+// error. A checker error means we could not confirm trust, so it must fail
+// closed, not open.
+func TestChartDiffHandler_ExistenceCheckError_Returns500GenericWithoutLeakingDetailAndNeverReachesResolver(t *testing.T) {
+	t.Parallel()
+
+	resolver := &spyChartRepoResolver{}
+	engine := &spyChartDiffEngine{}
+	sentinel := errors.New("store: query changeset: disk I/O error at /var/lib/db/changes.db")
+	checker := &fakeChangesetExistenceChecker{fn: func(string, string) (changeset.Changeset, bool, error) {
+		return changeset.Changeset{}, false, sentinel
+	}}
+	h := web.NewChartDiffHandler(engine, resolver, checker)
+
+	rr := serveChartDiff(h, defaultChartDiffURL)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "internal server error") {
+		t.Errorf("body = %q, want generic 'internal server error'", body)
+	}
+	if strings.Contains(body, "/var/lib/db") || strings.Contains(body, "disk I/O error") {
+		t.Errorf("error body leaks internal detail: %q", body)
+	}
+	if resolver.called {
+		t.Error("ResolveChartRepo was called despite a checker error — must fail closed")
+	}
+	if engine.called {
+		t.Error("engine.Diff was called despite a checker error — must fail closed")
+	}
+}
+
+// TestChartDiffHandler_UnknownChangeset_RejectsWithoutReachingResolverOrEngine
+// is the core regression test for the CRITICAL finding: repo/commitSha arrive
+// on an unauthenticated request, so ChartRepoResolver (and, behind it,
+// cmd/dashboard's sourceCache — git clone/fetch of an arbitrary URL, GitHub
+// App token attachment, or PlainOpen of an arbitrary local path) must never
+// run for a (repo, commitSha) pair that isn't a real, already-ingested
+// Changeset. Each case below is a plausible attack shape: an attacker-
+// controlled clone target (SSRF/credential exfiltration), a local filesystem
+// path (arbitrary-file/repo disclosure), and a degenerate/empty-ish value.
+// The assertion that matters is that the resolver/engine spies are NEVER
+// invoked — not merely that the HTTP response looks like a rejection.
+func TestChartDiffHandler_UnknownChangeset_RejectsWithoutReachingResolverOrEngine(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		repo      string
+		commitSha string
+	}{
+		{"attacker-controlled HTTPS clone target", "https://attacker.example.com/evil.git", "deadbeef"},
+		{"local filesystem path (e.g. /etc/passwd)", "/etc/passwd", "deadbeef"},
+		{"another checked-out repo's local path", "/var/dashboard/repos/other-tenant", "deadbeef"},
+		{"scp-like ssh URL", "git@attacker.example.com:evil/repo.git", "deadbeef"},
+		{"path traversal", "../../../../etc/shadow", "deadbeef"},
+		{"file scheme URL", "file:///etc/hosts", "deadbeef"},
+		{"whitespace-only repo", " ", "deadbeef"},
+		{"looks legitimate but never ingested", "tenant-repo", "0000000000000000000000000000000000000000"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resolver := &spyChartRepoResolver{}
+			engine := &spyChartDiffEngine{}
+			h := web.NewChartDiffHandler(engine, resolver, neverFoundChecker())
+
+			reqURL := "/api/changesets/detail/chart-diff?" + url.Values{
+				"repo":      {tc.repo},
+				"commitSha": {tc.commitSha},
+				"path":      {"tenant"},
+			}.Encode()
+
+			rr := serveChartDiff(h, reqURL)
+
+			if resolver.called {
+				t.Error("ResolveChartRepo was called for a never-ingested (repo, commitSha) pair — security gate bypassed")
+			}
+			if engine.called {
+				t.Error("engine.Diff was called for a never-ingested (repo, commitSha) pair — security gate bypassed")
+			}
+			if rr.Code != http.StatusNotFound {
+				t.Errorf("status = %d, want 404 for an unknown changeset; body: %s", rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
+// unknownRepoCommitPair is a generated (repo, commitSha) pair standing in for
+// "any string shape an unauthenticated caller could invent" — URLs, local
+// paths, ssh-like refs, traversal sequences, oversized strings, and garbage —
+// recombined per call so the property test below searches a wide space
+// instead of only the hand-picked cases in the table test above.
+type unknownRepoCommitPair struct {
+	repo      string
+	commitSha string
+}
+
+var adversarialRepoFragments = []string{
+	"https://attacker.example.com/evil.git",
+	"/etc/passwd",
+	"/var/dashboard/repos/other-tenant",
+	"git@attacker.example.com:evil/repo.git",
+	" ",
+	"../../../../etc/shadow",
+	"file:///etc/hosts",
+	strings.Repeat("a", 4096),
+	"tenant-repo",
+	"0",
+}
+
+// Generate implements quick.Generator, picking one adversarial repo fragment
+// and pairing it with a distinguishing commitSha so repeated draws of the
+// same repo fragment don't collapse to identical requests.
+func (unknownRepoCommitPair) Generate(rnd *rand.Rand, size int) reflect.Value {
+	repo := adversarialRepoFragments[rnd.Intn(len(adversarialRepoFragments))]
+	commitSha := adversarialRepoFragments[rnd.Intn(len(adversarialRepoFragments))] + "-" + strconv.Itoa(rnd.Int())
+	return reflect.ValueOf(unknownRepoCommitPair{repo: repo, commitSha: commitSha})
+}
+
+// TestChartDiffHandler_NeverIngestedRepoCommitPair_NeverReachesResolverOrEngine_Property
+// asserts the security invariant directly, over a generated family of
+// (repo, commitSha) pairs rather than only the fixed table above: for EVERY
+// pair the ChangesetExistenceChecker reports as never ingested, the
+// resolver/engine must never run and the response must be a 404 — regardless
+// of what shape of string an attacker chooses for repo. This subsumes the
+// whole class of "attacker invents a repo string" attacks the table test
+// exemplifies, catching any combination the table didn't enumerate.
+func TestChartDiffHandler_NeverIngestedRepoCommitPair_NeverReachesResolverOrEngine_Property(t *testing.T) {
+	t.Parallel()
+
+	property := func(pair unknownRepoCommitPair) bool {
+		resolver := &spyChartRepoResolver{}
+		engine := &spyChartDiffEngine{}
+		h := web.NewChartDiffHandler(engine, resolver, neverFoundChecker())
+
+		reqURL := "/api/changesets/detail/chart-diff?" + url.Values{
+			"repo":      {pair.repo},
+			"commitSha": {pair.commitSha},
+			"path":      {"tenant"},
+		}.Encode()
+
+		rr := serveChartDiff(h, reqURL)
+
+		if resolver.called || engine.called {
+			t.Logf("gate bypassed for repo=%q commitSha=%q", pair.repo, pair.commitSha)
+			return false
+		}
+		return rr.Code == http.StatusNotFound
+	}
+
+	if err := quick.Check(property, &quick.Config{MaxCount: 100}); err != nil {
+		t.Error(err)
 	}
 }
 
@@ -272,7 +494,7 @@ func TestChartDiffHandler_SecurityHeaders_PresentOnEveryResponse(t *testing.T) {
 	okHandler := newChartDiffHandlerForOutcome(chartdiff.Outcome{Kind: chartdiff.OK})
 	failEngine := &fakeChartDiffEngine{}
 	failResolver := &fakeChartRepoResolver{fn: func(string) (chartdiff.ChartRepo, error) { return nil, errors.New("boom") }}
-	failHandler := web.NewChartDiffHandler(failEngine, failResolver)
+	failHandler := web.NewChartDiffHandler(failEngine, failResolver, alwaysFoundChecker())
 
 	cases := []struct {
 		name string

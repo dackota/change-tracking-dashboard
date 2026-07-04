@@ -12,6 +12,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/changeset"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/chartdiff"
 )
 
@@ -31,17 +32,35 @@ type ChartRepoResolver interface {
 	ResolveChartRepo(repo string) (chartdiff.ChartRepo, error)
 }
 
+// ChangesetExistenceChecker reports whether (repo, commitSha) is a real,
+// already-ingested Changeset. *store.Store satisfies this via its existing
+// GetChangeset method.
+//
+// This is the endpoint's security boundary: repo and commitSha arrive on an
+// unauthenticated HTTP request, so they must never reach ChartRepoResolver
+// (and, behind it, cmd/dashboard's sourceCache — which clones/fetches
+// arbitrary git URLs, attaches the live GitHub App installation token to
+// "https://" URLs, and PlainOpens arbitrary local paths) unless the pair is
+// one the poller itself has already legitimately polled. Mirrors
+// changeset_detail.go's own GetChangeset gate for the sibling endpoint.
+type ChangesetExistenceChecker interface {
+	GetChangeset(repo, commitSha string) (changeset.Changeset, bool, error)
+}
+
 // ChartDiffHandler serves GET /api/changesets/detail/chart-diff as a
 // server-rendered HTML fragment.
 type ChartDiffHandler struct {
 	engine   ChartDiffEngine
 	resolver ChartRepoResolver
+	checker  ChangesetExistenceChecker
 }
 
-// NewChartDiffHandler creates a ChartDiffHandler backed by engine and
-// resolver.
-func NewChartDiffHandler(engine ChartDiffEngine, resolver ChartRepoResolver) *ChartDiffHandler {
-	return &ChartDiffHandler{engine: engine, resolver: resolver}
+// NewChartDiffHandler creates a ChartDiffHandler backed by engine, resolver,
+// and checker. checker gates every request: resolver/engine only ever run
+// for a (repo, commitSha) pair checker confirms is an already-ingested
+// Changeset.
+func NewChartDiffHandler(engine ChartDiffEngine, resolver ChartRepoResolver, checker ChangesetExistenceChecker) *ChartDiffHandler {
+	return &ChartDiffHandler{engine: engine, resolver: resolver, checker: checker}
 }
 
 // ServeHTTP satisfies http.Handler.
@@ -54,6 +73,22 @@ func (h *ChartDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 	if repo == "" || commitSha == "" || path == "" {
 		http.Error(w, genericBadRequestMsg, http.StatusBadRequest)
+		return
+	}
+
+	// Security gate: repo/commitSha are unauthenticated, caller-supplied
+	// input. Only proceed to ResolveChartRepo (and the git clone/fetch/
+	// PlainOpen it can trigger) once we've confirmed this exact pair is a
+	// Changeset the poller already ingested from trusted tracker config —
+	// never a repo string an attacker invented on the request.
+	_, found, err := h.checker.GetChangeset(repo, commitSha)
+	if err != nil {
+		log.Printf("web: check changeset existence for chart diff repo=%q (tenant=%q commit=%q): %v", repo, path, commitSha, err)
+		http.Error(w, genericServerErrorMsg, http.StatusInternalServerError)
+		return
+	}
+	if !found {
+		http.NotFound(w, r)
 		return
 	}
 

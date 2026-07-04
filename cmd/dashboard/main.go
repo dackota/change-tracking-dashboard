@@ -141,7 +141,7 @@ func run(configPath, dbPath, listenAddr string) error {
 	staticHandler := web.NewStaticHandler()
 	changesetsHandler := web.NewChangesetsHandler(st)
 	changesetDetailHandler := web.NewChangesetDetailHandler(st)
-	chartDiffHandler := web.NewChartDiffHandler(chartDiffEngine, sources)
+	chartDiffHandler := web.NewChartDiffHandler(chartDiffEngine, sources, st)
 	mux := http.NewServeMux()
 	mux.Handle("/", timelineHandler)
 	mux.Handle("/static/", staticHandler)
