@@ -39,14 +39,22 @@ type Request struct {
 }
 
 // Engine is the Chart diff compute engine. Construct one with NewEngine; it
-// is safe for concurrent use by multiple goroutines (its cache, semaphore,
+// is safe for concurrent use by multiple goroutines (its cache, semaphores,
 // and single-flight group are all internally synchronized).
 type Engine struct {
 	cfg      Config
 	renderer Renderer
 	cache    *lru.Cache[cacheKey, Outcome]
-	sem      chan struct{}
-	group    singleflight.Group
+	// sem bounds concurrent render invocations (Config.ConcurrencyCap).
+	sem chan struct{}
+	// materializeSem bounds concurrent ChartRepo.MaterializeSubtreeBounded
+	// invocations (Config.MaterializeConcurrencyCap) — a dedicated
+	// semaphore, not shared with sem, because materialize (a disk/CPU tree
+	// walk) and render (a CPU-bound Helm template execution) have different
+	// resource profiles; see Config.MaterializeConcurrencyCap's doc for the
+	// full rationale.
+	materializeSem chan struct{}
+	group          singleflight.Group
 }
 
 // NewEngine constructs an Engine from cfg (resolved and validated via
@@ -68,10 +76,11 @@ func NewEngine(cfg Config, renderer Renderer) (*Engine, error) {
 	}
 
 	return &Engine{
-		cfg:      resolved,
-		renderer: renderer,
-		cache:    cache,
-		sem:      make(chan struct{}, resolved.ConcurrencyCap),
+		cfg:            resolved,
+		renderer:       renderer,
+		cache:          cache,
+		sem:            make(chan struct{}, resolved.ConcurrencyCap),
+		materializeSem: make(chan struct{}, resolved.MaterializeConcurrencyCap),
 	}, nil
 }
 
@@ -150,6 +159,7 @@ func (e *Engine) compute(ctx context.Context, repo ChartRepo, req Request, paren
 		MaxTotalBytes: e.cfg.MaxMaterializedBytes,
 		MaxFiles:      e.cfg.MaxMaterializedFiles,
 		MaxDepth:      e.cfg.MaxMaterializedDepth,
+		MaxTreeNodes:  e.cfg.MaxMaterializedNodes,
 	}
 
 	oldManifests, failure, ok := e.materializeAndRender(ctx, repo, req, parentSha, bounds, "old")

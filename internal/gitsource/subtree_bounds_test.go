@@ -11,8 +11,13 @@ import (
 	"strings"
 	"testing"
 	"testing/quick"
+	"time"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/gitsource"
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
+	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
 // generousBounds is large enough that no fixture in this file should ever
@@ -22,6 +27,7 @@ var generousBounds = gitsource.MaterializeBounds{
 	MaxTotalBytes: 10 << 20, // 10 MiB
 	MaxFiles:      1000,
 	MaxDepth:      50,
+	MaxTreeNodes:  1000,
 }
 
 // TestMaterializeSubtreeBounded_WithinBounds_MatchesUnboundedBehavior proves
@@ -77,7 +83,7 @@ func TestMaterializeSubtreeBounded_ExceedsMaxTotalBytes_ReturnsBoundsError(t *te
 	}
 
 	destDir := t.TempDir()
-	bounds := gitsource.MaterializeBounds{MaxTotalBytes: 512, MaxFiles: 1000, MaxDepth: 50}
+	bounds := gitsource.MaterializeBounds{MaxTotalBytes: 512, MaxFiles: 1000, MaxDepth: 50, MaxTreeNodes: 1000}
 	err = src.MaterializeSubtreeBounded(sha, "tenant", destDir, bounds)
 	if err == nil {
 		t.Fatal("MaterializeSubtreeBounded with an oversized subtree returned nil error, want ErrMaterializeBoundsExceeded")
@@ -107,7 +113,7 @@ func TestMaterializeSubtreeBounded_ExceedsMaxFiles_ReturnsBoundsError(t *testing
 	}
 
 	destDir := t.TempDir()
-	bounds := gitsource.MaterializeBounds{MaxTotalBytes: 10 << 20, MaxFiles: 3, MaxDepth: 50}
+	bounds := gitsource.MaterializeBounds{MaxTotalBytes: 10 << 20, MaxFiles: 3, MaxDepth: 50, MaxTreeNodes: 1000}
 	err = src.MaterializeSubtreeBounded(sha, "tenant", destDir, bounds)
 	if err == nil {
 		t.Fatal("MaterializeSubtreeBounded with 11 files and MaxFiles=3 returned nil error, want ErrMaterializeBoundsExceeded")
@@ -134,7 +140,7 @@ func TestMaterializeSubtreeBounded_ExceedsMaxDepth_ReturnsBoundsError(t *testing
 	}
 
 	destDir := t.TempDir()
-	bounds := gitsource.MaterializeBounds{MaxTotalBytes: 10 << 20, MaxFiles: 1000, MaxDepth: 2}
+	bounds := gitsource.MaterializeBounds{MaxTotalBytes: 10 << 20, MaxFiles: 1000, MaxDepth: 2, MaxTreeNodes: 1000}
 	err = src.MaterializeSubtreeBounded(sha, "tenant", destDir, bounds)
 	if err == nil {
 		t.Fatal("MaterializeSubtreeBounded with depth-5 nesting and MaxDepth=2 returned nil error, want ErrMaterializeBoundsExceeded")
@@ -243,7 +249,7 @@ func TestMaterializeSubtreeBounded_NeverExceedsConfiguredCeiling_Property(t *tes
 		}
 
 		destDir := t.TempDir()
-		bounds := gitsource.MaterializeBounds{MaxTotalBytes: maxTotalBytes, MaxFiles: 1000, MaxDepth: 50}
+		bounds := gitsource.MaterializeBounds{MaxTotalBytes: maxTotalBytes, MaxFiles: 1000, MaxDepth: 50, MaxTreeNodes: 1000}
 		err = src.MaterializeSubtreeBounded(sha, "tenant", destDir, bounds)
 
 		total := materializedTotalBytes(t, destDir)
@@ -290,5 +296,160 @@ func TestMaterializeSubtree_StillWorksUnbounded(t *testing.T) {
 	}
 	if !strings.Contains(string(got), "name: tenant") {
 		t.Errorf("Chart.yaml content = %q, want it to contain %q", got, "name: tenant")
+	}
+}
+
+// buildManyEmptyDirsRepo builds a git repo whose "tenant/" subtree contains n
+// sibling empty directories (each an empty tree object: zero blobs, zero
+// nested subtrees), via direct plumbing object writes rather than the
+// worktree Add/Commit flow — git has no concept of a trackable empty
+// directory, so the ordinary worktree API cannot stage one; a tree object
+// with zero entries is nonetheless a perfectly valid low-level git object,
+// which is exactly the adversarial shape MaxTreeNodes must bound: zero bytes,
+// zero files, but a real node MaterializeSubtreeBounded must still visit.
+// Every sibling directory reuses the same empty-tree object hash (real git
+// content-addressing would do the same for identical content), so building a
+// large n costs one extra tree-entry append per iteration, not one extra
+// object.
+func buildManyEmptyDirsRepo(t *testing.T, n int) (repoPath, sha string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	repo, err := git.PlainInit(dir, false)
+	if err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+	store := repo.Storer
+
+	writeTree := func(entries []object.TreeEntry) plumbing.Hash {
+		tree := &object.Tree{Entries: entries}
+		obj := store.NewEncodedObject()
+		if err := tree.Encode(obj); err != nil {
+			t.Fatalf("encode tree: %v", err)
+		}
+		h, err := store.SetEncodedObject(obj)
+		if err != nil {
+			t.Fatalf("store tree: %v", err)
+		}
+		return h
+	}
+
+	emptyTreeHash := writeTree(nil)
+
+	// Git requires tree entries to be sorted by name; zero-pad so
+	// lexicographic and numeric order agree regardless of n's magnitude.
+	width := len(fmt.Sprintf("%d", n))
+	entries := make([]object.TreeEntry, 0, n)
+	for i := 0; i < n; i++ {
+		entries = append(entries, object.TreeEntry{Name: fmt.Sprintf("dir%0*d", width, i), Mode: filemode.Dir, Hash: emptyTreeHash})
+	}
+	tenantTreeHash := writeTree(entries)
+	rootTreeHash := writeTree([]object.TreeEntry{{Name: "tenant", Mode: filemode.Dir, Hash: tenantTreeHash}})
+
+	when := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	commit := &object.Commit{
+		Author:    object.Signature{Name: "tester", Email: "tester@example.com", When: when},
+		Committer: object.Signature{Name: "tester", Email: "tester@example.com", When: when},
+		Message:   "many empty dirs",
+		TreeHash:  rootTreeHash,
+	}
+	obj := store.NewEncodedObject()
+	if err := commit.Encode(obj); err != nil {
+		t.Fatalf("encode commit: %v", err)
+	}
+	commitHash, err := store.SetEncodedObject(obj)
+	if err != nil {
+		t.Fatalf("store commit: %v", err)
+	}
+
+	return dir, commitHash.String()
+}
+
+// TestMaterializeSubtreeBounded_ManyEmptyNestedDirectories_ReturnsBoundsErrorPromptly
+// is the concrete adversarial case MaxTreeNodes closes: a tree of far more
+// empty sibling directories than the configured ceiling has zero bytes and
+// zero files, so neither MaxTotalBytes nor MaxFiles ever trips — without its
+// own ceiling, this shape would walk unbounded. MaxTreeNodes must reject it
+// promptly (well before visiting all 50,000 entries) rather than fully
+// traversing or hanging.
+func TestMaterializeSubtreeBounded_ManyEmptyNestedDirectories_ReturnsBoundsErrorPromptly(t *testing.T) {
+	t.Parallel()
+
+	const n = 50_000
+	repoPath, sha := buildManyEmptyDirsRepo(t, n)
+	src, err := gitsource.Open(repoPath)
+	if err != nil {
+		t.Fatalf("gitsource.Open: %v", err)
+	}
+
+	destDir := t.TempDir()
+	bounds := gitsource.MaterializeBounds{MaxTotalBytes: 10 << 20, MaxFiles: 1000, MaxDepth: 50, MaxTreeNodes: 10}
+
+	start := time.Now()
+	err = src.MaterializeSubtreeBounded(sha, "tenant", destDir, bounds)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("MaterializeSubtreeBounded over 50,000 empty sibling dirs with MaxTreeNodes=10 returned nil error, want ErrMaterializeBoundsExceeded")
+	}
+	if !errors.Is(err, gitsource.ErrMaterializeBoundsExceeded) {
+		t.Errorf("error = %v, want errors.Is(err, ErrMaterializeBoundsExceeded) == true", err)
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("MaterializeSubtreeBounded took %v to reject an oversized-by-nodes tree, want a prompt rejection (not a full traversal of all %d entries)", elapsed, n)
+	}
+}
+
+// manyEmptyDirsCount is a randomized sibling-empty-dir count used to drive
+// the tree-node-ceiling property test below, kept small enough (0-300) that
+// the test itself stays fast while still exercising well-under, right-at, and
+// well-over a small configured MaxTreeNodes ceiling.
+type manyEmptyDirsCount int
+
+// Generate implements quick.Generator.
+func (manyEmptyDirsCount) Generate(rnd *rand.Rand, size int) reflect.Value {
+	return reflect.ValueOf(manyEmptyDirsCount(rnd.Intn(300)))
+}
+
+// TestMaterializeSubtreeBounded_TreeNodeCeiling_Property asserts the
+// invariant that must hold for every possible sibling-empty-dir count: when
+// the tree's total node count is within MaxTreeNodes, materialization
+// succeeds; when it exceeds MaxTreeNodes, MaterializeSubtreeBounded fails
+// with ErrMaterializeBoundsExceeded — never a hang, a panic, or an
+// unclassified error — for a tree that carries zero bytes and zero files
+// (the exact shape MaxFiles/MaxTotalBytes cannot bound).
+func TestMaterializeSubtreeBounded_TreeNodeCeiling_Property(t *testing.T) {
+	t.Parallel()
+
+	const maxTreeNodes = 50
+
+	property := func(n manyEmptyDirsCount) bool {
+		repoPath, sha := buildManyEmptyDirsRepo(t, int(n))
+		src, err := gitsource.Open(repoPath)
+		if err != nil {
+			t.Fatalf("gitsource.Open: %v", err)
+		}
+
+		destDir := t.TempDir()
+		bounds := gitsource.MaterializeBounds{MaxTotalBytes: 10 << 20, MaxFiles: 1000, MaxDepth: 50, MaxTreeNodes: maxTreeNodes}
+		err = src.MaterializeSubtreeBounded(sha, "tenant", destDir, bounds)
+
+		if int(n) > maxTreeNodes {
+			if !errors.Is(err, gitsource.ErrMaterializeBoundsExceeded) {
+				t.Logf("n=%d exceeds ceiling %d but error = %v, want ErrMaterializeBoundsExceeded", n, maxTreeNodes, err)
+				return false
+			}
+			return true
+		}
+
+		if err != nil {
+			t.Logf("n=%d within ceiling %d but got unexpected error: %v", n, maxTreeNodes, err)
+			return false
+		}
+		return true
+	}
+
+	if err := quick.Check(property, &quick.Config{MaxCount: 30}); err != nil {
+		t.Error(err)
 	}
 }

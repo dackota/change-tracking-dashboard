@@ -51,6 +51,17 @@ type MaterializeBounds struct {
 	// MaxDepth is the maximum tree recursion depth MaterializeSubtreeBounded
 	// will descend. The subtree root is depth 0.
 	MaxDepth int
+	// MaxTreeNodes is the maximum number of tree entries (files and
+	// directories combined) MaterializeSubtreeBounded may visit while
+	// walking the subtree, independent of MaxFiles/MaxTotalBytes/MaxDepth. A
+	// crafted tree of many nested (or sibling) empty directories has zero
+	// bytes and zero files, so neither MaxTotalBytes nor MaxFiles ever
+	// trips against it, and MaxDepth bounds only how deep the walk
+	// descends, not how many entries it visits at any one level or across
+	// the whole subtree. MaxTreeNodes closes that gap: every tree entry —
+	// file or directory — increments one running counter, checked at the
+	// single materializeTree chokepoint before that entry is processed.
+	MaxTreeNodes int
 }
 
 // unboundedMaterializeBounds are the ceilings MaterializeSubtree (the
@@ -61,6 +72,7 @@ var unboundedMaterializeBounds = MaterializeBounds{
 	MaxTotalBytes: math.MaxInt64,
 	MaxFiles:      math.MaxInt,
 	MaxDepth:      math.MaxInt,
+	MaxTreeNodes:  math.MaxInt,
 }
 
 // FirstParent resolves the first parent of the commit identified by
@@ -162,6 +174,7 @@ type materializeState struct {
 	bounds       MaterializeBounds
 	bytesWritten int64
 	filesWritten int
+	nodesVisited int
 }
 
 // materializeTree recursively writes every blob under tree into destDir,
@@ -180,6 +193,11 @@ func materializeTree(store storer.EncodedObjectStorer, tree *object.Tree, relPre
 	}
 
 	for _, entry := range tree.Entries {
+		state.nodesVisited++
+		if state.nodesVisited > state.bounds.MaxTreeNodes {
+			return fmt.Errorf("gitsource: tree %q: %w (max tree nodes %d)", relPrefix, ErrMaterializeBoundsExceeded, state.bounds.MaxTreeNodes)
+		}
+
 		relPath := entry.Name
 		if relPrefix != "" {
 			relPath = relPrefix + "/" + entry.Name

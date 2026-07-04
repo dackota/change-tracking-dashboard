@@ -16,10 +16,15 @@ var errUnexpected = errors.New("fakes_test: unexpected failure")
 
 // fakeChartRepo is a chartdiff.ChartRepo test double: both methods delegate
 // to caller-supplied funcs, so each test configures exactly the git behavior
-// it needs without a real repository.
+// it needs without a real repository. MaterializeSubtreeBounded calls are
+// counted (thread-safely) so tests can assert "at most once per key" under
+// concurrency, mirroring fakeRenderer's callCount.
 type fakeChartRepo struct {
 	firstParentFn func(sha string) (string, error)
 	materializeFn func(sha, subtreePath, destDir string, bounds gitsource.MaterializeBounds) error
+
+	mu             sync.Mutex
+	materializeCns int
 }
 
 func (f *fakeChartRepo) FirstParent(sha string) (string, error) {
@@ -27,10 +32,21 @@ func (f *fakeChartRepo) FirstParent(sha string) (string, error) {
 }
 
 func (f *fakeChartRepo) MaterializeSubtreeBounded(sha, subtreePath, destDir string, bounds gitsource.MaterializeBounds) error {
+	f.mu.Lock()
+	f.materializeCns++
+	f.mu.Unlock()
 	if f.materializeFn != nil {
 		return f.materializeFn(sha, subtreePath, destDir, bounds)
 	}
 	return nil
+}
+
+// materializeCallCount returns the number of MaterializeSubtreeBounded calls
+// observed so far.
+func (f *fakeChartRepo) materializeCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.materializeCns
 }
 
 // fixedParentRepo returns a fakeChartRepo whose FirstParent always resolves
