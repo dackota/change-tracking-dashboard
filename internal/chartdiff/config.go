@@ -41,6 +41,28 @@ const (
 	// against stack exhaustion from a maliciously deep git tree. Real chart
 	// dependency nesting rarely exceeds single digits.
 	DefaultMaxMaterializedDepth = 20
+	// DefaultMaxMaterializedNodes bounds the total number of tree entries
+	// (files and directories combined) a single materialization may visit —
+	// independent of DefaultMaxMaterializedFiles, which only ever counts
+	// actual files. A crafted tree of many empty directories has zero files
+	// and zero bytes, so neither the file nor byte ceiling ever trips
+	// against it; this is the ceiling that closes that gap. Real chart
+	// trees (an umbrella plus several vendored subcharts) rarely exceed a
+	// few hundred combined files and directories, so 5000 leaves generous
+	// headroom for a legitimate, deeply-nested chart while still rejecting
+	// a hostile tree of thousands of empty directories promptly.
+	DefaultMaxMaterializedNodes = 5000
+	// DefaultMaterializeTimeout bounds a single
+	// MaterializeSubtreeBounded call, mirroring DefaultRenderTimeout's
+	// rationale for the sibling render step: materializing a tenant subtree
+	// from an already-cloned local git object store is normally
+	// sub-second, so 10s leaves headroom without letting one pathological
+	// or adversarial repository tree hold a materialize slot indefinitely.
+	DefaultMaterializeTimeout = 10 * time.Second
+	// DefaultMaterializeConcurrencyCap bounds how many materializations may
+	// run concurrently, mirroring DefaultConcurrencyCap's rationale for the
+	// sibling render step on a single-replica pod.
+	DefaultMaterializeConcurrencyCap = 4
 )
 
 // Config bounds the chartdiff Engine's resource usage (ADR 0002): a
@@ -77,6 +99,33 @@ type Config struct {
 	// MaxMaterializedDepth bounds tree recursion depth during
 	// materialization.
 	MaxMaterializedDepth int
+	// MaxMaterializedNodes bounds the total number of tree entries (files
+	// and directories combined) a single tenant subtree materialization may
+	// visit, passed through to gitsource.MaterializeBounds.MaxTreeNodes.
+	MaxMaterializedNodes int
+	// MaterializeTimeout bounds a single
+	// ChartRepo.MaterializeSubtreeBounded call — the sibling bound to
+	// RenderTimeout for the other half of a Chart diff's per-side work.
+	// Materialize and render have different resource profiles (a
+	// disk/CPU tree walk vs. a Helm template execution), but both are
+	// synchronous, uncancellable calls into untrusted-input-driven code, so
+	// both need their own timeout for the same reason (see
+	// materialize.go's materializeBounded).
+	MaterializeTimeout time.Duration
+	// MaterializeConcurrencyCap bounds how many materializations may run
+	// concurrently, independently of ConcurrencyCap (which bounds
+	// concurrent renders). A dedicated cap — rather than sharing
+	// ConcurrencyCap/e.sem with render — is used deliberately: materialize
+	// is a disk/CPU tree-walk workload and render is a CPU-bound Helm
+	// template execution, two different resource profiles with their own
+	// natural concurrency ceilings. Sharing one semaphore would let a burst
+	// of slow materializations starve render slots (or vice versa) even
+	// though the two steps compete for different underlying resources and
+	// already have independent resource ceilings (bytes/files/depth/nodes
+	// vs. render timeout) — a dedicated cap lets each be tuned
+	// independently, consistent with this Config's existing one-field-per-
+	// concern shape.
+	MaterializeConcurrencyCap int
 }
 
 // Resolved returns a copy of c with every zero field replaced by its
@@ -111,6 +160,12 @@ func (c Config) validate() error {
 		return fmt.Errorf("chartdiff: MaxMaterializedFiles must not be negative, got %d", c.MaxMaterializedFiles)
 	case c.MaxMaterializedDepth < 0:
 		return fmt.Errorf("chartdiff: MaxMaterializedDepth must not be negative, got %d", c.MaxMaterializedDepth)
+	case c.MaxMaterializedNodes < 0:
+		return fmt.Errorf("chartdiff: MaxMaterializedNodes must not be negative, got %d", c.MaxMaterializedNodes)
+	case c.MaterializeTimeout < 0:
+		return fmt.Errorf("chartdiff: MaterializeTimeout must not be negative, got %v", c.MaterializeTimeout)
+	case c.MaterializeConcurrencyCap < 0:
+		return fmt.Errorf("chartdiff: MaterializeConcurrencyCap must not be negative, got %d", c.MaterializeConcurrencyCap)
 	}
 	return nil
 }
@@ -138,6 +193,15 @@ func (c Config) withDefaults() Config {
 	}
 	if c.MaxMaterializedDepth == 0 {
 		c.MaxMaterializedDepth = DefaultMaxMaterializedDepth
+	}
+	if c.MaxMaterializedNodes == 0 {
+		c.MaxMaterializedNodes = DefaultMaxMaterializedNodes
+	}
+	if c.MaterializeTimeout == 0 {
+		c.MaterializeTimeout = DefaultMaterializeTimeout
+	}
+	if c.MaterializeConcurrencyCap == 0 {
+		c.MaterializeConcurrencyCap = DefaultMaterializeConcurrencyCap
 	}
 	return c
 }

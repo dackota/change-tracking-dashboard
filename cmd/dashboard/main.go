@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/chartdiff"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/config"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/githubapp"
@@ -125,16 +126,28 @@ func run(configPath, dbPath, listenAddr string) error {
 		}
 	}()
 
+	// --- Chart diff engine ---
+	// chartdiff.Config{} (all-zero) resolves to the package's conservative
+	// defaults (see chartdiff/config.go). Wiring the config file's
+	// timeout/concurrency/cache-size/materialize fields through is deferred
+	// to a later slice per the chart-diff PRD's slice ordering.
+	chartDiffEngine, err := chartdiff.NewEngine(chartdiff.Config{}, nil)
+	if err != nil {
+		return fmt.Errorf("create chart diff engine: %w", err)
+	}
+
 	// --- HTTP ---
 	timelineHandler := web.NewTimelineHandler(st)
 	staticHandler := web.NewStaticHandler()
 	changesetsHandler := web.NewChangesetsHandler(st)
 	changesetDetailHandler := web.NewChangesetDetailHandler(st)
+	chartDiffHandler := web.NewChartDiffHandler(chartDiffEngine, sources)
 	mux := http.NewServeMux()
 	mux.Handle("/", timelineHandler)
 	mux.Handle("/static/", staticHandler)
 	mux.Handle("/api/changesets", changesetsHandler)
 	mux.Handle("/api/changesets/detail", changesetDetailHandler)
+	mux.Handle("/api/changesets/detail/chart-diff", chartDiffHandler)
 
 	srv := &http.Server{
 		Addr:         listenAddr,
@@ -210,6 +223,19 @@ func (c *sourceCache) get(repo string) (*gitsource.Source, error) {
 	}
 	c.sources[repo] = cs
 	return cs.src, nil
+}
+
+// ResolveChartRepo adapts sourceCache.get to web.ChartRepoResolver, letting
+// the chart-diff handler resolve/clone a repo via the same source cache
+// every poller and the timeline detail handler use. *gitsource.Source
+// already satisfies chartdiff.ChartRepo directly, so no further wrapping is
+// needed beyond the interface conversion.
+func (c *sourceCache) ResolveChartRepo(repo string) (chartdiff.ChartRepo, error) {
+	src, err := c.get(repo)
+	if err != nil {
+		return nil, err
+	}
+	return src, nil
 }
 
 // buildAuth constructs the BasicAuth for the given remote repo URL. Returns nil

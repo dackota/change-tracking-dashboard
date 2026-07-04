@@ -19,13 +19,16 @@ func TestConfig_Resolved_AppliesDefaultsWhenAllFieldsUnset(t *testing.T) {
 	}
 
 	want := chartdiff.Config{
-		RenderTimeout:        chartdiff.DefaultRenderTimeout,
-		ConcurrencyCap:       chartdiff.DefaultConcurrencyCap,
-		MaxUnifiedBytes:      chartdiff.DefaultMaxUnifiedBytes,
-		CacheEntries:         chartdiff.DefaultCacheEntries,
-		MaxMaterializedBytes: chartdiff.DefaultMaxMaterializedBytes,
-		MaxMaterializedFiles: chartdiff.DefaultMaxMaterializedFiles,
-		MaxMaterializedDepth: chartdiff.DefaultMaxMaterializedDepth,
+		RenderTimeout:             chartdiff.DefaultRenderTimeout,
+		ConcurrencyCap:            chartdiff.DefaultConcurrencyCap,
+		MaxUnifiedBytes:           chartdiff.DefaultMaxUnifiedBytes,
+		CacheEntries:              chartdiff.DefaultCacheEntries,
+		MaxMaterializedBytes:      chartdiff.DefaultMaxMaterializedBytes,
+		MaxMaterializedFiles:      chartdiff.DefaultMaxMaterializedFiles,
+		MaxMaterializedDepth:      chartdiff.DefaultMaxMaterializedDepth,
+		MaxMaterializedNodes:      chartdiff.DefaultMaxMaterializedNodes,
+		MaterializeTimeout:        chartdiff.DefaultMaterializeTimeout,
+		MaterializeConcurrencyCap: chartdiff.DefaultMaterializeConcurrencyCap,
 	}
 	if got != want {
 		t.Errorf("Resolved() = %+v, want %+v", got, want)
@@ -72,6 +75,9 @@ func TestConfig_Resolved_RejectsNonPositiveExplicitValues(t *testing.T) {
 		{"negative MaxMaterializedBytes", chartdiff.Config{MaxMaterializedBytes: -1}},
 		{"negative MaxMaterializedFiles", chartdiff.Config{MaxMaterializedFiles: -1}},
 		{"negative MaxMaterializedDepth", chartdiff.Config{MaxMaterializedDepth: -1}},
+		{"negative MaxMaterializedNodes", chartdiff.Config{MaxMaterializedNodes: -1}},
+		{"negative MaterializeTimeout", chartdiff.Config{MaterializeTimeout: -1}},
+		{"negative MaterializeConcurrencyCap", chartdiff.Config{MaterializeConcurrencyCap: -1}},
 	}
 
 	for _, tt := range tests {
