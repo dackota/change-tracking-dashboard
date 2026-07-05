@@ -81,6 +81,13 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
           volumeMounts:
+            # Writable scratch for git clones of remote repos. The poller and
+            # chart-diff engine clone/fetch remote HTTPS repos into os.TempDir()
+            # (/tmp); readOnlyRootFilesystem is true, so without a writable /tmp
+            # volume every remote-repo clone would fail on the read-only rootfs.
+            # Local-path trackers don't use it — an empty /tmp is harmless there.
+            - name: tmp
+              mountPath: /tmp
             # Durable storage for SQLite change history (survives pod restarts)
             - name: data
               mountPath: {{ .Values.persistence.mountPath }}
@@ -113,6 +120,14 @@ spec:
             secretName: {{ .Values.githubApp.secretName }}
             defaultMode: 0400
         {{- end }}
+        # Ephemeral scratch for remote-repo clones (see the /tmp volumeMount).
+        # emptyDir is correct: clones are disposable and re-created after a pod
+        # restart, and the poller resumes from the store's high-water-mark with
+        # no data loss. sizeLimit bounds it so a runaway clone can't fill the node.
+        # Listed last so the conditional github-app-key volume keeps its index.
+        - name: tmp
+          emptyDir:
+            sizeLimit: 1Gi
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

@@ -3,7 +3,10 @@
 # Stage 1: build
 # Use the same Go version as go.mod (go 1.25.6 maps to toolchain 1.25.x).
 # CGO_ENABLED=0: modernc.org/sqlite is pure-Go; no C toolchain needed.
-FROM golang:1.25-alpine AS builder
+# --platform=$BUILDPLATFORM pins the builder to the host arch so Go
+# cross-compiles to the target natively (fast) rather than the runtime
+# emulating the compiler under QEMU. Required for the arm64 (OKE A1) target.
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
 
 WORKDIR /build
 
@@ -13,8 +16,12 @@ RUN go mod download
 
 COPY . .
 
-# Build the dashboard binary — static, no CGO, for a minimal runtime image.
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+# TARGETOS/TARGETARCH are injected by buildx per requested --platform; Go
+# cross-compiles to them from the native builder. CGO stays off so the binary
+# is static and portable across the amd64/arm64 targets.
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" \
     -o /build/dashboard ./cmd/dashboard
 
