@@ -98,6 +98,73 @@ func TestChangesetDetail_ChartChange_LabelledDistinctlyWithVersionAndHelmDiffSlo
 	}
 }
 
+// TestChangesetDetail_ChartChange_TenantPathAttributeDerivedFromFilePath
+// verifies that a chart-kind Change's detail slot carries a data-tenant-path
+// attribute derived from the Change's own FilePath via filepath.Dir — the
+// tenant chart directory timeline.js needs to build its chart-diff fetch URL
+// (PRD "Rendering basis": the tenant chart directory is the directory of the
+// chart Change's source file), including the edge case where the source file
+// has no directory component.
+func TestChangesetDetail_ChartChange_TenantPathAttributeDerivedFromFilePath(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name           string
+		commitSha      string
+		filePath       string
+		wantTenantPath string
+	}{
+		{
+			name:           "nested tenant directory",
+			commitSha:      "commit-tenant-path-nested",
+			filePath:       "apps/tenant-zero/dev/us-west-2/Chart.yaml",
+			wantTenantPath: "apps/tenant-zero/dev/us-west-2",
+		},
+		{
+			name:           "root-level Chart.yaml has no directory component",
+			commitSha:      "commit-tenant-path-root",
+			filePath:       "Chart.yaml",
+			wantTenantPath: ".",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newTestStore(t)
+			keyVal := "kanpai-gateway"
+			c := domain.Change{
+				Repo:        "apps-repo",
+				FilePath:    tc.filePath,
+				Field:       "subchart-versions",
+				Key:         &keyVal,
+				ChangeType:  domain.ChangeTypeModified,
+				OldValue:    ptr("0.38.0"),
+				NewValue:    ptr("0.39.0"),
+				CommitSha:   tc.commitSha,
+				Author:      "alice",
+				CommittedAt: time.Now().Add(-time.Hour),
+			}
+			if err := st.SaveChange(c); err != nil {
+				t.Fatalf("SaveChange: %v", err)
+			}
+
+			h := web.NewChangesetDetailHandler(st)
+			req := httptest.NewRequest(http.MethodGet, "/api/changesets/detail?repo=apps-repo&commitSha="+tc.commitSha, nil)
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+			}
+			body := rr.Body.String()
+			want := `data-tenant-path="` + tc.wantTenantPath + `"`
+			if !strings.Contains(body, want) {
+				t.Errorf("body missing %q; got:\n%s", want, body)
+			}
+		})
+	}
+}
+
 // TestChangesetDetail_MixedChangeset_RendersEveryChangeByItsOwnKind verifies
 // acceptance criteria 1 and 5: a Changeset produced by one commit with both
 // a value Change and a chart Change surfaces ALL of that commit's Changes —

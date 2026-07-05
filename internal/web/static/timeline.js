@@ -21,6 +21,11 @@
 //     detail panel — no per-kind Changeset detail rendering happens here;
 //     the server has already rendered and HTML-escaped everything, so this
 //     is a plain innerHTML assignment of trusted, first-party markup
+//   - once that detail HTML lands, wires each chart-kind Change's own
+//     change-helm-diff-slot live: shows a "Rendering diff…" state, then
+//     issues one independent fetch per chart-kind Change to
+//     /api/changesets/detail/chart-diff and injects the returned HTML (also
+//     trusted, server-escaped, first-party markup) into that specific slot
 //
 // The as-of marker is a pure client-side view concern, decoupled from what
 // data is loaded for the backdrop: the backdrop (the full set of Changesets
@@ -35,17 +40,23 @@
 // facet control re-fetches both.
 //
 // No external CDN, no network fetch other than this page's own
-// /api/changesets and /api/changesets/detail endpoints. Facet/label text and
-// the "Changes before T" panel rows are inserted via textContent (never
-// parsed as HTML); the sole innerHTML assignment is the detail panel, which
-// injects only trusted, already-escaped server-rendered markup from
-// /api/changesets/detail.
+// /api/changesets, /api/changesets/detail, and
+// /api/changesets/detail/chart-diff endpoints. Facet/label text and the
+// "Changes before T" panel rows are inserted via textContent (never parsed
+// as HTML); the only innerHTML/insertAdjacentHTML writes are the detail
+// panel and each chart-kind Change's helm-diff slot, both of which inject
+// only trusted, already-escaped server-rendered markup (from
+// /api/changesets/detail and /api/changesets/detail/chart-diff
+// respectively) — any client-built text (e.g. the "Rendering diff…" /
+// failure states below) is always set via textContent, never concatenated
+// into an HTML string.
 
 (function () {
   'use strict';
 
   var API_PATH = '/api/changesets';
   var DETAIL_API_PATH = '/api/changesets/detail';
+  var CHART_DIFF_API_PATH = '/api/changesets/detail/chart-diff';
 
   // Repo -> color. Only the two repos named in the PRD are given fixed
   // colors; anything else falls back to a neutral color so an unexpected
@@ -300,13 +311,76 @@
     xhr.send();
   }
 
+  // fetchChartDiff calls the chart-diff endpoint for a single chart-kind
+  // Change — identified by its Changeset's own repo + commitSha, plus the
+  // tenant chart directory carried on that Change's own detail slot — and
+  // passes the raw HTML fragment to onDone, or an empty string on any
+  // non-200 response or XHR error (mirrors fetchChangesetDetail's XHR
+  // pattern). Called once per chart-kind Change, never batched, so one
+  // slow or failing render never blocks another's slot.
+  function fetchChartDiff(repo, commitSha, tenantPath, onDone) {
+    var xhr = new XMLHttpRequest();
+    var url =
+      CHART_DIFF_API_PATH +
+      '?repo=' + encodeURIComponent(repo) +
+      '&commitSha=' + encodeURIComponent(commitSha) +
+      '&path=' + encodeURIComponent(tenantPath);
+    xhr.open('GET', url, true);
+    xhr.onload = function () {
+      if (xhr.status !== 200) {
+        onDone('');
+        return;
+      }
+      onDone(xhr.responseText);
+    };
+    xhr.onerror = function () {
+      onDone('');
+    };
+    xhr.send();
+  }
+
+  // loadChartDiffsForChangeset finds every chart-kind Change's helm-diff
+  // slot within subtree (one Changeset's just-inserted detail HTML) and
+  // wires each independently: the slot immediately shows a "Rendering
+  // diff…" state via textContent (replacing the server's static
+  // placeholder copy), then fetches that one Change's own Chart diff. On
+  // success the returned HTML (already server-escaped, trusted, first-party
+  // markup) is injected via innerHTML; on failure (non-200 or XHR error)
+  // the slot shows a generic textContent message instead of being left
+  // stuck on "Rendering diff…". Each slot's fetch is independent — a
+  // slow/failing one never blocks another slot or the rest of the detail
+  // view, which is already visible by the time these fetches start.
+  function loadChartDiffsForChangeset(subtree, cs) {
+    if (!subtree || !subtree.querySelectorAll) {
+      return;
+    }
+    var slots = subtree.querySelectorAll('.change-helm-diff-slot');
+    for (var i = 0; i < slots.length; i++) {
+      (function (slot) {
+        var tenantPath = slot.getAttribute('data-tenant-path') || '';
+        slot.textContent = 'Rendering diff…';
+        fetchChartDiff(cs.repo, cs.commitSha, tenantPath, function (html) {
+          if (html) {
+            slot.innerHTML = html;
+          } else {
+            slot.textContent = 'Could not load diff.';
+          }
+        });
+      })(slots[i]);
+    }
+  }
+
   // onFlagClick fetches the server-rendered detail view for every Changeset
   // behind the clicked flag/cluster and injects the resulting HTML into the
   // detail panel. The server (GET /api/changesets/detail) has already
   // dispatched each Change to its per-kind (chart vs value) rendering and
   // HTML-escaped every interpolated value, so assigning the response as
   // innerHTML here injects only trusted, first-party markup — never
-  // untrusted Change data built into HTML client-side.
+  // untrusted Change data built into HTML client-side. Once a Changeset's
+  // detail HTML is inserted, its chart-kind Changes' helm-diff slots (if
+  // any) are wired live via loadChartDiffsForChangeset, scoped to just that
+  // insertion (panel.lastElementChild) so a cluster of several Changesets
+  // never mixes up which slot belongs to which.
   function onFlagClick(changesets) {
     var panel = ensureDetailPanel();
     if (!panel) {
@@ -315,9 +389,11 @@
     panel.innerHTML = '';
     changesets.forEach(function (cs) {
       fetchChangesetDetail(cs.repo, cs.commitSha, function (html) {
-        if (html) {
-          panel.insertAdjacentHTML('beforeend', html);
+        if (!html) {
+          return;
         }
+        panel.insertAdjacentHTML('beforeend', html);
+        loadChartDiffsForChangeset(panel.lastElementChild, cs);
       });
     });
   }

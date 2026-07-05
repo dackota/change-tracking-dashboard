@@ -2,9 +2,10 @@
 // detail view. A value-kind Change (source file other than Chart.yaml) is
 // rendered as a plain old→new value delta. A chart-kind Change (source file
 // basename Chart.yaml) is rendered distinctly as a "chart change": the
-// dependency version old→new, plus a clearly-labelled empty slot reserved
-// for a future full helm-template diff (deferred to a later plan — this
-// slice only renders the placeholder). All HTML is produced via
+// dependency version old→new, plus a helm-diff slot that timeline.js wires
+// live — it shows a "Rendering diff…" state and fetches this Change's own
+// Chart diff from GET /api/changesets/detail/chart-diff, using the
+// data-tenant-path attribute rendered here. All HTML is produced via
 // html/template, which auto-escapes every interpolated value — a Change's
 // old/new value is never trusted and never concatenated into raw HTML.
 package web
@@ -13,6 +14,8 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"path/filepath"
+	"time"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/changeset"
 )
@@ -61,10 +64,11 @@ var valueChangeTemplate = template.Must(changesetDetailTemplate.New("value-chang
 
 // chartChangeTemplate renders a chart-kind Change (Chart.yaml) distinctly
 // from a value change: it is explicitly labelled "chart change", shows the
-// dependency version old→new (interim rendering), and reserves a
-// clearly-identifiable empty slot for the future full helm-template diff —
-// that diff is deferred to a separate later plan and is intentionally left
-// unrendered here.
+// dependency version old→new (interim rendering), and carries a
+// clearly-identifiable helm-diff slot that timeline.js wires live: the
+// data-tenant-path attribute (the directory of this Change's own source
+// file — see newChangesetView) is what timeline.js reads to build its GET
+// /api/changesets/detail/chart-diff fetch URL for this specific slot.
 var chartChangeTemplate = template.Must(valueChangeTemplate.New("chart-change").Parse(`
 <li class="change change-kind-chart" data-kind="chart" data-field="{{.Field}}">
   <span class="change-label">Chart change</span>
@@ -72,13 +76,51 @@ var chartChangeTemplate = template.Must(valueChangeTemplate.New("chart-change").
   <span class="change-dependency-version-old">{{if .OldValue}}{{.OldValue}}{{end}}</span>
   <span class="change-arrow">&rarr;</span>
   <span class="change-dependency-version-new">{{if .NewValue}}{{.NewValue}}{{end}}</span>
-  <div class="change-helm-diff-slot" data-helm-diff-pending="true">
+  <div class="change-helm-diff-slot" data-helm-diff-pending="true" data-tenant-path="{{.TenantPath}}">
     Full helm-template diff: not yet available (planned in a future slice)
   </div>
 </li>
 `))
 
+// changeView is a classified Change plus TenantPath: the directory of the
+// Change's own FilePath (filepath.Dir), matching the PRD's "Rendering
+// basis" — the tenant chart directory is the directory of the chart
+// Change's source file — and how GET /api/changesets/detail/chart-diff's
+// own TenantPath is documented to be derived. html/template has no
+// path.Dir function of its own, so this is computed here, once, before
+// Execute, rather than in the template language. Every Change carries a
+// TenantPath, though only the chart-change partial renders it.
+type changeView struct {
+	changeset.Change
+	TenantPath string
+}
+
+// changesetView is the changeset-detail template's top-level view model:
+// cs's own commit metadata, with its Changes projected through changeView.
+type changesetView struct {
+	Repo        string
+	CommitSha   string
+	Author      string
+	CommittedAt time.Time
+	Changes     []changeView
+}
+
+// newChangesetView builds the template view model for cs.
+func newChangesetView(cs changeset.Changeset) changesetView {
+	changes := make([]changeView, 0, len(cs.Changes))
+	for _, c := range cs.Changes {
+		changes = append(changes, changeView{Change: c, TenantPath: filepath.Dir(c.FilePath)})
+	}
+	return changesetView{
+		Repo:        cs.Repo,
+		CommitSha:   cs.CommitSha,
+		Author:      cs.Author,
+		CommittedAt: cs.CommittedAt,
+		Changes:     changes,
+	}
+}
+
 // renderChangesetDetail writes the rendered HTML detail view for cs to w.
 func renderChangesetDetail(w io.Writer, cs changeset.Changeset) error {
-	return changesetDetailTemplate.Execute(w, cs)
+	return changesetDetailTemplate.Execute(w, newChangesetView(cs))
 }
