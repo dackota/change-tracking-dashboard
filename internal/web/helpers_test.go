@@ -64,3 +64,71 @@ func extractDirective(csp, name string) string {
 	}
 	return ""
 }
+
+// extractFunctionBody returns the full source of a top-level function
+// declaration named name (e.g. "function onFlagClick(") within source,
+// including its signature and braces — found by brace-depth counting rather
+// than a fixed line range, so it survives surrounding edits to the file.
+// Fails the test if the function or its matching closing brace can't be
+// found.
+func extractFunctionBody(t *testing.T, source, name string) string {
+	t.Helper()
+	marker := "function " + name + "("
+	start := strings.Index(source, marker)
+	if start == -1 {
+		t.Fatalf("could not find function %s in served timeline.js", name)
+	}
+	body, ok := braceDelimitedSpan(source, start)
+	if !ok {
+		t.Fatalf("could not find matching closing brace for function %s", name)
+	}
+	return body
+}
+
+// extractCallbackAfter returns the source of the first inline
+// "function (...)" callback that appears after marker within source — used
+// to isolate one XHR's onDone callback (e.g. after "fetchChartDiff(") from
+// the rest of its enclosing function, again via brace-depth counting. Fails
+// the test if marker or the callback can't be found.
+func extractCallbackAfter(t *testing.T, source, marker string) string {
+	t.Helper()
+	idx := strings.Index(source, marker)
+	if idx == -1 {
+		t.Fatalf("could not find call site %q in source", marker)
+	}
+	rest := source[idx:]
+	fnIdx := strings.Index(rest, "function (")
+	if fnIdx == -1 {
+		t.Fatalf("could not find inline callback after %q", marker)
+	}
+	body, ok := braceDelimitedSpan(rest, fnIdx)
+	if !ok {
+		t.Fatalf("could not find matching closing brace for callback after %q", marker)
+	}
+	return body
+}
+
+// braceDelimitedSpan returns the substring of source starting at fromIdx
+// running through the first '{' found at or after fromIdx and its matching
+// '}' (by depth-counting, so nested braces are handled correctly), plus
+// whether a match was found.
+func braceDelimitedSpan(source string, fromIdx int) (string, bool) {
+	braceStart := strings.Index(source[fromIdx:], "{")
+	if braceStart == -1 {
+		return "", false
+	}
+	braceStart += fromIdx
+	depth := 0
+	for i := braceStart; i < len(source); i++ {
+		switch source[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return source[fromIdx : i+1], true
+			}
+		}
+	}
+	return "", false
+}

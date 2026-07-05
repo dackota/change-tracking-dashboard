@@ -50,6 +50,12 @@
 // respectively) — any client-built text (e.g. the "Rendering diff…" /
 // failure states below) is always set via textContent, never concatenated
 // into an HTML string.
+//
+// A flag click can be superseded by another before its fetches resolve — a
+// module-scoped clickGeneration counter (see its own comment near
+// onFlagClick) guards every async continuation reachable from a click so a
+// stale callback from a superseded click never mutates the detail panel or
+// fires a further request.
 
 (function () {
   'use strict';
@@ -277,6 +283,20 @@
   // the most recently clicked flag/cluster. Created lazily on first click.
   var detailPanel = null;
 
+  // clickGeneration guards against stale async callbacks from a superseded
+  // flag click. onFlagClick bumps this counter and captures the resulting
+  // value as its own generation; every async continuation it (transitively)
+  // schedules — fetchChangesetDetail's onDone below, and fetchChartDiff's
+  // onDone inside loadChartDiffsForChangeset — compares its captured
+  // generation against the current clickGeneration before touching the DOM
+  // or kicking off a further request. If the user has since clicked another
+  // flag/cluster, clickGeneration has moved on, the comparison fails, and
+  // the stale callback no-ops instead of appending orphaned detail HTML into
+  // a panel that now belongs to a different click, firing an abandoned
+  // chart-diff XHR, or writing into a slot that belongs to a different
+  // Changeset's detail HTML.
+  var clickGeneration = 0;
+
   function ensureDetailPanel() {
     if (!detailPanel && root) {
       detailPanel = document.createElement('div');
@@ -350,7 +370,12 @@
   // stuck on "Rendering diff…". Each slot's fetch is independent — a
   // slow/failing one never blocks another slot or the rest of the detail
   // view, which is already visible by the time these fetches start.
-  function loadChartDiffsForChangeset(subtree, cs) {
+  // gen is the clickGeneration the caller (onFlagClick) fired under; every
+  // fetchChartDiff onDone callback below re-checks it against the current
+  // clickGeneration before mutating its slot, since a chart-diff XHR
+  // legitimately started under gen can still resolve after a later click has
+  // moved clickGeneration on (see the clickGeneration comment above).
+  function loadChartDiffsForChangeset(subtree, cs, gen) {
     if (!subtree || !subtree.querySelectorAll) {
       return;
     }
@@ -360,6 +385,9 @@
         var tenantPath = slot.getAttribute('data-tenant-path') || '';
         slot.textContent = 'Rendering diff…';
         fetchChartDiff(cs.repo, cs.commitSha, tenantPath, function (html) {
+          if (gen !== clickGeneration) {
+            return;
+          }
           if (html) {
             slot.innerHTML = html;
           } else {
@@ -381,19 +409,34 @@
   // any) are wired live via loadChartDiffsForChangeset, scoped to just that
   // insertion (panel.lastElementChild) so a cluster of several Changesets
   // never mixes up which slot belongs to which.
+  //
+  // Clicking a flag/cluster while a prior click's fetches are still in
+  // flight supersedes that prior click: this bumps clickGeneration and
+  // captures the resulting value as gen. Every async callback below (and
+  // every one loadChartDiffsForChangeset schedules under this same gen)
+  // re-checks gen against clickGeneration before mutating anything, so a
+  // stale callback from the superseded click no-ops instead of appending
+  // orphaned HTML into a panel that now belongs to this new click, firing an
+  // abandoned chart-diff request for the abandoned Changeset, or wiring a
+  // stale slot into whatever panel.lastElementChild has since become.
   function onFlagClick(changesets) {
     var panel = ensureDetailPanel();
     if (!panel) {
       return;
     }
+    clickGeneration++;
+    var gen = clickGeneration;
     panel.innerHTML = '';
     changesets.forEach(function (cs) {
       fetchChangesetDetail(cs.repo, cs.commitSha, function (html) {
+        if (gen !== clickGeneration) {
+          return;
+        }
         if (!html) {
           return;
         }
         panel.insertAdjacentHTML('beforeend', html);
-        loadChartDiffsForChangeset(panel.lastElementChild, cs);
+        loadChartDiffsForChangeset(panel.lastElementChild, cs, gen);
       });
     });
   }
