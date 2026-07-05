@@ -14,10 +14,14 @@ name: Release
 #
 # Auth uses the built-in GITHUB_TOKEN (packages: write) — no secrets to manage.
 #
-# Every `uses:` is pinned to a full commit SHA (supply-chain hardening on a
-# packages:write workflow): a repointed upstream tag can't exfiltrate the token
-# or push a malicious artifact. The trailing comment records the major tag;
-# bump via Dependabot/Renovate.
+# Supply-chain hardening on a packages:write workflow:
+#   - every `uses:` is pinned to a full commit SHA (a repointed upstream tag
+#     can't exfiltrate the token or push a malicious artifact; trailing comment
+#     records the major/version tag — bump via Dependabot/Renovate);
+#   - base images are digest-pinned in the Dockerfile;
+#   - Trivy scans the built image and fails the release on HIGH/CRITICAL vulns
+#     BEFORE anything is pushed;
+#   - the ghcr owner is lowercased (ghcr/OCI repo paths must be lowercase).
 
 on:
   push:
@@ -27,9 +31,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/change-tracking-dashboard
   CHART_DIR: deploy/helm/change-tracking-dashboard
-  CHART_OCI_REPO: oci://ghcr.io/${{ github.repository_owner }}/charts
 
 permissions:
   contents: read
@@ -42,13 +44,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
+      # Compute the ghcr image name + chart OCI repo from a LOWERCASED owner
+      # (ghcr/OCI require lowercase repo paths; github.repository_owner can
+      # contain uppercase for some accounts/orgs), and read the chart appVersion.
       # appVersion becomes the image tag (the chart's image helper defaults
-      # image.tag to .Chart.AppVersion). The chart package version is read by
+      # image.tag to .Chart.AppVersion); the chart package version is read by
       # `helm package` directly from Chart.yaml, so only appVersion is needed here.
-      - name: Read chart appVersion
+      # IMAGE_NAME/CHART_OCI_REPO are exported to $GITHUB_ENV for later steps
+      # (env: can't reference a step output, so they're computed here, not at top).
+      - name: Compute refs + read chart appVersion
         id: chart
         run: |
           set -euo pipefail
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_NAME=${owner}/change-tracking-dashboard" >> "$GITHUB_ENV"
+          echo "CHART_OCI_REPO=oci://${REGISTRY}/${owner}/charts" >> "$GITHUB_ENV"
           appVersion=$(grep '^appVersion:' "$CHART_DIR/Chart.yaml" | head -1 | awk '{print $2}' | tr -d '"')
           # appVersion is used verbatim as a Docker image tag, so it must be a
           # valid tag: start alphanumeric, then [A-Za-z0-9_.-]. This deliberately
@@ -59,7 +69,7 @@ jobs:
           [[ "$appVersion" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] \
             || { echo "appVersion '$appVersion' is not a valid Docker image tag"; exit 1; }
           echo "appVersion=$appVersion" >> "$GITHUB_OUTPUT"
-          echo "Chart appVersion=$appVersion"
+          echo "owner=${owner} appVersion=${appVersion}"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
@@ -73,6 +83,31 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build a single-arch (amd64) image and load it locally so Trivy can scan
+      # it BEFORE anything is pushed. The Go module deps (read from the compiled
+      # binary) and the distroless base are identical across arches, so the amd64
+      # image is representative; the multi-arch build+push below reuses this
+      # build's layer cache (type=gha).
+      - name: Build image for scanning (amd64)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: ${{ env.IMAGE_NAME }}:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan image (Trivy) — fail on HIGH/CRITICAL
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:scan
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          vuln-type: os,library
 
       - name: Image tags + labels
         id: meta

@@ -6,7 +6,10 @@
 # --platform=$BUILDPLATFORM pins the builder to the host arch so Go
 # cross-compiles to the target natively (fast) rather than the runtime
 # emulating the compiler under QEMU. Required for the arm64 (OKE A1) target.
-FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
+# Base pinned by digest (the multi-arch index digest, so buildx still resolves
+# the builder's own arch) for reproducibility + supply-chain integrity; bump
+# the digest + tag comment via Dependabot/Renovate to pick up Go patch releases.
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine@sha256:523c3effe300580ed375e43f43b1c9b091b68e935a7c3a92bfcc4e7ed55b18c2 AS builder
 
 WORKDIR /build
 
@@ -29,7 +32,9 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
 # distroless/static is a minimal image with no shell, no package manager,
 # and no libc — appropriate for a statically-linked binary with pure-Go SQLite.
 # nonroot variant runs as uid 65534 (nobody) by default.
-FROM gcr.io/distroless/static:nonroot
+# Pinned by the multi-arch index digest (buildx resolves the per-arch manifest
+# under it) for reproducibility + supply-chain integrity; bump via Dependabot/Renovate.
+FROM gcr.io/distroless/static:nonroot@sha256:963fa6c544fe5ce420f1f54fb88b6fb01479f054c8056d0f74cc2c6000df5240
 
 # Copy the compiled binary.
 COPY --from=builder /build/dashboard /dashboard
