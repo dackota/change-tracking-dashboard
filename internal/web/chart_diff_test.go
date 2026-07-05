@@ -15,6 +15,7 @@ import (
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/changeset"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/chartdiff"
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/gitsource"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/manifestdiff"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/web"
@@ -62,12 +63,16 @@ func (f *fakeChangesetExistenceChecker) GetChangeset(repo, commitSha string) (ch
 }
 
 // alwaysFoundChecker is a fakeChangesetExistenceChecker that reports every
-// (repo, commitSha) pair as an already-ingested Changeset — the common shape
-// for tests that only care about resolver/engine/rendering behavior, not
-// about the existence gate itself.
+// (repo, commitSha) pair as an already-ingested Changeset containing a
+// chart-kind Change at "tenant" — the path defaultChartDiffURL requests —
+// the common shape for tests that only care about resolver/engine/rendering
+// behavior, not about the existence/path-scoping gate itself.
 func alwaysFoundChecker() *fakeChangesetExistenceChecker {
+	cs := changeset.Changeset{Changes: []changeset.Change{
+		{Change: domain.Change{FilePath: "tenant/Chart.yaml"}, Kind: changeset.KindChart},
+	}}
 	return &fakeChangesetExistenceChecker{fn: func(string, string) (changeset.Changeset, bool, error) {
-		return changeset.Changeset{}, true, nil
+		return cs, true, nil
 	}}
 }
 
@@ -285,6 +290,76 @@ func TestChartDiffHandler_UnknownChangeset_RejectsWithoutReachingResolverOrEngin
 	}
 }
 
+// TestChartDiffHandler_PathNotInChangeset_RejectsWithoutReachingResolverOrEngine
+// is the regression test for the follow-up finding: (repo, commitSha) alone is
+// not enough authorization — the changeset.Changeset that pair resolves to
+// must also contain a chart-kind Change whose own directory is the requested
+// path. Each case below is a plausible shape of "known commit, wrong/foreign
+// path": a directory that changed but only via a value (non-chart) file, a
+// different tenant's chart directory that happens to appear elsewhere in the
+// very same commit, and a path with no Change at all. As with the
+// never-ingested-pair test above, the assertion that matters is that the
+// resolver/engine spies are NEVER invoked — not merely that the HTTP response
+// looks like a rejection.
+func TestChartDiffHandler_PathNotInChangeset_RejectsWithoutReachingResolverOrEngine(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		changeset changeset.Changeset
+		queryPath string
+	}{
+		{
+			name: "path matches only a value-kind change's directory",
+			changeset: changeset.Changeset{Changes: []changeset.Change{
+				{Change: domain.Change{FilePath: "apps/tenant-zero/values.yaml"}, Kind: changeset.KindValue},
+			}},
+			queryPath: "apps/tenant-zero",
+		},
+		{
+			name: "path matches a different tenant's chart directory present elsewhere in the same commit",
+			changeset: changeset.Changeset{Changes: []changeset.Change{
+				{Change: domain.Change{FilePath: "apps/tenant-one/Chart.yaml"}, Kind: changeset.KindChart},
+			}},
+			queryPath: "apps/tenant-zero",
+		},
+		{
+			name:      "path has no Change at all in the changeset",
+			changeset: changeset.Changeset{},
+			queryPath: "apps/tenant-zero",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resolver := &spyChartRepoResolver{}
+			engine := &spyChartDiffEngine{}
+			checker := &fakeChangesetExistenceChecker{fn: func(string, string) (changeset.Changeset, bool, error) {
+				return tc.changeset, true, nil
+			}}
+			h := web.NewChartDiffHandler(engine, resolver, checker)
+
+			reqURL := "/api/changesets/detail/chart-diff?" + url.Values{
+				"repo":      {"r"},
+				"commitSha": {"sha"},
+				"path":      {tc.queryPath},
+			}.Encode()
+
+			rr := serveChartDiff(h, reqURL)
+
+			if resolver.called {
+				t.Error("ResolveChartRepo was called for a path with no matching chart-kind Change — security gate bypassed")
+			}
+			if engine.called {
+				t.Error("engine.Diff was called for a path with no matching chart-kind Change — security gate bypassed")
+			}
+			if rr.Code != http.StatusNotFound {
+				t.Errorf("status = %d, want 404 for a path outside the changeset; body: %s", rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
 // unknownRepoCommitPair is a generated (repo, commitSha) pair standing in for
 // "any string shape an unauthenticated caller could invent" — URLs, local
 // paths, ssh-like refs, traversal sequences, oversized strings, and garbage —
@@ -350,6 +425,141 @@ func TestChartDiffHandler_NeverIngestedRepoCommitPair_NeverReachesResolverOrEngi
 
 	if err := quick.Check(property, &quick.Config{MaxCount: 100}); err != nil {
 		t.Error(err)
+	}
+}
+
+// tenantDirPool is the pool wrongPathAttempt draws from to build a generated
+// changeset spanning multiple tenants — standing in for "a commit that
+// touched several tenants' chart directories," which is the exact shape the
+// cross-tenant disclosure finding described.
+var tenantDirPool = []string{
+	"apps/tenant-zero/dev/us-west-2",
+	"apps/tenant-one/prod/eu-west-1",
+	"apps/tenant-two/stg/ap-northeast-1",
+	"apps/tenant-three/dev/us-east-1",
+	"apps/tenant-four/prod/us-west-2",
+}
+
+// wrongPathAttempt is a generated scenario pairing a Changeset — containing a
+// chart-kind Change for a random subset of tenantDirPool ("chart tenants")
+// and a value-kind-only Change for the remainder ("value-only tenants",
+// present in the very same commit but never chart-diff-eligible) — with a
+// queryPath guaranteed not to match any chart tenant's own directory: either
+// a value-only tenant's directory (a genuinely different tenant present in
+// the same commit, wrong Kind) or an entirely unseen path.
+type wrongPathAttempt struct {
+	cs        changeset.Changeset
+	queryPath string
+}
+
+// Generate implements quick.Generator.
+func (wrongPathAttempt) Generate(rnd *rand.Rand, size int) reflect.Value {
+	shuffled := append([]string(nil), tenantDirPool...)
+	rnd.Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
+
+	// At least one chart tenant, leaving at least one slot for a value-only
+	// tenant so both wrong-path shapes stay reachable.
+	numChart := 1 + rnd.Intn(len(shuffled)-1)
+	chartTenants := shuffled[:numChart]
+	valueOnlyTenants := shuffled[numChart:]
+
+	var changes []changeset.Change
+	for _, dir := range chartTenants {
+		changes = append(changes, changeset.Change{
+			Change: domain.Change{FilePath: dir + "/Chart.yaml"},
+			Kind:   changeset.KindChart,
+		})
+	}
+	for _, dir := range valueOnlyTenants {
+		changes = append(changes, changeset.Change{
+			Change: domain.Change{FilePath: dir + "/values.yaml"},
+			Kind:   changeset.KindValue,
+		})
+	}
+
+	queryPath := "apps/never-seen-tenant/" + strconv.Itoa(rnd.Int())
+	if len(valueOnlyTenants) > 0 && rnd.Intn(2) == 0 {
+		queryPath = valueOnlyTenants[rnd.Intn(len(valueOnlyTenants))]
+	}
+
+	return reflect.ValueOf(wrongPathAttempt{
+		cs:        changeset.Changeset{Repo: "r", CommitSha: "sha", Changes: changes},
+		queryPath: queryPath,
+	})
+}
+
+// TestChartDiffHandler_KnownChangesetWrongPath_NeverReachesResolverOrEngine_Property
+// generalizes the table test above into a searched family: for EVERY
+// generated changeset spanning multiple tenants' chart/value changes, and
+// EVERY query path that does not name one of that changeset's own chart-kind
+// directories (including a path belonging to a genuinely different tenant
+// present in the very same commit, just via a value-only change), the
+// resolver/engine must never run and the response must be 404 — regardless of
+// how many tenants or which combination the commit touched. This subsumes the
+// whole class of "known commit, foreign/wrong path" attacks the table test
+// above exemplifies.
+func TestChartDiffHandler_KnownChangesetWrongPath_NeverReachesResolverOrEngine_Property(t *testing.T) {
+	t.Parallel()
+
+	property := func(attempt wrongPathAttempt) bool {
+		resolver := &spyChartRepoResolver{}
+		engine := &spyChartDiffEngine{}
+		checker := &fakeChangesetExistenceChecker{fn: func(string, string) (changeset.Changeset, bool, error) {
+			return attempt.cs, true, nil
+		}}
+		h := web.NewChartDiffHandler(engine, resolver, checker)
+
+		reqURL := "/api/changesets/detail/chart-diff?" + url.Values{
+			"repo":      {"r"},
+			"commitSha": {"sha"},
+			"path":      {attempt.queryPath},
+		}.Encode()
+
+		rr := serveChartDiff(h, reqURL)
+
+		if resolver.called || engine.called {
+			t.Logf("gate bypassed for path=%q changeset=%+v", attempt.queryPath, attempt.cs)
+			return false
+		}
+		return rr.Code == http.StatusNotFound
+	}
+
+	if err := quick.Check(property, &quick.Config{MaxCount: 100}); err != nil {
+		t.Error(err)
+	}
+}
+
+// TestChartDiffHandler_UnknownCommitAndKnownCommitWrongPath_Produce404sIndistinguishable
+// verifies the endpoint's non-enumeration property (acceptance criterion 3):
+// the pre-existing "unknown commit" 404 (checker returns found=false) and the
+// new "known commit, wrong path" 404 (checker returns found=true but no
+// chart-kind Change matches path) must render byte-for-byte identical
+// responses, so a caller cannot distinguish "this commit was never ingested"
+// from "this commit exists but you asked for the wrong path" — closing the
+// disclosure gap must not open an enumeration side-channel in its place.
+func TestChartDiffHandler_UnknownCommitAndKnownCommitWrongPath_Produce404sIndistinguishable(t *testing.T) {
+	t.Parallel()
+
+	unknownCommitHandler := web.NewChartDiffHandler(&spyChartDiffEngine{}, &spyChartRepoResolver{}, neverFoundChecker())
+
+	wrongPathChecker := &fakeChangesetExistenceChecker{fn: func(string, string) (changeset.Changeset, bool, error) {
+		return changeset.Changeset{}, true, nil // found, but no Changes at all -> no path match
+	}}
+	knownCommitWrongPathHandler := web.NewChartDiffHandler(&spyChartDiffEngine{}, &spyChartRepoResolver{}, wrongPathChecker)
+
+	unknownRR := serveChartDiff(unknownCommitHandler, defaultChartDiffURL)
+	wrongPathRR := serveChartDiff(knownCommitWrongPathHandler, defaultChartDiffURL)
+
+	if unknownRR.Code != wrongPathRR.Code {
+		t.Fatalf("status codes differ: unknown commit = %d, known commit wrong path = %d", unknownRR.Code, wrongPathRR.Code)
+	}
+	if unknownRR.Body.String() != wrongPathRR.Body.String() {
+		t.Errorf("bodies differ: unknown commit = %q, known commit wrong path = %q; want indistinguishable", unknownRR.Body.String(), wrongPathRR.Body.String())
+	}
+	for k := range unknownRR.Header() {
+		if unknownRR.Header().Get(k) != wrongPathRR.Header().Get(k) {
+			t.Errorf("header %s differs: unknown commit = %q, known commit wrong path = %q", k, unknownRR.Header().Get(k), wrongPathRR.Header().Get(k))
+		}
 	}
 }
 
