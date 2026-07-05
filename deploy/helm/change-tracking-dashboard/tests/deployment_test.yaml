@@ -94,6 +94,20 @@ tests:
             name: data
             mountPath: /data
 
+  - it: should mount a writable /tmp emptyDir for remote-repo clones (readOnlyRootFilesystem)
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: tmp
+            mountPath: /tmp
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: tmp
+            emptyDir:
+              sizeLimit: 1Gi
+
   - it: should not automount the default service account token
     asserts:
       - equal:
