@@ -1,0 +1,44 @@
+# Dependabot version updates. Keeps the supply-chain hardening in the Release
+# workflow (SHA-pinned actions, digest-pinned base images) and the Go module
+# graph current, so the pins don't silently rot.
+#
+# Security updates (from Dependabot alerts) are separate and open automatically
+# once "Dependabot security updates" is enabled in the repo's settings — they
+# don't need to be (and can't be) scheduled here; this file governs the routine
+# VERSION updates below.
+version: 2
+updates:
+  # Go modules (go.mod / go.sum). Grouped into one weekly PR to cut noise; the
+  # manual CVE bumps in the hardening PR (grpc/x-crypto/x-net/containerd/oras)
+  # are the kind of thing this now keeps current automatically.
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      go-modules:
+        patterns: ["*"]
+
+  # Base images in the Dockerfile (golang builder, distroless runtime). They are
+  # digest-pinned, so Dependabot bumps the @sha256 digest (and any tag) here.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "build(docker)"
+
+  # SHA-pinned GitHub Actions in .github/workflows. Dependabot updates the commit
+  # SHA and the trailing `# vN` version comment together. Grouped into one PR.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"
+    groups:
+      github-actions:
+        patterns: ["*"]
