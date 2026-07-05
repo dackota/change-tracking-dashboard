@@ -11,6 +11,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"path/filepath"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/changeset"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/chartdiff"
@@ -80,14 +81,25 @@ func (h *ChartDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// input. Only proceed to ResolveChartRepo (and the git clone/fetch/
 	// PlainOpen it can trigger) once we've confirmed this exact pair is a
 	// Changeset the poller already ingested from trusted tracker config —
-	// never a repo string an attacker invented on the request.
-	_, found, err := h.checker.GetChangeset(repo, commitSha)
+	// never a repo string an attacker invented on the request. That alone is
+	// not sufficient authorization for path, though: a single commit's
+	// Changeset can span many tenants (domain.Change.FilePath is
+	// multi-tenant within one repo), so path must additionally match the
+	// directory of one of this changeset's own chart-kind Changes — the same
+	// directory the chart-change detail slot that requests this diff was
+	// itself rendered from (see changeset_detail_render.go's TenantPath). A
+	// path with no matching chart-kind Change (wrong tenant, a value-only
+	// change, or nothing at all) is rejected exactly like an unknown
+	// changeset — same http.NotFound call, no distinguishing signal — so a
+	// caller can't tell "unknown commit" apart from "known commit, wrong
+	// path".
+	cs, found, err := h.checker.GetChangeset(repo, commitSha)
 	if err != nil {
 		log.Printf("web: check changeset existence for chart diff repo=%q (tenant=%q commit=%q): %v", repo, path, commitSha, err)
 		http.Error(w, genericServerErrorMsg, http.StatusInternalServerError)
 		return
 	}
-	if !found {
+	if !found || !hasChartChangeAt(cs, path) {
 		http.NotFound(w, r)
 		return
 	}
@@ -108,4 +120,19 @@ func (h *ChartDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := renderChartDiff(w, outcome); err != nil {
 		log.Printf("web: render chart diff repo=%q tenant=%q commit=%q: %v", repo, path, commitSha, err)
 	}
+}
+
+// hasChartChangeAt reports whether cs contains at least one chart-kind Change
+// (Kind == changeset.KindChart) whose own source file directory equals path.
+// This is the request's actual authorization check: (repo, commitSha) being
+// a real, ingested Changeset is necessary but not sufficient, since a single
+// commit's Changeset can carry Changes for many tenants — path must name a
+// directory this specific changeset actually recorded a chart change for.
+func hasChartChangeAt(cs changeset.Changeset, path string) bool {
+	for _, c := range cs.Changes {
+		if c.Kind == changeset.KindChart && filepath.Dir(c.FilePath) == path {
+			return true
+		}
+	}
+	return false
 }
