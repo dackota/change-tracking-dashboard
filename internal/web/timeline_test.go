@@ -181,6 +181,67 @@ func TestStaticHandler_ServesEmbeddedTimelineJS(t *testing.T) {
 	}
 }
 
+// TestTimelineJS_GuardsAgainstStaleClickCallbacks verifies the served
+// timeline.js enforces the click-generation invariant: once a new
+// onFlagClick call supersedes a prior one, no async callback belonging to
+// the superseded click may mutate the detail panel or initiate any further
+// network request. A module-scoped clickGeneration counter is bumped on
+// every onFlagClick; every async continuation reachable from a click
+// (fetchChangesetDetail's onDone in onFlagClick itself, and
+// fetchChartDiff's onDone in loadChartDiffsForChangeset) captures the
+// generation it fired under and compares it against the current
+// clickGeneration before touching the DOM — a callback whose click was
+// superseded becomes a no-op instead of mutating a panel/slot that now
+// belongs to a different click.
+func TestTimelineJS_GuardsAgainstStaleClickCallbacks(t *testing.T) {
+	t.Parallel()
+
+	h := web.NewStaticHandler()
+	req := httptest.NewRequest(http.MethodGet, "/static/timeline.js", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+
+	if !strings.Contains(body, "var clickGeneration = 0;") {
+		t.Fatal("missing module-scoped clickGeneration counter — the guard has nothing to compare against")
+	}
+
+	onFlagClick := extractFunctionBody(t, body, "onFlagClick")
+	if !strings.Contains(onFlagClick, "clickGeneration++") {
+		t.Error("onFlagClick does not bump clickGeneration — a new click never supersedes a prior one")
+	}
+	if !strings.Contains(onFlagClick, "gen = clickGeneration") {
+		t.Error("onFlagClick does not capture the generation it fired under — its callbacks have no stable value to compare against")
+	}
+
+	detailCallback := extractCallbackAfter(t, onFlagClick, "fetchChangesetDetail(")
+	guardIdx := strings.Index(detailCallback, "gen !== clickGeneration")
+	mutateIdx := strings.Index(detailCallback, "insertAdjacentHTML")
+	if guardIdx == -1 {
+		t.Error("fetchChangesetDetail's onDone callback does not guard against a superseded click before mutating the panel")
+	} else if mutateIdx == -1 || guardIdx > mutateIdx {
+		t.Error("the generation guard must run before insertAdjacentHTML mutates the panel")
+	}
+
+	loadChartDiffs := extractFunctionBody(t, body, "loadChartDiffsForChangeset")
+	if !strings.Contains(loadChartDiffs, "function loadChartDiffsForChangeset(subtree, cs, gen)") {
+		t.Error("loadChartDiffsForChangeset does not accept the gen the click fired under — it can't guard its own async callbacks")
+	}
+
+	chartCallback := extractCallbackAfter(t, loadChartDiffs, "fetchChartDiff(")
+	guardIdx = strings.Index(chartCallback, "gen !== clickGeneration")
+	mutateIdx = strings.Index(chartCallback, "innerHTML")
+	if guardIdx == -1 {
+		t.Error("fetchChartDiff's onDone callback does not guard against a superseded click before mutating its slot")
+	} else if mutateIdx == -1 || guardIdx > mutateIdx {
+		t.Error("the generation guard must run before innerHTML mutates the chart-diff slot")
+	}
+}
+
 // TestTimelineHandler_CSPPermitsOnlySelfScript verifies the CSP header on
 // GET / permits script execution only from 'self' (the embedded, first-party
 // script) — never an external origin, and never 'unsafe-inline'/
