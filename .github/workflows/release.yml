@@ -42,22 +42,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      # Chart version/appVersion drive both the chart package version and the
-      # image tag, keeping them in lockstep from a single source of truth.
-      - name: Read chart version + appVersion
+      # appVersion becomes the image tag (the chart's image helper defaults
+      # image.tag to .Chart.AppVersion). The chart package version is read by
+      # `helm package` directly from Chart.yaml, so only appVersion is needed here.
+      - name: Read chart appVersion
         id: chart
         run: |
           set -euo pipefail
-          version=$(grep '^version:' "$CHART_DIR/Chart.yaml" | head -1 | awk '{print $2}' | tr -d '"')
           appVersion=$(grep '^appVersion:' "$CHART_DIR/Chart.yaml" | head -1 | awk '{print $2}' | tr -d '"')
-          # Reject anything that isn't a single semver-ish token — guards
-          # against a malformed/multiline value injecting extra output keys.
-          for v in "$version" "$appVersion"; do
-            [[ "$v" =~ ^[0-9A-Za-z.+_-]+$ ]] || { echo "invalid chart version token: '$v'"; exit 1; }
-          done
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # appVersion is used verbatim as a Docker image tag, so it must be a
+          # valid tag: start alphanumeric, then [A-Za-z0-9_.-]. This deliberately
+          # rejects SemVer build-metadata ("+", e.g. 0.2.0+build) — invalid in a
+          # tag and inconsistent with the chart's image helper — as well as any
+          # multiline/injected value, failing fast with a clear message instead
+          # of a cryptic push error.
+          [[ "$appVersion" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] \
+            || { echo "appVersion '$appVersion' is not a valid Docker image tag"; exit 1; }
           echo "appVersion=$appVersion" >> "$GITHUB_OUTPUT"
-          echo "Chart version=$version appVersion=$appVersion"
+          echo "Chart appVersion=$appVersion"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
