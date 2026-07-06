@@ -1,0 +1,47 @@
+name: PR Title Lint
+
+# Enforces that PR titles follow the Conventional Commits spec
+# (https://www.conventionalcommits.org/), as a required check on pull
+# requests targeting main.
+#
+# Why this matters: this repo squash-merges PRs, and GitHub defaults the
+# squash commit message to the PR title — so a linted title becomes the
+# permanent commit message on main once squash-merge is configured as the
+# only allowed merge strategy.
+#
+# NOTE (manual/HITL follow-up, not doable from a workflow file): this repo
+# is private on GitHub's free plan, which has no branch protection, so
+# "squash-merge only" + "required checks" can't be enforced here — they are
+# repository/branch settings, not something a workflow can assert. Someone
+# with repo admin access needs to, in GitHub's repo settings:
+#   1. Under General > Pull Requests, disable "Allow merge commits" and
+#      "Allow rebase merging", leaving only "Allow squash merging", with
+#      "Default to PR title for squash merge commits" checked.
+#   2. Register `go-verify`, `trivy-fs-scan`, `helm-unittest` (from
+#      pr-ci.yml) and `lint-pr-title` (this workflow) as required checks —
+#      via branch protection/rulesets if the plan allows it, or as a
+#      standing team convention otherwise.
+# Until that's done, these workflows still run and report pass/fail on every
+# PR; they just aren't yet *enforced* as merge gates by GitHub itself.
+#
+# Hardening: `uses:` is pinned to a full commit SHA (trailing comment records
+# the version tag); permissions are read-only — the action only needs to read
+# the PR title from the event payload, it does not comment on or modify the PR.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+    branches: [main]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  lint-pr-title:
+    name: Validate PR title (Conventional Commits)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Lint PR title
+        uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
