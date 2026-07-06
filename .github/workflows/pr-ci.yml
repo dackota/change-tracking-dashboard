@@ -6,13 +6,13 @@ name: PR CI
 # - go-verify   -> go build ./..., go vet ./..., go test ./... (fails the
 #                  check on the first failing step).
 # - trivy-fs    -> scans the working tree's dependency graph (go.sum, etc.)
-#                  the same way release.yml scans the built image: HIGH/CRITICAL,
+#                  the same way publish.yml scans the built image: HIGH/CRITICAL,
 #                  fixed-only findings fail the check before anything merges.
 # - helm-unittest -> runs the existing helm-unittest suite
 #                  (deploy/helm/change-tracking-dashboard/tests/) so a chart
 #                  regression is caught on the PR, not after it merges.
 #
-# Hardening (same posture as release.yml):
+# Hardening (same posture as publish.yml):
 #   - every `uses:` is pinned to a full commit SHA (trailing comment records
 #     the version tag);
 #   - permissions default to `contents: read` — no job needs more, since none

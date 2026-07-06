@@ -1,0 +1,236 @@
+name: Publish
+
+# Builds and publishes the multi-arch container image and the Helm chart to
+# GitHub's free registry (ghcr.io) once release-please (release-please.yml)
+# has cut an actual release -- i.e. merged a release PR and tagged the repo.
+# This workflow no longer runs on every push to main (release-please.yml
+# already owns that trigger); it only reacts to the release tag itself, so
+# it never races a tag that hasn't been created yet and never repeats work
+# on a push that isn't a release.
+#
+# - Image  -> ghcr.io/<owner>/change-tracking-dashboard
+# - Chart  -> oci://ghcr.io/<owner>/charts/change-tracking-dashboard
+#
+# Two independent version streams (see release-please-config.json) tag
+# differently, and this workflow keeps them fully separate -- an app release
+# never runs the chart steps and vice versa:
+#   - app-v<version>   -> publish-app job: build + scan + push the image,
+#     tagged with <version> taken directly from the tag (github.ref_name),
+#     NOT re-read from Chart.yaml -- the tag IS the version being released.
+#   - chart-v<version> -> publish-chart job: package + push the chart. The
+#     chart version comes from Chart.yaml (already bumped by release-please
+#     for this release); the tag itself only selects this job, nothing is
+#     parsed out of it.
+#
+# Auth uses the built-in GITHUB_TOKEN (packages: write) -- no secrets to
+# manage for the build/push itself.
+#
+# Supply-chain hardening on a packages:write workflow (unchanged from the
+# release.yml this replaces):
+#   - every `uses:` is pinned to a full commit SHA (a repointed upstream tag
+#     can't exfiltrate the token or push a malicious artifact; trailing
+#     comment records the major/version tag -- bump via Dependabot/Renovate);
+#   - base images are digest-pinned in the Dockerfile;
+#   - Trivy scans the built image and fails the job on HIGH/CRITICAL vulns
+#     BEFORE anything is pushed;
+#   - the ghcr owner is lowercased (ghcr/OCI repo paths must be lowercase);
+#   - the tag-derived version is read via the $GITHUB_REF_NAME environment
+#     variable, not `${{ github.ref_name }}` interpolated into the run
+#     script text -- the former is shell-quoted like any other variable, the
+#     latter would splice the raw ref into the script text before the shell
+#     even runs it (the classic GitHub Actions script-injection vector). The
+#     value is also validated against a strict tag-safe pattern before use.
+#
+# R13 (public pull, private repo): ghcr packages linked to a private repo
+# default to private visibility. Each job below ends with a best-effort
+# "set visibility to public" attempt via the REST API using GITHUB_TOKEN;
+# see that step's comment for why it is expected to fail here and what the
+# one-time manual fallback is.
+
+on:
+  push:
+    tags: ["app-v*", "chart-v*"]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  CHART_DIR: deploy/helm/change-tracking-dashboard
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish-app:
+    name: Publish image (app-v tag)
+    if: startsWith(github.ref_name, 'app-v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      # IMAGE_NAME is exported to $GITHUB_ENV for later steps (env: can't
+      # reference a step output, so it's computed here, not at top). The
+      # version comes straight from the tag that triggered this job -- the
+      # release IS the tag, so there is nothing to read back from Chart.yaml.
+      - name: Compute image ref + version from tag
+        id: ref
+        run: |
+          set -euo pipefail
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_NAME=${owner}/change-tracking-dashboard" >> "$GITHUB_ENV"
+          version="${GITHUB_REF_NAME#app-v}"
+          # Used verbatim as a Docker image tag, so it must be a valid tag:
+          # start alphanumeric, then [A-Za-z0-9_.-]. This deliberately
+          # rejects SemVer build-metadata ("+", e.g. 1.2.3+build) -- invalid
+          # in a tag -- as well as any multiline/injected value, failing
+          # fast with a clear message instead of a cryptic push error.
+          [[ "$version" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] \
+            || { echo "tag-derived version '$version' is not a valid Docker image tag"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "owner=${owner} version=${version}"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Log in to ghcr
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build a single-arch (amd64) image and load it locally so Trivy can
+      # scan it BEFORE anything is pushed. The Go module deps (read from the
+      # compiled binary) and the distroless base are identical across
+      # arches, so the amd64 image is representative; the multi-arch
+      # build+push below reuses this build's layer cache (type=gha).
+      - name: Build image for scanning (amd64)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: ${{ env.IMAGE_NAME }}:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan image (Trivy) — fail on HIGH/CRITICAL
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:scan
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          vuln-type: os,library
+
+      - name: Image tags + labels
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ steps.ref.outputs.version }}
+            type=raw,value=latest
+            type=sha,prefix=sha-
+
+      - name: Build and push image (amd64 + arm64)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Attempt to set image visibility to public (best effort)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          # ghcr packages created from a private repo default to private
+          # visibility. GITHUB_TOKEN has no "authenticated user" context
+          # (it's an installation-style token, not a PAT/OAuth user token),
+          # and the package-visibility REST endpoint
+          # (PATCH /user/packages/container/{name}) operates "as the
+          # authenticated user" -- so this call is expected to fail with
+          # 403/404 on a personal-account repo like this one. It is left in
+          # as a harmless, idempotent best-effort attempt in case GitHub
+          # ever extends that endpoint to installation tokens; it never
+          # fails the job (continue-on-error above, and the script itself
+          # always exits 0).
+          #
+          # This deliberately does NOT reuse the dk-renovate-bot App token
+          # minted in release-please.yml/renovate.yml: a GitHub App
+          # installation token has the same limitation -- it is still not a
+          # user-to-server token -- so borrowing the App here would add a
+          # secret dependency to this workflow without actually fixing the
+          # problem.
+          #
+          # ONE-TIME MANUAL STEP required instead (per package, first time
+          # only -- GitHub remembers the setting on every push after that):
+          # open the package on GitHub -> Package settings -> Danger Zone ->
+          # Change visibility -> Public.
+          if gh api --method PATCH "/user/packages/container/change-tracking-dashboard" -f visibility=public; then
+            echo "package visibility set to public"
+          else
+            echo "::warning::could not set ghcr image visibility via API (expected on a personal-account package -- see the step comment); complete the one-time manual visibility toggle in the package's GitHub settings"
+          fi
+
+  publish-chart:
+    name: Publish chart (chart-v tag)
+    if: startsWith(github.ref_name, 'chart-v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      # CHART_OCI_REPO is exported to $GITHUB_ENV for the package step below
+      # (env: can't reference a step output). The chart's package version is
+      # read by `helm package` directly from Chart.yaml -- already bumped by
+      # release-please for this release -- so nothing needs to be parsed
+      # from the tag itself; it only selects this job.
+      - name: Compute chart OCI ref
+        run: |
+          set -euo pipefail
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "CHART_OCI_REPO=oci://${REGISTRY}/${owner}/charts" >> "$GITHUB_ENV"
+
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+
+      - name: Package + push chart
+        # Token stays an env var — never interpolated into the script text,
+        # so it isn't written verbatim into the generated shell script on
+        # disk.
+        env:
+          HELM_REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "$HELM_REGISTRY_PASSWORD" | helm registry login "$REGISTRY" -u "${{ github.actor }}" --password-stdin
+          helm package "$CHART_DIR" --destination /tmp/chart
+          helm push /tmp/chart/change-tracking-dashboard-*.tgz "$CHART_OCI_REPO"
+
+      - name: Attempt to set chart visibility to public (best effort)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          # Same limitation as the image job's equivalent step (see its
+          # comment for the full explanation): expected to fail with
+          # GITHUB_TOKEN on a personal-account package. The chart's package
+          # name is path-qualified ("charts/change-tracking-dashboard"), so
+          # the "/" must be percent-encoded in the API path.
+          if gh api --method PATCH "/user/packages/container/charts%2Fchange-tracking-dashboard" -f visibility=public; then
+            echo "package visibility set to public"
+          else
+            echo "::warning::could not set ghcr chart visibility via API (expected on a personal-account package -- see the image job's equivalent step for why); complete the one-time manual visibility toggle in the package's GitHub settings"
+          fi
