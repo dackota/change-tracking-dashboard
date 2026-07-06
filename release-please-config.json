@@ -1,0 +1,20 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "7d18f3761a3171d306d23e415e30467ae0e159a8",
+  "separate-pull-requests": true,
+  "include-component-in-tag": true,
+  "include-v-in-tag": true,
+  "tag-separator": "-",
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "component": "app",
+      "exclude-paths": ["deploy/helm/change-tracking-dashboard"],
+      "extra-files": ["deploy/helm/change-tracking-dashboard/Chart.yaml"]
+    },
+    "deploy/helm/change-tracking-dashboard": {
+      "release-type": "helm",
+      "component": "chart"
+    }
+  }
+}

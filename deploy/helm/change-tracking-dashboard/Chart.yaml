@@ -7,4 +7,10 @@ description: >
   ConfigMap.
 type: application
 version: 0.1.1
-appVersion: "0.1.1"
+# appVersion is owned by the release-please "app" component (root path),
+# updated via its release-please-config.json `extra-files` entry targeting
+# this file. The annotation below is release-please's generic-updater
+# marker: it replaces only the semver substring on this line, leaving
+# everything else (quoting, comment) untouched. `version` above is owned by
+# the "chart" component's own release strategy and needs no annotation.
+appVersion: "0.1.1" # x-release-please-version
