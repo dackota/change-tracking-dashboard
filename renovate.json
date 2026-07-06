@@ -2,5 +2,29 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:best-practices"],
   "dependencyDashboard": true,
-  "automerge": false
+  "automerge": false,
+  "semanticCommits": "enabled",
+  "minimumReleaseAge": "5 days",
+  "packageRules": [
+    {
+      "description": "Go modules and the Dockerfile base image are runtime-affecting: commit as fix: so release-please cuts a patch release and the update deploys.",
+      "matchManagers": ["gomod", "dockerfile"],
+      "semanticCommitType": "fix"
+    },
+    {
+      "description": "GitHub Actions updates are CI-only: commit as chore: so release-please does not cut a release for them.",
+      "matchManagers": ["github-actions"],
+      "semanticCommitType": "chore"
+    },
+    {
+      "description": "Auto-merge low-risk leaf-dependency updates (patch, minor, digest) once required checks are green.",
+      "matchUpdateTypes": ["patch", "minor", "digest"],
+      "automerge": true
+    },
+    {
+      "description": "Never auto-merge a major bump; always leave it as a manual PR.",
+      "matchUpdateTypes": ["major"],
+      "automerge": false
+    }
+  ]
 }
