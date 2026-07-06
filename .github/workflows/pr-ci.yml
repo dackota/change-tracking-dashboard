@@ -3,8 +3,15 @@ name: PR CI
 # Required checks for every pull request targeting main: Go build/vet/test,
 # a Trivy filesystem/dependency scan, and the chart's helm-unittest suite.
 #
+# - changes     -> dorny/paths-filter computes which path groups this PR
+#                  touches, so go-verify can skip cleanly (a "skipped"
+#                  check-run, not an absent one) on a chart-only or
+#                  CI-only PR -- release-please.yml's auto-merge check-runs
+#                  poll already treats "skipped" as passing.
 # - go-verify   -> go build ./..., go vet ./..., go test ./... (fails the
-#                  check on the first failing step).
+#                  check on the first failing step). Only runs when the PR
+#                  touches Go source or module files -- a chart-only or
+#                  workflow-only PR has nothing for it to verify.
 # - trivy-fs    -> scans the working tree's dependency graph (go.sum, etc.)
 #                  the same way publish.yml scans the built image: HIGH/CRITICAL,
 #                  fixed-only findings fail the check before anything merges.
@@ -30,8 +37,26 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Detect changed path groups
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.filter.outputs.go }}
+    steps:
+      - name: Filter paths
+        id: filter
+        uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
+        with:
+          filters: |
+            go:
+              - '**/*.go'
+              - 'go.mod'
+              - 'go.sum'
+
   go-verify:
     name: Go build, vet, test
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
