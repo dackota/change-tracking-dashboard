@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.5](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.1.4...app-v0.1.5) (2026-07-06)
+
+
+### Bug Fixes
+
+* use Generic updater for appVersion, add merge-safe separator ([#45](https://github.com/dackota/change-tracking-dashboard/issues/45)) ([25d9636](https://github.com/dackota/change-tracking-dashboard/commit/25d963651f5809369ec6941d6e45e58e42614b19))
+
 ## [0.1.4](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.1.3...app-v0.1.4) (2026-07-06)
 
 
