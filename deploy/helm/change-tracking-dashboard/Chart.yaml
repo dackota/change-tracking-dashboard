@@ -5,7 +5,7 @@ description: >
   and exposes a web feed. Deployed as a single-replica stateful pod backed by a
   ReadWriteOnce PVC (SQLite) and a hot-reloaded tracker ConfigMap.
 type: application
-version: 0.1.1
+version: 0.1.2
 # The comment lines above and below are deliberate, not just documentation:
 # the app and chart release-please components each own one of
 # version/appVersion and release independently, and git's merge algorithm
