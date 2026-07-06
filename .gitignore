@@ -27,6 +27,13 @@ go.work.sum
 # env file
 .env
 
+# Local-only Node toolchain for the UI regression harness
+# (internal/web/static/timeline.regression.js). The repo has no
+# package.json/lock by design (see internal/web/static/commit-link.property.
+# test.js) — `npm install --no-save playwright-core` there writes only this
+# directory, never a manifest/lockfile.
+node_modules/
+
 # Editor/IDE
 # .idea/
 # .vscode/
