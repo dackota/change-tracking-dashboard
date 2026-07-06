@@ -6,4 +6,4 @@ description: >
   ReadWriteOnce PVC (SQLite) and a hot-reloaded tracker ConfigMap.
 type: application
 version: 0.1.1
-appVersion: 0.1.3
+appVersion: 0.1.4
