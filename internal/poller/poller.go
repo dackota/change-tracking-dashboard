@@ -12,6 +12,7 @@
 package poller
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -94,13 +95,19 @@ func (p *Poller) Poll(t domain.Tracker) error {
 		return fmt.Errorf("poller: resolve file glob %q: %w", t.FileGlob, err)
 	}
 
+	// A failure on one resolved file (e.g. an extractor expression that throws
+	// on that file's shape) must not drop every other file in the same tracker
+	// cycle. Collect per-file errors and continue; the changes from the files
+	// that DID parse are already persisted. errors.Join returns nil when the
+	// slice is empty, so a fully clean cycle still returns nil.
+	var errs []error
 	for _, filePath := range filePaths {
 		if err := p.pollFile(t, filePath, ex, fe); err != nil {
-			return err
+			errs = append(errs, fmt.Errorf("file %q: %w", filePath, err))
 		}
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 // resolveFilePaths expands glob into the concrete file paths to walk. A

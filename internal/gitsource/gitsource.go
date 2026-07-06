@@ -17,7 +17,9 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
@@ -256,16 +258,19 @@ func (s *Source) WalkCommits(filePath, sinceCommitSha string, notBefore time.Tim
 }
 
 // MatchingFiles enumerates every blob path in the repository's HEAD tree and
-// returns those whose path matches glob, using path.Match semantics (a single
-// "*" matches any sequence of non-separator characters within one path
-// segment; "**" is not supported — the deployed globs are single-segment
-// wildcards only). Paths are git-style forward-slash-separated, matching what
-// path.Match expects.
+// returns those whose path matches glob. A single "*" matches any sequence of
+// non-separator characters within one path segment; "?" matches a single
+// non-separator character; and "**" is a cross-segment wildcard matching any
+// number of path segments (so "gitops/**/Chart.yaml" matches
+// "gitops/a/Chart.yaml", "gitops/a/b/Chart.yaml", and — via the "**/" form —
+// "gitops/Chart.yaml"). Paths are git-style forward-slash-separated.
 //
-// The returned slice is sorted lexicographically for deterministic fan-out
-// ordering. Matching is scoped to files present at HEAD — a file deleted
-// before HEAD is not discovered, mirroring how a literal FileGlob only ever
-// tracked a file that currently exists.
+// Globs containing "**" are compiled to a regexp (globToRegexp); globs without
+// it keep exact path.Match semantics (preserving "[...]" character-class
+// support). The returned slice is sorted lexicographically for deterministic
+// fan-out ordering. Matching is scoped to files present at HEAD — a file
+// deleted before HEAD is not discovered, mirroring how a literal FileGlob only
+// ever tracked a file that currently exists.
 func (s *Source) MatchingFiles(glob string) ([]string, error) {
 	head, err := s.repo.Head()
 	if err != nil {
@@ -282,6 +287,16 @@ func (s *Source) MatchingFiles(glob string) ([]string, error) {
 		return nil, fmt.Errorf("gitsource: get HEAD tree: %w", err)
 	}
 
+	// Globs with a "**" cross-segment wildcard are compiled to a regexp once;
+	// simpler globs keep path.Match semantics so "[...]" classes still work.
+	var re *regexp.Regexp
+	if strings.Contains(glob, "**") {
+		re, err = globToRegexp(glob)
+		if err != nil {
+			return nil, fmt.Errorf("gitsource: compile glob %q: %w", glob, err)
+		}
+	}
+
 	var matches []string
 	walker := tree.Files()
 	defer walker.Close()
@@ -294,9 +309,14 @@ func (s *Source) MatchingFiles(glob string) ([]string, error) {
 			return nil, fmt.Errorf("gitsource: walk HEAD tree: %w", err)
 		}
 
-		ok, err := path.Match(glob, f.Name)
-		if err != nil {
-			return nil, fmt.Errorf("gitsource: match glob %q: %w", glob, err)
+		var ok bool
+		if re != nil {
+			ok = re.MatchString(f.Name)
+		} else {
+			ok, err = path.Match(glob, f.Name)
+			if err != nil {
+				return nil, fmt.Errorf("gitsource: match glob %q: %w", glob, err)
+			}
 		}
 		if ok {
 			matches = append(matches, f.Name)
@@ -305,6 +325,51 @@ func (s *Source) MatchingFiles(glob string) ([]string, error) {
 
 	sort.Strings(matches)
 	return matches, nil
+}
+
+// globToRegexp translates a path glob that may contain the "**" cross-segment
+// wildcard into an anchored regexp over forward-slash-separated paths:
+//
+//	**/  → (?:.*/)?   any number of leading path segments (incl. none)
+//	**   → .*         any characters, crossing separators
+//	*    → [^/]*      any characters within a single segment
+//	?    → [^/]       one character within a single segment
+//
+// Every other character is escaped as a literal, so a glob never smuggles in
+// regexp metacharacters. Used only for globs containing "**"; simpler globs
+// stay on path.Match (see MatchingFiles).
+func globToRegexp(glob string) (*regexp.Regexp, error) {
+	var b strings.Builder
+	b.WriteByte('^')
+	for i := 0; i < len(glob); {
+		c := glob[i]
+		switch c {
+		case '*':
+			if i+1 < len(glob) && glob[i+1] == '*' {
+				i += 2
+				if i < len(glob) && glob[i] == '/' {
+					i++
+					b.WriteString("(?:.*/)?")
+				} else {
+					b.WriteString(".*")
+				}
+				continue
+			}
+			b.WriteString("[^/]*")
+			i++
+		case '?':
+			b.WriteString("[^/]")
+			i++
+		default:
+			if strings.IndexByte(`.+()|[]{}^$\`, c) >= 0 {
+				b.WriteByte('\\')
+			}
+			b.WriteByte(c)
+			i++
+		}
+	}
+	b.WriteByte('$')
+	return regexp.Compile(b.String())
 }
 
 // fileContentAtCommit extracts the raw bytes of filePath from the given commit's
