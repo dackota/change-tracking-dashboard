@@ -82,14 +82,37 @@ const rng = makeRng(0xC0FFEE);
 
 function pick(rng, arr) { return arr[Math.floor(rng() * arr.length)]; }
 
-const HTTP_REPO_TEMPLATES = [
+// HTTP_REPO_TEMPLATES is generated, not hand-picked: every base repo URL
+// crossed with every trailing-slash / ".git"-suffix permutation in the class
+// this fix must handle (no suffix, slash(es) alone, a bare ".git", and
+// ".git" preceded and/or followed by one or more slashes). The originally
+// reported regression ("https://github.com/org/repo/.git" rendering a
+// double slash before "/commit/") is one member of this class — generating
+// the whole class here, rather than hand-listing that one example, is what
+// catches the sibling permutations ("repo.git/", "repo//.git//", …) a
+// hand-picked table would have missed.
+const BASE_REPOS = [
   'https://github.com/org/repo',
   'http://example.com/org/repo',
-  'https://github.com/org/repo/',
-  'https://github.com/org/repo.git',
-  'https://gitlab.example.com/group/sub/repo.git',
-  'https://github.com///org//repo///', // repeated trailing slashes
+  'https://gitlab.example.com/group/sub/repo',
 ];
+
+const TRAILING_SUFFIXES = [
+  '', '/', '//',
+  '.git', '.git/', '.git//',
+  '/.git', '/.git/', '/.git//',
+  '//.git', '//.git//',
+];
+
+const HTTP_REPO_TEMPLATES = [];
+for (const base of BASE_REPOS) {
+  for (const suffix of TRAILING_SUFFIXES) {
+    HTTP_REPO_TEMPLATES.push(base + suffix);
+  }
+}
+// Kept as a discrete adversarial example (repeated *internal* slashes, not a
+// trailing-suffix permutation, so it isn't produced by the loop above).
+HTTP_REPO_TEMPLATES.push('https://github.com///org//repo///');
 
 // Non-linkable: not http(s), or http(s) with the wrong case (the underlying
 // regex is intentionally case-sensitive on the scheme — "HTTPS://" is not a

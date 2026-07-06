@@ -15,11 +15,18 @@ import (
 	"html/template"
 	"io"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/changeset"
 )
+
+// gitSuffixPattern matches a trailing ".git" suffix together with any
+// slash(es) immediately before or after it ("/.git", ".git/", "/.git/",
+// "//.git//", …) so commitURL's suffix strip below never leaves a slash that
+// preceded ".git" stranded once ".git" itself is removed.
+var gitSuffixPattern = regexp.MustCompile(`/*\.git/*$`)
 
 // changesetDetailTemplateSource is the changeset-detail template's source.
 // It dispatches each Change to the chart or value partial by comparing its
@@ -154,7 +161,12 @@ func commitURL(repo, sha string) string {
 	if !strings.HasPrefix(repo, "http://") && !strings.HasPrefix(repo, "https://") {
 		return ""
 	}
-	base := strings.TrimSuffix(strings.TrimRight(repo, "/"), ".git")
+	// Strip a trailing ".git" suffix (and any slash(es) around it) BEFORE
+	// trimming trailing slashes. Trimming trailing slashes first (the prior,
+	// buggy order) can leave a slash that preceded ".git" stranded once
+	// ".git" is removed (e.g. ".../repo/.git" -> ".../repo/"), which then
+	// collides with the leading "/" of "/commit/<sha>" into a double slash.
+	base := strings.TrimRight(gitSuffixPattern.ReplaceAllString(repo, ""), "/")
 	return base + "/commit/" + sha
 }
 
