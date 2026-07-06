@@ -15,6 +15,7 @@ import (
 	"html/template"
 	"io"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/changeset"
@@ -28,10 +29,10 @@ import (
 var changesetDetailTemplateSource = fmt.Sprintf(`
 <section class="changeset-detail" data-commit-sha="{{.CommitSha}}">
   <header class="changeset-detail-header">
-    <span class="changeset-detail-repo">{{.Repo}}</span>
-    <span class="changeset-detail-commit">{{.CommitSha}}</span>
+    <span class="changeset-detail-repo" title="{{.Repo}}">{{.RepoName}}</span>
+    {{if .CommitURL}}<a class="changeset-detail-commit" href="{{.CommitURL}}" target="_blank" rel="noopener noreferrer" title="{{.CommitSha}}">{{.ShortSha}}</a>{{else}}<span class="changeset-detail-commit" title="{{.CommitSha}}">{{.ShortSha}}</span>{{end}}
     <span class="changeset-detail-author">{{.Author}}</span>
-    <time class="changeset-detail-committed-at">{{.CommittedAt.Format "2006-01-02T15:04:05Z07:00"}}</time>
+    <time class="changeset-detail-committed-at">{{.CommittedAt.Format "2006-01-02 15:04"}}</time>
   </header>
   <ul class="changeset-detail-changes">
     {{range .Changes}}
@@ -99,7 +100,10 @@ type changeView struct {
 // cs's own commit metadata, with its Changes projected through changeView.
 type changesetView struct {
 	Repo        string
+	RepoName    string // short, human-friendly repo name (basename, .git stripped)
 	CommitSha   string
+	ShortSha    string // first 8 chars of CommitSha for compact display
+	CommitURL   string // web URL to the commit, empty for non-URL (local-path) repos
 	Author      string
 	CommittedAt time.Time
 	Changes     []changeView
@@ -113,11 +117,54 @@ func newChangesetView(cs changeset.Changeset) changesetView {
 	}
 	return changesetView{
 		Repo:        cs.Repo,
+		RepoName:    repoShortName(cs.Repo),
 		CommitSha:   cs.CommitSha,
+		ShortSha:    shortSha(cs.CommitSha),
+		CommitURL:   commitURL(cs.Repo, cs.CommitSha),
 		Author:      cs.Author,
 		CommittedAt: cs.CommittedAt,
 		Changes:     changes,
 	}
+}
+
+// repoShortName reduces a repo path or URL to a human-friendly name: the last
+// path segment with any trailing "/" and ".git" suffix removed. Works for both
+// local paths ("/repos/free-tier-oracle-cloud-k8s" → "free-tier-oracle-cloud-
+// k8s") and remote URLs ("https://github.com/o/r.git" → "r"). Falls back to
+// the original string if reduction would yield empty.
+func repoShortName(repo string) string {
+	r := strings.TrimSuffix(strings.TrimRight(repo, "/"), ".git")
+	if i := strings.LastIndex(r, "/"); i >= 0 {
+		r = r[i+1:]
+	}
+	if r == "" {
+		return repo
+	}
+	return r
+}
+
+// commitURL derives a web URL to a commit for HTTP(S) git remotes
+// ("https://github.com/o/r(.git)" → "https://github.com/o/r/commit/<sha>").
+// Returns "" for local-path repos (no browsable URL) or an empty sha, so the
+// template renders a plain short-sha span instead of a link.
+func commitURL(repo, sha string) string {
+	if sha == "" {
+		return ""
+	}
+	if !strings.HasPrefix(repo, "http://") && !strings.HasPrefix(repo, "https://") {
+		return ""
+	}
+	base := strings.TrimSuffix(strings.TrimRight(repo, "/"), ".git")
+	return base + "/commit/" + sha
+}
+
+// shortSha returns the first 8 characters of a commit sha (the whole sha if it
+// is shorter), for compact display alongside the full sha in a title tooltip.
+func shortSha(sha string) string {
+	if len(sha) <= 8 {
+		return sha
+	}
+	return sha[:8]
 }
 
 // renderChangesetDetail writes the rendered HTML detail view for cs to w.
