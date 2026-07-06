@@ -6,4 +6,11 @@ description: >
   ReadWriteOnce PVC (SQLite) and a hot-reloaded tracker ConfigMap.
 type: application
 version: 0.1.1
-appVersion: 0.1.4
+# The comment lines above and below are deliberate, not just documentation:
+# the app and chart release-please components each own one of
+# version/appVersion and release independently, and git's merge algorithm
+# needs an unchanged context line between two adjacent lines each side
+# changes independently, or it can't split them into separate hunks and
+# conflicts even though the changes don't overlap (reproduced live on PR
+# #44). Keep at least one unchanged line between the two if either moves.
+appVersion: 0.1.4 # x-release-please-version
