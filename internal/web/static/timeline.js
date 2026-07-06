@@ -608,7 +608,14 @@
     facetState = {};
     refreshAllFacetPills();
     refreshFacetClear();
-    resetView();
+    // Clearing facets refetches the (now unfiltered) backdrop. The window must
+    // be fit to that FRESH data, not the stale filtered set we currently hold —
+    // so drop the one-shot fit latch and let renderBackdrop re-fit inside the
+    // fetch callback. (Fitting synchronously here would run against the old
+    // data and, worse, leave hasFitWindow=true so the post-fetch re-fit never
+    // runs.) resetView() stays for the standalone "Reset zoom" button, which
+    // does not refetch.
+    state.hasFitWindow = false;
     loadBackdrop();
   }
 

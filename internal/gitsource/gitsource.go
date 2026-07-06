@@ -360,8 +360,33 @@ func globToRegexp(glob string) (*regexp.Regexp, error) {
 		case '?':
 			b.WriteString("[^/]")
 			i++
+		case '[':
+			// Character class — copy through to RE2 verbatim (path.Match and RE2
+			// share the syntax: "^" negation, ranges "lo-hi", and a "]" right
+			// after "[" / "[^" is a literal member). This keeps class semantics
+			// (e.g. "gitops/**/values-[a-z].yaml") instead of escaping them into
+			// a literal. Inside the class, "*"/"?" are literal, which is correct.
+			j := i + 1
+			if j < len(glob) && glob[j] == '^' {
+				j++
+			}
+			if j < len(glob) && glob[j] == ']' { // literal "]" as first member
+				j++
+			}
+			for j < len(glob) && glob[j] != ']' {
+				j++
+			}
+			if j >= len(glob) {
+				// Unterminated "[" — emit a literal "[" (a bare "[" is invalid in
+				// RE2); mirrors path.Match rejecting the pattern.
+				b.WriteString(`\[`)
+				i++
+				continue
+			}
+			b.WriteString(glob[i : j+1]) // include the closing "]"
+			i = j + 1
 		default:
-			if strings.IndexByte(`.+()|[]{}^$\`, c) >= 0 {
+			if strings.IndexByte(`.+()|]{}^$\`, c) >= 0 {
 				b.WriteByte('\\')
 			}
 			b.WriteByte(c)
