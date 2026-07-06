@@ -12,9 +12,8 @@
       "exclude-paths": ["deploy/helm/change-tracking-dashboard"],
       "extra-files": [
         {
-          "type": "yaml",
-          "path": "deploy/helm/change-tracking-dashboard/Chart.yaml",
-          "jsonpath": "$.appVersion"
+          "type": "generic",
+          "path": "deploy/helm/change-tracking-dashboard/Chart.yaml"
         }
       ]
     },
