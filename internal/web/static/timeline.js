@@ -15,8 +15,10 @@
 //     it); the From/To inputs mirror and drive the window
 //   - re-clusters flags on every render so zooming in splits a stacked marker
 //     apart; clicking a cluster zooms into its own span to expand it
-//   - renders the "Changes" feed for the visible window, with explicit loading
-//     / empty states, short repo names, GitHub commit links and day/time stamps
+//   - renders the "Changes" feed as a table (<tr>/<td> rows in the
+//     server-rendered <table>'s <tbody>) for the visible window, with
+//     explicit loading / empty states rendered as full-width in-table rows,
+//     short repo names, GitHub commit links and day/time stamps
 //   - on a flag (or feed row) click, fetches the server-rendered detail HTML
 //     and, per chart-kind Change, its chart diff — re-rendered client-side as a
 //     collapsed, color-coded (red/green) hunk view
@@ -49,6 +51,7 @@
   var MIN_DRAG_PX = 4; // below this a drag is treated as a click, not a select
 
   var BACKDROP_LIMIT = 100;
+  var FEED_COLUMN_COUNT = 5; // When, Repository, Commit, Author, Changes — matches the thead
   var DIFF_CONTEXT = 3;
   var AXIS_TICKS = 6;
   var MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -77,7 +80,7 @@
   var pillEls = {};      // facet -> value -> pill element
   var badgeEls = {};     // facet -> badge element
 
-  var feedEls = { list: null, empty: null, title: null, count: null };
+  var feedEls = { list: null, title: null, count: null };
   var winEls = { from: null, to: null, reset: null, hint: null };
   var facetClearEl = null;
 
@@ -410,48 +413,55 @@
   }
 
   // ---- feed ----
-  function showEmpty(msg, withClear) {
-    if (feedEls.list) { feedEls.list.style.display = 'none'; }
-    if (!feedEls.empty) { return; }
-    feedEls.empty.hidden = false;
-    feedEls.empty.textContent = '';
+  // buildEmptyRow renders the loading / nothing-recorded-yet / nothing-in-
+  // window-or-filters states as a single full-width row (one <td> spanning
+  // every column) appended directly into the feed's own <tbody> — table form
+  // (R16), not a bare table with headers over nothing. withClear adds the
+  // "Clear filters & reset zoom" affordance (R16c); loading never does.
+  function buildEmptyRow(msg, withClear) {
+    var tr = document.createElement('tr');
+    tr.className = 'feed-empty-row';
+    var td = document.createElement('td');
+    td.colSpan = FEED_COLUMN_COUNT;
     var span = document.createElement('span');
     span.textContent = msg;
-    feedEls.empty.appendChild(span);
+    td.appendChild(span);
     if (withClear) {
       var btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'feed-clear-btn';
       btn.textContent = 'Clear filters & reset zoom';
       btn.addEventListener('click', clearAllFilters);
-      feedEls.empty.appendChild(btn);
+      td.appendChild(btn);
     }
-  }
-  function hideEmpty() {
-    if (feedEls.empty) { feedEls.empty.hidden = true; }
-    if (feedEls.list) { feedEls.list.style.display = ''; }
+    tr.appendChild(td);
+    return tr;
   }
   function buildFeedRow(cs) {
-    var li = document.createElement('li');
-    li.className = 'feed-row';
-    li.addEventListener('click', function () { onFlagClick([cs]); });
+    var tr = document.createElement('tr');
+    tr.className = 'feed-row';
+    tr.addEventListener('click', function () { onFlagClick([cs]); });
 
+    var whenCell = document.createElement('td');
+    whenCell.className = 'feed-cell-when';
+    whenCell.textContent = fmtDateTime(csTime(cs));
+    tr.appendChild(whenCell);
+
+    var repoCell = document.createElement('td');
+    repoCell.className = 'feed-cell-repo';
     var dot = document.createElement('span');
     dot.className = 'feed-dot';
     dot.style.background = repoColor(cs.repo);
-    li.appendChild(dot);
+    repoCell.appendChild(dot);
+    var repoName = document.createElement('span');
+    repoName.className = 'feed-repo';
+    repoName.textContent = repoShortName(cs.repo);
+    repoName.title = cs.repo;
+    repoCell.appendChild(repoName);
+    tr.appendChild(repoCell);
 
-    var time = document.createElement('span');
-    time.className = 'feed-time';
-    time.textContent = fmtDateTime(csTime(cs));
-    li.appendChild(time);
-
-    var repo = document.createElement('span');
-    repo.className = 'feed-repo';
-    repo.textContent = repoShortName(cs.repo);
-    repo.title = cs.repo;
-    li.appendChild(repo);
-
+    var commitCell = document.createElement('td');
+    commitCell.className = 'feed-cell-commit';
     var url = commitURL(cs.repo, cs.commitSha);
     var sha = cs.commitSha.slice(0, 8);
     if (url) {
@@ -460,25 +470,27 @@
       a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
       a.textContent = sha; a.title = cs.commitSha;
       a.addEventListener('click', function (e) { e.stopPropagation(); });
-      li.appendChild(a);
+      commitCell.appendChild(a);
     } else {
       var shaEl = document.createElement('span');
       shaEl.className = 'feed-commit feed-commit-plain';
       shaEl.textContent = sha; shaEl.title = cs.commitSha;
-      li.appendChild(shaEl);
+      commitCell.appendChild(shaEl);
     }
+    tr.appendChild(commitCell);
 
-    var author = document.createElement('span');
-    author.className = 'feed-author';
-    author.textContent = cs.author;
-    li.appendChild(author);
+    var authorCell = document.createElement('td');
+    authorCell.className = 'feed-cell-author';
+    authorCell.textContent = cs.author;
+    tr.appendChild(authorCell);
 
     var n = (cs.changes || []).length;
-    var badge = document.createElement('span');
-    badge.className = 'feed-count-badge';
-    badge.textContent = n + (n === 1 ? ' change' : ' changes');
-    li.appendChild(badge);
-    return li;
+    var changesCell = document.createElement('td');
+    changesCell.className = 'feed-cell-changes';
+    changesCell.textContent = n + (n === 1 ? ' change' : ' changes');
+    tr.appendChild(changesCell);
+
+    return tr;
   }
   function renderFeed() {
     if (!feedEls.list) { return; }
@@ -487,7 +499,7 @@
     if (!state.loaded) {
       if (feedEls.title) { feedEls.title.textContent = 'Changes'; }
       if (feedEls.count) { feedEls.count.textContent = ''; }
-      showEmpty('Loading changes…', false);
+      feedEls.list.appendChild(buildEmptyRow('Loading changes…', false));
       return;
     }
 
@@ -503,14 +515,13 @@
     if (feedEls.count) { feedEls.count.textContent = total === 0 ? '' : visible.length + ' of ' + total; }
 
     if (total === 0) {
-      showEmpty('No changes recorded yet — the poller may still be backfilling.', activeFilterCount() > 0);
+      feedEls.list.appendChild(buildEmptyRow('No changes recorded yet — the poller may still be backfilling.', activeFilterCount() > 0));
       return;
     }
     if (visible.length === 0) {
-      showEmpty('No changes in this window' + (activeFilterCount() > 0 ? ' or matching the current filters.' : '.'), true);
+      feedEls.list.appendChild(buildEmptyRow('No changes in this window' + (activeFilterCount() > 0 ? ' or matching the current filters.' : '.'), true));
       return;
     }
-    hideEmpty();
     visible.forEach(function (cs) { feedEls.list.appendChild(buildFeedRow(cs)); });
   }
 
@@ -742,7 +753,6 @@
     refreshFacetClear();
 
     feedEls.list = document.getElementById('feed-list');
-    feedEls.empty = document.getElementById('feed-empty');
     feedEls.title = document.getElementById('feed-title');
     feedEls.count = document.getElementById('feed-count');
 
@@ -757,9 +767,23 @@
     loadBackdrop();
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
+  // Guarded on `typeof document` so this file stays require()-able from
+  // Node with no DOM present (see commit-link.property.test.js) — a no-op
+  // branch in every real browser, where `document` always exists.
+  if (typeof document !== 'undefined') {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+    } else {
+      init();
+    }
+  }
+
+  // Node-only export hook for the commit-link property test
+  // (commit-link.property.test.js). `module` is never defined in a browser,
+  // so this branch never runs client-side — the app still ships as a single
+  // first-party <script src="/static/timeline.js"> (R18); no test-only code
+  // path is reachable in production.
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { commitURL: commitURL };
   }
 })();

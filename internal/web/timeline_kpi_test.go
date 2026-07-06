@@ -229,10 +229,15 @@ func TestTimelineHandler_Header_ShowsTitleSubtitleAndResetZoomControl(t *testing
 }
 
 // TestTimelineHandler_FeedContainer_IsTableSkeletonPreservingDataHooks
-// verifies the feed panel now renders a table skeleton (thead: When,
-// Repository, Commit, Author, Changes) while keeping every id timeline.js
-// wires (feed-list, feed-empty, feed-title, feed-count) intact — the full
-// row-rendering migration to <tr>/<td> is the later feed-table slice.
+// verifies the feed panel renders a table skeleton (thead: When, Repository,
+// Commit, Author, Changes) while keeping the ids timeline.js wires
+// (feed-list, feed-title, feed-count) intact. feed-empty — the pre-feed-table
+// slice's standalone sibling-div empty-state placeholder — is gone: the
+// feed-table slice renders loading/empty/no-match states as full-width rows
+// inside <tbody id="feed-list"> itself (see
+// TestTimelineJS_RenderFeed_LoadingAndEmptyStatesRenderAsFullWidthTableRows
+// in timeline_feed_rows_test.go), so the skeleton no longer needs a separate
+// placeholder element for it.
 func TestTimelineHandler_FeedContainer_IsTableSkeletonPreservingDataHooks(t *testing.T) {
 	t.Parallel()
 
@@ -249,11 +254,14 @@ func TestTimelineHandler_FeedContainer_IsTableSkeletonPreservingDataHooks(t *tes
 	for _, want := range []string{
 		"<table", "<thead", "<th>When</th>", "<th>Repository</th>",
 		"<th>Commit</th>", "<th>Author</th>", "<th>Changes</th>",
-		`id="feed-list"`, `id="feed-empty"`, `id="feed-title"`, `id="feed-count"`,
+		`id="feed-list"`, `id="feed-title"`, `id="feed-count"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing feed-table structural element %q; got:\n%s", want, body)
 		}
+	}
+	if strings.Contains(body, `id="feed-empty"`) {
+		t.Errorf("body still contains the retired standalone feed-empty placeholder; empty/loading states now render as in-table rows:\n%s", body)
 	}
 }
 
