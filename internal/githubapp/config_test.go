@@ -3,6 +3,7 @@ package githubapp_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/githubapp"
@@ -67,6 +68,24 @@ func TestFromEnv_Error_WhenPartialVarsSet(t *testing.T) {
 	_, _, err := githubapp.FromEnv()
 	if err == nil {
 		t.Fatal("expected error when only GITHUB_APP_ID is set")
+	}
+}
+
+// --- Config behavior: partial-config error names only vars actually set ---
+
+func TestFromEnv_Error_MessageDoesNotClaimUnsetVarIsSet(t *testing.T) {
+	// Only the private key file is set; both ID vars are empty. The error
+	// must not claim EnvInstallationID is set -- it isn't.
+	t.Setenv(githubapp.EnvAppID, "")
+	t.Setenv(githubapp.EnvInstallationID, "")
+	t.Setenv(githubapp.EnvPrivateKeyFile, "/some/key.pem")
+
+	_, _, err := githubapp.FromEnv()
+	if err == nil {
+		t.Fatal("expected error when only GITHUB_APP_PRIVATE_KEY_FILE is set")
+	}
+	if strings.Contains(err.Error(), githubapp.EnvInstallationID+" is set") {
+		t.Errorf("error falsely claims %s is set: %v", githubapp.EnvInstallationID, err)
 	}
 }
 
