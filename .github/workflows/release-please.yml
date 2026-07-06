@@ -64,6 +64,15 @@ name: Release Please
 # ever ran (observed on `dackota/change-tracking-dashboard` PR #37). Fixed by
 # granting the App `issues: write` and dropping `skip-labeling`.
 #
+# Checks are polled via the REST check-runs API, not `gh pr checks`.
+# `gh pr checks` resolves each check through a GraphQL field
+# (`checkSuite.workflowRun`) that requires the App's `actions: read`
+# permission, which this App does not have -- observed live as "Resource not
+# accessible by integration" on PR #38, silently swallowed by the script's
+# `if` as "checks didn't pass". Rather than grant a third permission for a
+# third gh-CLI quirk, poll `GET .../commits/{sha}/check-runs` instead, which
+# only needs the `checks: read` permission the App already has.
+#
 # Hardening:
 #   - every `uses:` is pinned to a full commit SHA (trailing comment records
 #     the version tag);
@@ -116,10 +125,11 @@ jobs:
           set -euo pipefail
 
           # This job never runs actions/checkout, so there is no local git
-          # repo for `gh` to infer the target from -- every `gh pr` call
-          # below must be pinned with --repo, or it fails with "fatal: not
-          # a git repository" and the script's `if` swallows that as a
-          # false "checks didn't pass".
+          # repo for `gh` to infer the target from. The `gh api` calls below
+          # embed the full "repos/{owner}/{repo}/..." path, so they need no
+          # --repo flag; `gh pr merge` isn't a raw API path, so it still
+          # needs --repo pinned or it fails with "fatal: not a git
+          # repository".
 
           if [ -z "$PRS_JSON" ] || [ "$PRS_JSON" = "[]" ]; then
             echo "No release PRs created or updated this run; nothing to merge."
@@ -133,17 +143,46 @@ jobs:
 
             # pr-ci.yml/pr-title-lint.yml trigger off the `pull_request`
             # event this push just raised; give GitHub a moment to queue
-            # them before watching so `checks --watch` doesn't observe an
-            # empty check list and return immediately.
+            # them before the first poll observes an empty check-run list.
             sleep 15
 
-            if gh pr checks "$number" --repo "$GITHUB_REPOSITORY" --watch --fail-fast --interval 20; then
+            sha=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number" --jq '.head.sha')
+
+            result="timeout"
+            for _ in $(seq 1 40); do
+              # A transient API error (rate limit, 5xx) must retry, not abort
+              # the whole step under set -e -- fall through as "not ready".
+              runs=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha/check-runs" --jq '.check_runs' 2>/dev/null || echo "")
+              if [ -z "$runs" ]; then
+                sleep 20
+                continue
+              fi
+              total=$(echo "$runs" | jq 'length')
+              if [ "$total" -eq 0 ]; then
+                sleep 20
+                continue
+              fi
+              pending=$(echo "$runs" | jq '[.[] | select(.status != "completed")] | length')
+              if [ "$pending" -gt 0 ]; then
+                sleep 20
+                continue
+              fi
+              failed=$(echo "$runs" | jq '[.[] | select(.conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral")] | length')
+              if [ "$failed" -eq 0 ]; then
+                result="pass"
+              else
+                result="fail"
+              fi
+              break
+            done
+
+            if [ "$result" = "pass" ]; then
               echo "checks green -- merging #$number"
               if ! gh pr merge "$number" --repo "$GITHUB_REPOSITORY" --squash --delete-branch; then
                 echo "::error::merge failed for release PR #$number"
               fi
             else
-              echo "::warning::checks did not pass (or timed out) for release PR #$number -- leaving it open; a later push or manual merge will pick it up"
+              echo "::warning::checks did not pass, failed, or timed out ($result) for release PR #$number -- leaving it open; a later push or manual merge will pick it up"
             fi
 
             echo "::endgroup::"
