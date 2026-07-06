@@ -54,13 +54,15 @@ name: Release Please
 #     already the tool's default behavior; don't override
 #     `changelog-sections` to un-hide `chore`, or this protection breaks.
 #
-# `skip-labeling: true` is set deliberately: release-please's default
-# `autorelease: pending`/`autorelease: tagged` PR labeling needs the Issues
-# API, which is outside the App's configured permission set (contents,
-# pull-requests, checks, workflows, packages -- no issues). This workflow
-# doesn't use those labels to find PRs (it reads the action's own `prs`
-# output), so skipping labeling avoids widening the App's scope for no
-# functional loss here.
+# Labeling is left on. `skip-labeling: true` was tried initially to avoid
+# widening the App's permission set, but release-please-action also uses
+# the `autorelease: pending` label *internally* to find its own already-open
+# release PR on each run -- not just for this workflow's merge step, which
+# only reads the action's own `prs` output. With labeling skipped, every run
+# while a release PR is still open failed to find it and tried to open a
+# duplicate on the same branch, erroring the whole job before the merge step
+# ever ran (observed on `dackota/change-tracking-dashboard` PR #37). Fixed by
+# granting the App `issues: write` and dropping `skip-labeling`.
 #
 # Hardening:
 #   - every `uses:` is pinned to a full commit SHA (trailing comment records
@@ -100,7 +102,6 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
-          skip-labeling: true
 
       # Merge each release PR this run touched once its checks are green.
       # `steps.release.outputs.prs` is a JSON array of PullRequest objects
@@ -113,6 +114,12 @@ jobs:
           PRS_JSON: ${{ steps.release.outputs.prs }}
         run: |
           set -euo pipefail
+
+          # This job never runs actions/checkout, so there is no local git
+          # repo for `gh` to infer the target from -- every `gh pr` call
+          # below must be pinned with --repo, or it fails with "fatal: not
+          # a git repository" and the script's `if` swallows that as a
+          # false "checks didn't pass".
 
           if [ -z "$PRS_JSON" ] || [ "$PRS_JSON" = "[]" ]; then
             echo "No release PRs created or updated this run; nothing to merge."
@@ -130,9 +137,9 @@ jobs:
             # empty check list and return immediately.
             sleep 15
 
-            if gh pr checks "$number" --watch --fail-fast --interval 20; then
+            if gh pr checks "$number" --repo "$GITHUB_REPOSITORY" --watch --fail-fast --interval 20; then
               echo "checks green -- merging #$number"
-              if ! gh pr merge "$number" --squash --delete-branch; then
+              if ! gh pr merge "$number" --repo "$GITHUB_REPOSITORY" --squash --delete-branch; then
                 echo "::error::merge failed for release PR #$number"
               fi
             else
