@@ -10,8 +10,9 @@
 //     single "Clear filters" reset
 //   - uses the visible window AS the feed filter (Datadog-style): drag on the
 //     track to zoom into a range (the feed follows), scroll to zoom, shift-drag
-//     to pan, "Reset zoom" to return to the full span; the From/To inputs
-//     mirror and drive the window
+//     to pan, "Reset zoom" to return to the full span (both the track's own
+//     embedded control and the observability shell's header action trigger
+//     it); the From/To inputs mirror and drive the window
 //   - re-clusters flags on every render so zooming in splits a stacked marker
 //     apart; clicking a cluster zooms into its own span to expand it
 //   - renders the "Changes" feed for the visible window, with explicit loading
@@ -744,6 +745,14 @@
     feedEls.empty = document.getElementById('feed-empty');
     feedEls.title = document.getElementById('feed-title');
     feedEls.count = document.getElementById('feed-count');
+
+    // The observability shell's header carries its own "Reset zoom" action
+    // (the global timeline action) alongside the embedded track's own
+    // range-clear control built in buildControls() above; both call the same
+    // resetView so either affordance returns the visible window to the full
+    // data span.
+    var headerReset = document.getElementById('header-reset-zoom');
+    if (headerReset) { headerReset.addEventListener('click', resetView); }
 
     loadBackdrop();
   }
