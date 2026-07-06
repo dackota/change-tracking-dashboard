@@ -140,7 +140,12 @@ func newChangesetView(cs changeset.Changeset) changesetView {
 // k8s") and remote URLs ("https://github.com/o/r.git" → "r"). Falls back to
 // the original string if reduction would yield empty.
 func repoShortName(repo string) string {
-	r := strings.TrimSuffix(strings.TrimRight(repo, "/"), ".git")
+	// Strip a trailing ".git" suffix (and any slash(es) around it) BEFORE
+	// trimming trailing slashes — the same gitSuffixPattern-based order
+	// commitURL uses (see its comment above), so a stranded slash from
+	// ".../repo/.git" can't survive into the last-path-segment split below and
+	// produce an empty segment.
+	r := strings.TrimRight(gitSuffixPattern.ReplaceAllString(repo, ""), "/")
 	if i := strings.LastIndex(r, "/"); i >= 0 {
 		r = r[i+1:]
 	}

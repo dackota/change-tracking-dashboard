@@ -19,7 +19,7 @@
 const assert = require('node:assert/strict');
 const path = require('node:path');
 
-const { commitURL } = require(path.join(__dirname, 'timeline.js'));
+const { commitURL, repoShortName } = require(path.join(__dirname, 'timeline.js'));
 
 let failures = 0;
 let checks = 0;
@@ -204,6 +204,90 @@ check('for every non-http(s) repo, or an empty sha, the result is exactly "" (pl
   for (const repo of HTTP_REPO_TEMPLATES) {
     const got = commitURL(repo, '');
     assert.equal(got, '', `expected no link for an empty sha regardless of repo; got ${JSON.stringify(got)} for repo=${repo}`);
+  }
+});
+
+// ---- repoShortName: example table (R10's short-name sibling) ----
+//
+// repoShortName reduces a repo path/URL to a human-friendly name: the last
+// path segment with any trailing "/" and ".git" suffix removed. It shares
+// commitURL's own ".git"-suffix-plus-slashes trim-order bug class: trimming
+// trailing slashes BEFORE stripping ".git" can strand a slash (e.g.
+// ".../repo/.git" -> ".../repo/") that then becomes the *last* path
+// separator, causing repoShortName to reduce to "" and fall back to the
+// entire original URL instead of "repo".
+
+const REPO_SHORT_NAME_EXAMPLES = [
+  { repo: '/repos/free-tier-oracle-cloud-k8s', want: 'free-tier-oracle-cloud-k8s' }, // local path
+  { repo: 'https://github.com/o/r', want: 'r' }, // plain URL, no .git
+  { repo: 'https://github.com/o/r.git', want: 'r' }, // trailing .git, no extra slash
+  { repo: 'https://github.com/org/repo/.git', want: 'repo' }, // trailing slash then .git (the reported bug)
+  { repo: 'https://github.com/org/repo.git/', want: 'repo' }, // trailing .git then slash
+  { repo: 'https://github.com/org/repo/.git/', want: 'repo' }, // trailing slash, .git, slash
+  { repo: 'https://github.com/org/repo//.git//', want: 'repo' }, // repeated slashes around .git
+  { repo: '.git', want: '.git' }, // degenerate reduction falls back to original
+];
+
+for (const { repo, want } of REPO_SHORT_NAME_EXAMPLES) {
+  check(`repoShortName(${JSON.stringify(repo)}) === ${JSON.stringify(want)}`, () => {
+    assert.equal(repoShortName(repo), want);
+  });
+}
+
+// ---- repoShortName: property/invariant sweep over the {base}×{suffix} class ----
+//
+// Reuses the exact same BASE_REPOS / TRAILING_SUFFIXES corpus commitURL's own
+// sweep above draws from (plus a local path base), so repoShortName is held
+// to the same combinatorial class: every base repo, crossed with every
+// trailing-slash / ".git"-suffix permutation, must reduce to the same clean
+// base name — no stray "/" (a path separator) and no leftover ".git" suffix.
+const REPO_SHORT_NAME_BASES = [
+  { base: 'https://github.com/org/repo', want: 'repo' },
+  { base: 'http://example.com/org/repo', want: 'repo' },
+  { base: 'https://gitlab.example.com/group/sub/repo', want: 'repo' },
+  { base: '/repos/free-tier-oracle-cloud-k8s', want: 'free-tier-oracle-cloud-k8s' },
+];
+
+check('for every {base}×{suffix} combination, repoShortName reduces to the clean base name with no dangling "/" or ".git"', () => {
+  for (const { base, want } of REPO_SHORT_NAME_BASES) {
+    for (const suffix of TRAILING_SUFFIXES) {
+      const repo = base + suffix;
+      const got = repoShortName(repo);
+      assert.equal(got, want, `repoShortName(${JSON.stringify(repo)}) = ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
+      assert.ok(!got.includes('/'), `repoShortName(${JSON.stringify(repo)}) = ${JSON.stringify(got)}: contains a path separator`);
+      assert.ok(!got.endsWith('.git'), `repoShortName(${JSON.stringify(repo)}) = ${JSON.stringify(got)}: still carries a .git suffix`);
+    }
+  }
+});
+
+// ---- repoShortName: degenerate/adversarial inputs never throw and fall back cleanly ----
+//
+// Inputs adjacent to the reported bug's class but degenerate enough that no
+// clean base name exists — scheme-only, the literal ".git" path, a doubled
+// ".git.git/" suffix (proving the fix strips exactly the trailing ".git"
+// occurrence via the same regex rather than looping or over-stripping), and
+// bare repeated slashes. repoShortName must never throw on these, and per
+// its documented contract must never fall back to an empty string for a
+// non-empty input.
+const REPO_SHORT_NAME_DEGENERATE_INPUTS = [
+  '',
+  '/',
+  '///',
+  '.git',
+  'https://',
+  'http://',
+  'https://github.com/org/repo.git.git/',
+  'https://github.com/org/repo//.git.git//',
+];
+
+check('repoShortName never throws on degenerate/adversarial input and never falls back to empty for a non-empty input', () => {
+  for (const repo of REPO_SHORT_NAME_DEGENERATE_INPUTS) {
+    let got;
+    assert.doesNotThrow(() => { got = repoShortName(repo); }, `threw for repo=${JSON.stringify(repo)}`);
+    assert.equal(typeof got, 'string', `repoShortName must always return a string, got ${typeof got} for repo=${JSON.stringify(repo)}`);
+    if (repo !== '') {
+      assert.notEqual(got, '', `repoShortName(${JSON.stringify(repo)}) fell back to empty instead of the original string`);
+    }
   }
 });
 

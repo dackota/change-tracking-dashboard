@@ -105,7 +105,13 @@
       'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
   }
   function repoShortName(repo) {
-    var r = repo.replace(/\/+$/, '').replace(/\.git$/, '');
+    // Strip a trailing ".git" suffix — together with any slash(es)
+    // immediately before or after it — BEFORE trimming trailing slashes,
+    // mirroring commitURL's own fix below. Stripping trailing slashes first
+    // (the prior, buggy order) can strand a slash that preceded ".git" once
+    // ".git" is removed (e.g. ".../repo/.git" -> ".../repo/"), which then
+    // becomes the *last* path separator and reduces to an empty segment.
+    var r = repo.replace(/\/*\.git\/*$/, '').replace(/\/+$/, '');
     var i = r.lastIndexOf('/');
     var name = i >= 0 ? r.slice(i + 1) : r;
     return name || repo;
@@ -791,6 +797,6 @@
   // first-party <script src="/static/timeline.js"> (R18); no test-only code
   // path is reachable in production.
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { commitURL: commitURL };
+    module.exports = { commitURL: commitURL, repoShortName: repoShortName };
   }
 })();
