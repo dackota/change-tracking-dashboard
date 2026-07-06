@@ -49,6 +49,54 @@ func seedChangeWithFacets(t *testing.T, s *store.Store, commitSha string, facets
 	}
 }
 
+// changeSpec configures one seeded domain.Change for the KPI/shell tests —
+// giving a caller control over exactly the fields a given assertion cares
+// about (repo, source file path — which drives Chart vs value classification
+// — commit sha, and how long ago it was committed), while every field left
+// zero gets a sensible default so callers can stay terse.
+type changeSpec struct {
+	Repo      string
+	FilePath  string
+	CommitSha string
+	Author    string
+	Age       time.Duration // how long before time.Now() this Change was committed
+}
+
+// seedChange saves a single Change built from spec, applying changeSpec's
+// zero-value defaults.
+func seedChange(t *testing.T, s *store.Store, spec changeSpec) {
+	t.Helper()
+
+	if spec.Repo == "" {
+		spec.Repo = "apps-repo"
+	}
+	if spec.FilePath == "" {
+		spec.FilePath = "values.yaml"
+	}
+	if spec.CommitSha == "" {
+		spec.CommitSha = "commit-" + spec.Repo + "-" + spec.FilePath
+	}
+	if spec.Author == "" {
+		spec.Author = "alice"
+	}
+
+	c := domain.Change{
+		Repo:        spec.Repo,
+		FilePath:    spec.FilePath,
+		Field:       "f",
+		ChangeType:  domain.ChangeTypeModified,
+		OldValue:    ptr("a"),
+		NewValue:    ptr("b"),
+		Facets:      map[string]string{},
+		CommitSha:   spec.CommitSha,
+		Author:      spec.Author,
+		CommittedAt: time.Now().Add(-spec.Age),
+	}
+	if err := s.SaveChange(c); err != nil {
+		t.Fatalf("SaveChange: %v", err)
+	}
+}
+
 // extractDirective returns the value portion of a single named directive
 // from a semicolon-separated Content-Security-Policy header string (e.g.
 // extractDirective("default-src 'self'; script-src 'self'", "script-src")

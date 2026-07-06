@@ -1,15 +1,18 @@
-// Package web (this file): the timeline page. It replaces the former
-// reverse-chronological HTML feed at GET / with a server-rendered shell that
-// loads a single embedded, vendored JavaScript file (via go:embed) to render
-// a zoomable, single-track timeline of Changeset flags, plus a set of
-// tri-state facet controls and a "Changes before T" panel. The page itself
-// renders one control per known facet value (sourced from the store's
-// FacetOptions) but does not otherwise query the store for Changeset data —
-// that comes from the browser fetching the existing GET /api/changesets JSON
-// endpoint. Query, grouping, classification, and filter logic all stay
-// server-side (in store/changeset/filter and api_changesets.go); this file
-// and timeline.js only render the known facet set and handle marker/zoom/
-// pan/click/clustering/filter-cycling.
+// Package web (this file): the timeline page. It renders an observability
+// shell — a persistent left sidebar, a header, and a row of headline KPI
+// tiles — around a loads-a-single-embedded-JavaScript-file (via go:embed)
+// zoomable, single-track timeline of Changeset flags, plus a set of
+// tri-state facet controls and a "Changes before T" panel. The shell chrome
+// (sidebar/header/KPI tiles) is computed and rendered server-side from two
+// store reads: the known facet set (FacetOptions) and a bounded slice of
+// recent Changeset history fed through the pure dashboardstats package.
+// Neither read changes query/grouping/classification/filter semantics, which
+// all stay server-side in store/changeset/filter and api_changesets.go; the
+// feed's own Changeset data still comes from the browser fetching the
+// existing GET /api/changesets JSON endpoint. The template markup itself
+// lives in timeline_template.go; this file and timeline.js render the known
+// facet set plus computed KPI values and handle marker/zoom/pan/click/
+// clustering/filter-cycling.
 package web
 
 import (
@@ -17,7 +20,10 @@ import (
 	"log"
 	"net/http"
 	"sort"
+	"time"
 
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/dashboardstats"
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/filter"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/store"
 )
 
@@ -36,10 +42,63 @@ func NewTimelineHandler(st *store.Store) *TimelineHandler {
 	return &TimelineHandler{tmpl: tmpl, st: st}
 }
 
-// timelineViewData is the data passed to the shell template: the known facet
-// set, rendered as one control per facet/value pair.
+// timelineViewData is the data passed to the shell template: the persistent
+// sidebar nav, the headline KPI tiles, and the known facet set (rendered as
+// one control per facet/value pair).
 type timelineViewData struct {
+	SidebarNav    []sidebarNavItem
+	KPI           kpiView
 	FacetControls []facetControlView
+}
+
+// sidebarNavItem is one entry in the persistent left sidebar (R1). Key is a
+// stable identifier used for the data-nav attribute the template renders and
+// tests key off of. Only the Timeline entry is a functioning destination in
+// v1; the rest are inert placeholders (R20) — rendered as plain,
+// non-interactive elements (no href, no click handler) so they can never
+// produce a dead link or a broken navigation state.
+type sidebarNavItem struct {
+	Key    string
+	Label  string
+	Active bool
+}
+
+// sidebarNavItems is the fixed v1 sidebar. It never changes per request, so
+// it is built once as a package-level value rather than per-ServeHTTP.
+var sidebarNavItems = []sidebarNavItem{
+	{Key: "timeline", Label: "Timeline", Active: true},
+	{Key: "changes", Label: "Changes"},
+	{Key: "repositories", Label: "Repositories"},
+	{Key: "trackers", Label: "Trackers"},
+}
+
+// kpiView is the headline KPI tile row rendered from dashboardstats.Metrics
+// (R3-R7): total Changes (and the Changeset count that produced them),
+// distinct repository count, Chart-kind vs. value-kind Change counts, and
+// the most recent Change's relative + absolute timestamp.
+type kpiView struct {
+	Changesets         int
+	Changes            int
+	Repositories       int
+	ChartChanges       int
+	ValueChanges       int    // Changes - ChartChanges
+	LastChangeRelative string // e.g. "2 hours ago"; noChangesLabel when there is no data
+	LastChangeAbsolute string // e.g. "Jul 5, 16:26"; "" when there is no data
+}
+
+// buildKPIView maps a dashboardstats.Metrics into its view representation.
+// now is threaded through explicitly (rather than calling time.Now() here)
+// so the relative-phrase computation stays testable against a fixed clock.
+func buildKPIView(m dashboardstats.Metrics, now time.Time) kpiView {
+	return kpiView{
+		Changesets:         m.Changesets,
+		Changes:            m.Changes,
+		Repositories:       m.Repositories,
+		ChartChanges:       m.ChartChanges,
+		ValueChanges:       m.Changes - m.ChartChanges,
+		LastChangeRelative: humanizeRelative(m.LastChangeAt, now),
+		LastChangeAbsolute: formatAbsolute(m.LastChangeAt),
+	}
 }
 
 // facetControlView is one facet name/value pair to render as a tri-state
@@ -74,8 +133,9 @@ func buildFacetControls(opts map[string][]string) []facetControlView {
 }
 
 // ServeHTTP satisfies http.Handler. It fetches the known facet set to render
-// tri-state controls; all Changeset data itself comes from the browser
-// fetching /api/changesets.
+// tri-state controls and a bounded slice of recent Changeset history to
+// compute the headline KPI tiles; all Changeset feed data itself comes from
+// the browser fetching /api/changesets.
 func (h *TimelineHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w.Header())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -89,7 +149,11 @@ func (h *TimelineHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		opts = nil
 	}
 
-	data := timelineViewData{FacetControls: buildFacetControls(opts)}
+	data := timelineViewData{
+		SidebarNav:    sidebarNavItems,
+		KPI:           buildKPIView(h.loadMetrics(), time.Now()),
+		FacetControls: buildFacetControls(opts),
+	}
 	if err := h.tmpl.Execute(w, data); err != nil {
 		// The response may already be partly written, so we can't change the
 		// status code here — just record the failure so it's observable.
@@ -97,139 +161,23 @@ func (h *TimelineHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-const timelineTemplate = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Change Tracking Dashboard</title>
-  <style>
-    :root {
-      --ink:#212529; --muted:#6c757d; --line:#dee2e6; --line-soft:#f1f3f5;
-      --blue:#0d6efd; --red:#dc3545; --surface:#fff; --bg:#f8f9fa;
-      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    }
-    * { box-sizing: border-box; }
-    body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 1.25rem 2rem 4rem; background: var(--bg); color: var(--ink); }
-    h1 { font-size: 1.5rem; margin: 0 0 0.15rem; }
-    .subtitle { color: var(--muted); margin: 0 0 1.25rem; font-size: 0.9rem; }
+// kpiHistoryCap bounds the recent Changeset history read for KPI
+// aggregation — the store's own hard cap on a single QueryChangesets call.
+// Aggregation itself stays in the pure dashboardstats package; this bounded
+// read is the one new I/O edge this slice adds (KPI metrics are global over
+// retained history in v1, not reactive to the active facet filter).
+const kpiHistoryCap = store.MaxChangesetPageSize
 
-    /* Facet dropdowns */
-    .facet-bar { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 1rem; }
-    .facet-bar-label { font-size: 0.8rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
-    .facet-controls.facet-dropdowns { display: flex; flex-wrap: wrap; gap: 0.5rem; }
-    /* Progressive-enhancement fallback: raw controls before JS builds dropdowns */
-    .facet-control { font-size: 0.8rem; padding: 0.25rem 0.6rem; border: 1px solid #ced4da; border-radius: 999px; background: #fff; cursor: pointer; }
-    .facet-control[data-state="include"] { background: var(--blue); border-color: var(--blue); color: #fff; }
-    .facet-control[data-state="exclude"] { background: var(--red); border-color: var(--red); color: #fff; }
-    details.facet-dd { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font-size: 0.83rem; }
-    details.facet-dd > summary { list-style: none; cursor: pointer; padding: 0.35rem 0.7rem; display: flex; align-items: center; gap: 0.4rem; font-weight: 600; color: #343a40; user-select: none; }
-    details.facet-dd > summary::-webkit-details-marker { display: none; }
-    details.facet-dd > summary::after { content: "▾"; color: var(--muted); font-size: 0.75rem; }
-    details.facet-dd[open] > summary { border-bottom: 1px solid var(--line-soft); }
-    .facet-dd-name { text-transform: capitalize; }
-    .facet-dd-badge { background: var(--blue); color: #fff; font-size: 0.68rem; font-weight: 700; border-radius: 999px; min-width: 1.1rem; text-align: center; padding: 0 0.35rem; }
-    .facet-dd-body { padding: 0.4rem 0.5rem; display: flex; flex-direction: column; gap: 0.3rem; max-height: 260px; overflow-y: auto; min-width: 190px; }
-    .facet-row { display: flex; align-items: center; gap: 0.4rem; }
-    .facet-pill { flex: 1 1 auto; text-align: left; font-size: 0.8rem; padding: 0.2rem 0.55rem; border: 1px solid #ced4da; border-radius: 6px; background: #fff; cursor: pointer; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .facet-pill[data-state="include"] { background: var(--blue); border-color: var(--blue); color: #fff; }
-    .facet-pill[data-state="exclude"] { background: var(--red); border-color: var(--red); color: #fff; }
-    .facet-pill[data-state="include"]::before { content: "✓ "; }
-    .facet-pill[data-state="exclude"]::before { content: "✕ "; }
-    .facet-only { font-size: 0.7rem; color: var(--blue); background: none; border: 1px solid transparent; border-radius: 5px; cursor: pointer; padding: 0.15rem 0.35rem; }
-    .facet-only:hover { border-color: var(--blue); }
-    .facet-clear { font-size: 0.78rem; font-weight: 600; padding: 0.3rem 0.7rem; border: 1px solid var(--line); background: #fff; border-radius: 6px; cursor: pointer; color: #495057; }
-    .facet-clear:hover { border-color: var(--red); color: var(--red); }
-    .facet-clear[hidden] { display: none; }
-
-    /* Timeline controls + track */
-    #timeline-root { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 0.75rem 0.9rem; }
-    .timeline-controls { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.6rem; flex-wrap: wrap; }
-    .range-toggle { font-size: 0.8rem; font-weight: 600; padding: 0.3rem 0.7rem; border: 1px solid var(--blue); color: var(--blue); background: #fff; border-radius: 6px; cursor: pointer; }
-    .range-toggle[data-active="true"] { background: var(--blue); color: #fff; }
-    .range-label { font-size: 0.8rem; font-weight: 600; color: #495057; display: flex; align-items: center; gap: 0.35rem; }
-    .range-label input { font-size: 0.8rem; padding: 0.2rem 0.4rem; border: 1px solid #ced4da; border-radius: 4px; }
-    .range-clear { font-size: 0.78rem; padding: 0.25rem 0.6rem; border: 1px solid var(--line); background: #fff; border-radius: 6px; cursor: pointer; color: #495057; }
-    .range-clear:disabled { opacity: 0.45; cursor: default; }
-    .timeline-hint { font-size: 0.76rem; color: var(--muted); font-style: italic; }
-    .timeline-svg { display: block; max-width: 100%; }
-
-    /* Feed */
-    .feed-panel { margin-top: 1.5rem; max-width: 820px; }
-    .feed-head { display: flex; align-items: baseline; gap: 0.6rem; margin-bottom: 0.5rem; }
-    .feed-head h2 { font-size: 1.1rem; margin: 0; }
-    .feed-count { font-size: 0.8rem; color: var(--muted); }
-    .feed-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); overflow: hidden; }
-    .feed-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--line-soft); font-size: 0.85rem; cursor: pointer; }
-    .feed-row:last-child { border-bottom: none; }
-    .feed-row:hover { background: #f8fbff; }
-    .feed-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
-    .feed-time { font-variant-numeric: tabular-nums; color: #495057; white-space: nowrap; }
-    .feed-repo { font-weight: 600; color: var(--ink); }
-    .feed-commit { font-family: var(--mono); font-size: 0.8rem; color: var(--blue); text-decoration: none; }
-    .feed-commit:hover { text-decoration: underline; }
-    .feed-commit-plain { color: var(--muted); }
-    .feed-author { color: var(--muted); }
-    .feed-count-badge { margin-left: auto; font-size: 0.75rem; color: #495057; background: var(--line-soft); border-radius: 999px; padding: 0.1rem 0.5rem; white-space: nowrap; }
-    .feed-empty { padding: 1.5rem 1rem; text-align: center; color: var(--muted); font-size: 0.9rem; border: 1px dashed var(--line); border-radius: 8px; background: var(--surface); display: flex; flex-direction: column; align-items: center; gap: 0.8rem; }
-    .feed-empty[hidden] { display: none; }
-    .feed-clear-btn { font-size: 0.8rem; padding: 0.3rem 0.8rem; border: 1px solid var(--blue); color: var(--blue); background: #fff; border-radius: 6px; cursor: pointer; }
-
-    /* Detail panel */
-    #timeline-detail-panel { margin-top: 1.25rem; }
-    .changeset-detail { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 0.9rem 1rem; margin-bottom: 1rem; }
-    .changeset-detail-header { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap; padding-bottom: 0.6rem; border-bottom: 1px solid var(--line-soft); margin-bottom: 0.6rem; }
-    .changeset-detail-repo { font-weight: 700; }
-    .changeset-detail-commit { font-family: var(--mono); font-size: 0.82rem; color: var(--blue); text-decoration: none; }
-    .changeset-detail-commit:hover { text-decoration: underline; }
-    .changeset-detail-author { color: var(--muted); font-size: 0.85rem; }
-    .changeset-detail-committed-at { color: var(--muted); font-size: 0.85rem; font-variant-numeric: tabular-nums; margin-left: auto; }
-    .changeset-detail-changes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.75rem; }
-    .change { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; font-size: 0.86rem; }
-    .change-label { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; padding: 0.1rem 0.4rem; border-radius: 4px; }
-    .change-kind-chart .change-label { background: #e7f1ff; color: #084298; }
-    .change-kind-value .change-label { background: var(--line-soft); color: #495057; }
-    .change-field { font-weight: 600; }
-    .change-old-value, .change-dependency-version-old { font-family: var(--mono); color: var(--red); }
-    .change-new-value, .change-dependency-version-new { font-family: var(--mono); color: #198754; }
-    .change-arrow { color: var(--muted); }
-    .change-helm-diff-slot { flex-basis: 100%; margin-top: 0.4rem; font-size: 0.82rem; color: var(--muted); }
-
-    /* Chart diff summary + color-coded hunks */
-    .chart-diff-summary { display: flex; gap: 0.6rem; align-items: center; font-size: 0.82rem; margin-bottom: 0.5rem; }
-    .chart-diff-manifests-changed { font-weight: 600; color: var(--ink); }
-    .chart-diff-lines-added { color: #198754; font-weight: 700; font-family: var(--mono); }
-    .chart-diff-lines-removed { color: var(--red); font-weight: 700; font-family: var(--mono); }
-    .chart-diff-truncated-notice { font-size: 0.78rem; color: #b8860b; }
-    .chart-diff-message { font-size: 0.85rem; color: var(--muted); font-style: italic; }
-    .diff-hunks { font-family: var(--mono); font-size: 0.78rem; line-height: 1.5; border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; background: var(--surface); max-height: 460px; overflow-y: auto; }
-    .diff-line { white-space: pre; padding: 0 0.7rem; }
-    .diff-add { background: #e6ffed; color: #04260f; }
-    .diff-del { background: #ffeef0; color: #3d0a12; }
-    .diff-ctx { color: #868e96; }
-    .diff-gap { background: var(--line-soft); color: #868e96; font-style: italic; text-align: center; font-family: system-ui, sans-serif; padding: 0.2rem 0.7rem; border-top: 1px solid #eceff1; border-bottom: 1px solid #eceff1; }
-  </style>
-</head>
-<body>
-  <h1>Change Tracking Dashboard</h1>
-  <p class="subtitle">Timeline of Changesets across config repositories.</p>
-  <div class="facet-bar">
-    <span class="facet-bar-label">Filter</span>
-    <div id="facet-controls" class="facet-controls">
-      {{range .FacetControls}}<button type="button" class="facet-control" data-facet="{{.Facet}}" data-value="{{.Value}}" data-state="off">{{.Facet}}: {{.Value}}</button>
-      {{end}}
-    </div>
-    <button type="button" id="facet-clear" class="facet-clear" hidden>Clear filters</button>
-  </div>
-  <div id="timeline-root"></div>
-  <div id="feed-panel" class="feed-panel">
-    <div class="feed-head">
-      <h2 id="feed-title">Changes</h2>
-      <span id="feed-count" class="feed-count"></span>
-    </div>
-    <ul id="feed-list" class="feed-list"></ul>
-    <div id="feed-empty" class="feed-empty" hidden></div>
-  </div>
-  <script src="/static/timeline.js"></script>
-</body>
-</html>`
+// loadMetrics performs the bounded KPI store read and aggregates it via
+// dashboardstats.Compute. On a store failure it logs the detail server-side
+// and returns the zero Metrics (Changesets=0, Changes=0, Repositories=0,
+// ChartChanges=0, zero LastChangeAt) rather than failing the page — mirroring
+// how the FacetOptions read degrades above (R21).
+func (h *TimelineHandler) loadMetrics() dashboardstats.Metrics {
+	page, err := h.st.QueryChangesets(time.Now(), filter.FilterSpec{}, "", kpiHistoryCap)
+	if err != nil {
+		log.Printf("web: kpi changesets: %v", err)
+		return dashboardstats.Metrics{}
+	}
+	return dashboardstats.Compute(page.Changesets)
+}
