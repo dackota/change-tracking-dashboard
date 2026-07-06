@@ -112,7 +112,14 @@
   }
   function commitURL(repo, sha) {
     if (!sha || !/^https?:\/\//.test(repo)) { return ''; }
-    return repo.replace(/\/+$/, '').replace(/\.git$/, '') + '/commit/' + sha;
+    // Strip a trailing ".git" suffix — together with any slash(es)
+    // immediately before or after it ("/.git", ".git/", "/.git/", …) — BEFORE
+    // trimming trailing slashes. Stripping trailing slashes first (the prior,
+    // buggy order) can leave a slash that preceded ".git" stranded once
+    // ".git" is removed (e.g. ".../repo/.git" -> ".../repo/"), which then
+    // collides with the leading "/" of "/commit/<sha>" into a double slash.
+    var base = repo.replace(/\/*\.git\/*$/, '').replace(/\/+$/, '');
+    return base + '/commit/' + sha;
   }
   function repoColor(repo) {
     return REPO_COLORS[repo] || REPO_COLORS[repoShortName(repo)] || DEFAULT_COLOR;
