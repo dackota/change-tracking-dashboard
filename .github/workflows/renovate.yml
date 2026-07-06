@@ -1,0 +1,58 @@
+name: Renovate
+
+# Scheduled self-hosted Renovate runner, replacing Dependabot (see
+# renovate.json at the repo root for the base config). Mints a short-lived
+# GitHub App (dk-renovate-bot) installation token so Renovate's commits/PRs
+# are attributed to the App — not GITHUB_TOKEN — which lets its PRs trigger
+# downstream workflows and be auto-merged by the App later in the pipeline
+# (this repo has no branch protection on the free plan, so auto-merge has to
+# go through App-authored PRs, not a protection gate).
+#
+# Helm is installed in the runner per R32, symmetric with the gitops repo's
+# Renovate runner — this repo's own chart has no subchart dependencies today,
+# so nothing here re-vendors yet, but keeping both runners identical avoids a
+# second, divergent scaffold to maintain.
+#
+# Hardening:
+#   - every `uses:` is pinned to a full commit SHA (trailing comment records
+#     the version tag);
+#   - permissions default to `contents: read` — Renovate authenticates against
+#     GitHub with the minted App token, so the workflow's own GITHUB_TOKEN
+#     never needs write access;
+#   - RENOVATE_REPOSITORIES pins the run to this repo only, so the (shared)
+#     App installation on the gitops repo can't leak into this schedule.
+
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  renovate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate a token for the dk-renovate-bot App
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.CI_APP_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+
+      - name: Run Renovate
+        uses: renovatebot/github-action@b50d2ba2bd928235abdcc14d06dfafc217f1c565 # v46.1.18
+        env:
+          RENOVATE_REPOSITORIES: ${{ github.repository }}
+          # Attribute Renovate's commits/PRs to the App bot instead of the
+          # action's default "renovate-bot" identity. The email must use the
+          # App bot's numeric user id (resolved via
+          # `gh api users/dk-renovate-bot%5Bbot%5D`) for GitHub to recognize
+          # it as a real account and render the App's avatar on the commit.
+          RENOVATE_GIT_AUTHOR: "dk-renovate-bot[bot] <300303047+dk-renovate-bot[bot]@users.noreply.github.com>"
+        with:
+          token: ${{ steps.app-token.outputs.token }}
