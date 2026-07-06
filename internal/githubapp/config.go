@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 )
 
 // Env var names for GitHub App credentials.
@@ -30,15 +31,21 @@ func FromEnv() (Config, bool, error) {
 		return Config{}, false, nil
 	}
 
-	// If at least one is set, all three must be provided.
-	if appIDStr == "" {
-		return Config{}, false, fmt.Errorf("githubapp: %s is set but %s is missing", EnvInstallationID, EnvAppID)
-	}
-	if installIDStr == "" {
-		return Config{}, false, fmt.Errorf("githubapp: %s is set but %s is missing", EnvAppID, EnvInstallationID)
-	}
-	if keyFile == "" {
-		return Config{}, false, fmt.Errorf("githubapp: %s is set but %s is missing", EnvAppID, EnvPrivateKeyFile)
+	// If at least one is set, all three must be provided. Report only vars
+	// that are actually missing -- naming a specific "set" var here would be
+	// wrong whenever more than one of the other two is also unset.
+	if appIDStr == "" || installIDStr == "" || keyFile == "" {
+		var missing []string
+		if appIDStr == "" {
+			missing = append(missing, EnvAppID)
+		}
+		if installIDStr == "" {
+			missing = append(missing, EnvInstallationID)
+		}
+		if keyFile == "" {
+			missing = append(missing, EnvPrivateKeyFile)
+		}
+		return Config{}, false, fmt.Errorf("githubapp: partial config -- missing %s", strings.Join(missing, ", "))
 	}
 
 	appID, err := strconv.ParseInt(appIDStr, 10, 64)
