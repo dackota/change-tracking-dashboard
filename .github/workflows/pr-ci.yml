@@ -1,0 +1,96 @@
+name: PR CI
+
+# Required checks for every pull request targeting main: Go build/vet/test,
+# a Trivy filesystem/dependency scan, and the chart's helm-unittest suite.
+#
+# - go-verify   -> go build ./..., go vet ./..., go test ./... (fails the
+#                  check on the first failing step).
+# - trivy-fs    -> scans the working tree's dependency graph (go.sum, etc.)
+#                  the same way release.yml scans the built image: HIGH/CRITICAL,
+#                  fixed-only findings fail the check before anything merges.
+# - helm-unittest -> runs the existing helm-unittest suite
+#                  (deploy/helm/change-tracking-dashboard/tests/) so a chart
+#                  regression is caught on the PR, not after it merges.
+#
+# Hardening (same posture as release.yml):
+#   - every `uses:` is pinned to a full commit SHA (trailing comment records
+#     the version tag);
+#   - permissions default to `contents: read` — no job needs more, since none
+#     of them push an image, package a chart, or write PR content.
+#
+# PR title format (Conventional Commits) is enforced by the separate
+# pr-title-lint.yml workflow, not here, so an in-flight code review isn't
+# re-run every time the title is edited.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  go-verify:
+    name: Go build, vet, test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: go build
+        run: go build ./...
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./...
+
+  trivy-fs-scan:
+    name: Trivy filesystem/dependency scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Scan dependencies (Trivy) — fail on HIGH/CRITICAL
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: "."
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+
+  helm-unittest:
+    name: Helm chart unit tests
+    runs-on: ubuntu-latest
+    env:
+      CHART_DIR: deploy/helm/change-tracking-dashboard
+      # Pinned helm-unittest plugin release; bump deliberately alongside a
+      # verification run (Dependabot doesn't track helm plugins).
+      HELM_UNITTEST_VERSION: v1.1.1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+
+      - name: Install helm-unittest plugin
+        run: |
+          set -euo pipefail
+          # --verify=false: the plugin is installed from its git repo (no
+          # .tgz/.prov signature to verify), which recent Helm releases
+          # otherwise refuse outright.
+          helm plugin install https://github.com/helm-unittest/helm-unittest \
+            --version "$HELM_UNITTEST_VERSION" --verify=false
+
+      - name: Run helm-unittest
+        run: helm unittest "$CHART_DIR"
