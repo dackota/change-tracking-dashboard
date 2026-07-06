@@ -138,6 +138,9 @@ const timelineTemplate = `<!DOCTYPE html>
     .facet-pill[data-state="exclude"]::before { content: "✕ "; }
     .facet-only { font-size: 0.7rem; color: var(--blue); background: none; border: 1px solid transparent; border-radius: 5px; cursor: pointer; padding: 0.15rem 0.35rem; }
     .facet-only:hover { border-color: var(--blue); }
+    .facet-clear { font-size: 0.78rem; font-weight: 600; padding: 0.3rem 0.7rem; border: 1px solid var(--line); background: #fff; border-radius: 6px; cursor: pointer; color: #495057; }
+    .facet-clear:hover { border-color: var(--red); color: var(--red); }
+    .facet-clear[hidden] { display: none; }
 
     /* Timeline controls + track */
     #timeline-root { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 0.75rem 0.9rem; }
@@ -216,6 +219,7 @@ const timelineTemplate = `<!DOCTYPE html>
       {{range .FacetControls}}<button type="button" class="facet-control" data-facet="{{.Facet}}" data-value="{{.Value}}" data-state="off">{{.Facet}}: {{.Value}}</button>
       {{end}}
     </div>
+    <button type="button" id="facet-clear" class="facet-clear" hidden>Clear filters</button>
   </div>
   <div id="timeline-root"></div>
   <div id="feed-panel" class="feed-panel">
