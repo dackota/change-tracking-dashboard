@@ -10,7 +10,13 @@
       "release-type": "simple",
       "component": "app",
       "exclude-paths": ["deploy/helm/change-tracking-dashboard"],
-      "extra-files": ["deploy/helm/change-tracking-dashboard/Chart.yaml"]
+      "extra-files": [
+        {
+          "type": "yaml",
+          "path": "deploy/helm/change-tracking-dashboard/Chart.yaml",
+          "jsonpath": "$.appVersion"
+        }
+      ]
     },
     "deploy/helm/change-tracking-dashboard": {
       "release-type": "helm",
