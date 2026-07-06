@@ -3,9 +3,13 @@ package web
 // timelineTemplate is the observability-shell markup for GET /: a persistent
 // sidebar (R1), a header with the global Reset zoom action (R2), a row of
 // server-computed KPI tiles (R3-R7), the pre-existing facet controls and
-// timeline track (unchanged), and the Changes feed as a table skeleton whose
-// <tbody id="feed-list"> keeps the exact id timeline.js already wires — full
-// <tr>/<td> row rendering lands in the later feed-table slice.
+// timeline track (unchanged), and the Changes feed as a table (thead: When,
+// Repository, Commit, Author, Changes). <tbody id="feed-list"> keeps the
+// exact id timeline.js has always wired; timeline.js (feed-table slice)
+// fills it with real <tr>/<td> rows and renders the loading/nothing-
+// recorded-yet/nothing-in-window-or-filters states as full-width in-table
+// rows — there is no longer a separate skeleton placeholder for the empty
+// state.
 //
 // The option-C palette (blue accent, slate sidebar, light-slate canvas) is
 // expressed as the --oc-* CSS custom properties below and used by the new
@@ -107,20 +111,18 @@ const timelineTemplate = `<!DOCTYPE html>
     .feed-table { width: 100%; border-collapse: collapse; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
     .feed-table thead th { text-align: left; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--line); }
     .feed-table tbody td { padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--line-soft); font-size: 0.85rem; }
-    .feed-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--line-soft); font-size: 0.85rem; cursor: pointer; }
-    .feed-row:last-child { border-bottom: none; }
-    .feed-row:hover { background: #f8fbff; }
-    .feed-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
-    .feed-time { font-variant-numeric: tabular-nums; color: #495057; white-space: nowrap; }
+    .feed-table tbody tr:last-child td { border-bottom: none; }
+    .feed-table tbody tr.feed-row { cursor: pointer; }
+    .feed-table tbody tr.feed-row:hover { background: #f8fbff; }
+    .feed-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 0.45rem; vertical-align: middle; }
+    .feed-cell-when { font-variant-numeric: tabular-nums; color: #495057; white-space: nowrap; }
     .feed-repo { font-weight: 600; color: var(--ink); }
     .feed-commit { font-family: var(--mono); font-size: 0.8rem; color: var(--blue); text-decoration: none; }
     .feed-commit:hover { text-decoration: underline; }
     .feed-commit-plain { color: var(--muted); }
-    .feed-author { color: var(--muted); }
-    .feed-count-badge { margin-left: auto; font-size: 0.75rem; color: #495057; background: var(--line-soft); border-radius: 999px; padding: 0.1rem 0.5rem; white-space: nowrap; }
-    .feed-empty { padding: 1.5rem 1rem; text-align: center; color: var(--muted); font-size: 0.9rem; border: 1px dashed var(--line); border-radius: 8px; background: var(--surface); display: flex; flex-direction: column; align-items: center; gap: 0.8rem; }
-    .feed-empty[hidden] { display: none; }
-    .feed-clear-btn { font-size: 0.8rem; padding: 0.3rem 0.8rem; border: 1px solid var(--blue); color: var(--blue); background: #fff; border-radius: 6px; cursor: pointer; }
+    .feed-cell-author { color: var(--muted); }
+    .feed-empty-row td { text-align: center; color: var(--muted); font-size: 0.9rem; padding: 1.5rem 1rem; }
+    .feed-clear-btn { font-size: 0.8rem; padding: 0.3rem 0.8rem; margin-left: 0.6rem; border: 1px solid var(--blue); color: var(--blue); background: #fff; border-radius: 6px; cursor: pointer; }
 
     /* Detail panel */
     #timeline-detail-panel { margin-top: 1.25rem; }
@@ -217,7 +219,6 @@ const timelineTemplate = `<!DOCTYPE html>
           </thead>
           <tbody id="feed-list"></tbody>
         </table>
-        <div id="feed-empty" class="feed-empty" hidden></div>
       </div>
       <script src="/static/timeline.js"></script>
     </main>
