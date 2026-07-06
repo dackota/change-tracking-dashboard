@@ -23,7 +23,11 @@ name: PR CI
 #   - every `uses:` is pinned to a full commit SHA (trailing comment records
 #     the version tag);
 #   - permissions default to `contents: read` — no job needs more, since none
-#     of them push an image, package a chart, or write PR content.
+#     of them push an image, package a chart, or write PR content, except
+#     `changes`, which reads `pull-requests: read` because paths-filter
+#     always lists a PR's changed files via the GitHub API on a pull_request
+#     trigger (confirmed against its docs — a checkout doesn't change this,
+#     only push/branch workflows use local git diffing).
 #
 # PR title format (Conventional Commits) is enforced by the separate
 # pr-title-lint.yml workflow, not here, so an in-flight code review isn't
@@ -40,6 +44,14 @@ jobs:
   changes:
     name: Detect changed path groups
     runs-on: ubuntu-latest
+    # On a pull_request trigger, paths-filter always lists changed files via
+    # the GitHub API (a checkout doesn't change this -- confirmed against its
+    # own docs: local git diffing is only used for push/branch workflows), so
+    # this job needs pull-requests: read. Scoped to just this job -- the
+    # workflow's other jobs stay at the top-level contents: read only.
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       go: ${{ steps.filter.outputs.go }}
     steps:
