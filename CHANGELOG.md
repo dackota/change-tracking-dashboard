@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.1.5...app-v0.2.0) (2026-07-07)
+
+
+### Features
+
+* v0.2 — shell completion, poll-status operability & UI polish ([#49](https://github.com/dackota/change-tracking-dashboard/issues/49)) ([74c5bd3](https://github.com/dackota/change-tracking-dashboard/commit/74c5bd3baff9824b98b71ac5973ac06ec6734231))
+
 ## [0.1.5](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.1.4...app-v0.1.5) (2026-07-06)
 
 
