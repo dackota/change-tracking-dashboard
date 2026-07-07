@@ -1,11 +1,14 @@
 package web_test
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/pollstatus"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/web"
 )
@@ -189,5 +192,31 @@ func TestRepositoriesHandler_RepoValueIsHTMLEscaped(t *testing.T) {
 
 	if strings.Contains(rr.Body.String(), "<script>alert(1)</script>") {
 		t.Errorf("repo value rendered unescaped — raw <script> tag present in body:\n%s", rr.Body.String())
+	}
+}
+
+// TestRepositoriesHandler_HeaderPollChip_RendersAcrossEveryPage verifies
+// R11/R6: the Repositories page's header (the same shared shell every route
+// builds) renders the aggregate poll-status chip too — not just
+// Timeline/Trackers — reflecting the injected poll-status registry's
+// current state.
+func TestRepositoriesHandler_HeaderPollChip_RendersAcrossEveryPage(t *testing.T) {
+	t.Parallel()
+
+	reg := pollstatus.New()
+	tr := domain.Tracker{Repo: "repo-a", FileGlob: "Chart.yaml", Field: "version", PollIntervalSeconds: 60}
+	reg.Record(tr, time.Now(), errors.New("network unreachable"))
+
+	h := web.NewRepositoriesHandler(newTestStore(t), reg)
+	req := httptest.NewRequest(http.MethodGet, "/repositories", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	body := rr.Body.String()
+	if !strings.Contains(body, `data-poll-status="error"`) {
+		t.Errorf("Repositories header missing error-state poll chip; got:\n%s", body)
+	}
+	if !strings.Contains(body, "1 tracker failing") {
+		t.Errorf("Repositories header chip missing error summary text; got:\n%s", body)
 	}
 }

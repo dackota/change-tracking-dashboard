@@ -104,9 +104,11 @@ func run(configPath, dbPath, listenAddr string) error {
 
 	// --- Poll status registry ---
 	// Records, per tracker, the last attempt/success time and last error —
-	// in-process only, no persistence; it rebuilds naturally on restart. A
-	// downstream slice wires pollStatus.Snapshot() into the web layer
-	// (header status chip, Trackers-view columns, /healthz).
+	// in-process only, no persistence; it rebuilds naturally on restart. Its
+	// Snapshot() is wired into every page handler's shared header (the
+	// aggregate poll-status chip) and into the Trackers view's per-tracker
+	// status columns; /healthz is a dependency-free liveness check and does
+	// not consume it.
 	pollStatus := pollstatus.New()
 
 	// --- Per-tracker scheduler ---

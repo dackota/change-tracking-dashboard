@@ -6,11 +6,14 @@
 package web_test
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/pollstatus"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/web"
 )
@@ -149,5 +152,30 @@ func TestChangesHandler_OmitsTimelineTrackButKeepsFeedPanelForDetailMount(t *tes
 	}
 	if !strings.Contains(body, `id="feed-panel"`) {
 		t.Errorf("body missing #feed-panel — timeline.js's detail-panel mount fallback has nowhere to attach; got:\n%s", body)
+	}
+}
+
+// TestChangesHandler_HeaderPollChip_RendersAcrossEveryPage verifies R11/R6:
+// the Changes page's header (the same shared shell every route builds)
+// renders the aggregate poll-status chip too — not just Timeline/Trackers —
+// reflecting the injected poll-status registry's current state.
+func TestChangesHandler_HeaderPollChip_RendersAcrossEveryPage(t *testing.T) {
+	t.Parallel()
+
+	reg := pollstatus.New()
+	tr := domain.Tracker{Repo: "repo-a", FileGlob: "Chart.yaml", Field: "version", PollIntervalSeconds: 60}
+	reg.Record(tr, time.Now(), errors.New("network unreachable"))
+
+	h := web.NewChangesHandler(reg)
+	req := httptest.NewRequest(http.MethodGet, "/changes", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	body := rr.Body.String()
+	if !strings.Contains(body, `data-poll-status="error"`) {
+		t.Errorf("Changes header missing error-state poll chip; got:\n%s", body)
+	}
+	if !strings.Contains(body, "1 tracker failing") {
+		t.Errorf("Changes header chip missing error summary text; got:\n%s", body)
 	}
 }
