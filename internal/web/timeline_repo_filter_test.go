@@ -34,26 +34,27 @@ func TestTimelineJS_BuildFilterParams_IncludesRepoScopeWhenSet(t *testing.T) {
 	}
 }
 
-// TestTimelineJS_FetchBackdrop_UsesBuildFilterParams verifies that the one
-// existing client-side fetch to /api/changesets (fetchBackdrop — the
-// timeline's backdrop load) sources its query params from
-// buildFilterParams(), so the repo scope reaches this fetch the exact same
-// way existing facet filters already do (R27) — there is no second,
-// separately-assembled param list to drift out of sync. Neither this
-// function nor buildFilterParams ever references "asOf" — the backdrop
-// fetch's no-asOf invariant (R27) is preserved unchanged by adding the repo
-// param.
-func TestTimelineJS_FetchBackdrop_UsesBuildFilterParams(t *testing.T) {
+// TestTimelineJS_FetchChangesetsPage_UsesBuildFilterParams verifies that the
+// one shared client-side fetch to /api/changesets (fetchChangesetsPage —
+// used both by loadBackdrop's initial/filter-reload fetch with an empty
+// cursor and by loadMore's pagination fetch with a real cursor) sources its
+// query params from buildFilterParams(), so the repo scope reaches this fetch the
+// exact same way existing facet filters already do (R27) — there is no
+// second, separately-assembled param list to drift out of sync. Neither
+// this function nor buildFilterParams ever references "asOf" — the
+// backdrop/pagination fetch's no-asOf invariant (R27) is preserved unchanged
+// by adding the repo param.
+func TestTimelineJS_FetchChangesetsPage_UsesBuildFilterParams(t *testing.T) {
 	t.Parallel()
 
 	body := servedTimelineJS(t)
-	fn := extractFunctionBody(t, body, "fetchBackdrop")
+	fn := extractFunctionBody(t, body, "fetchChangesetsPage")
 
 	if !strings.Contains(fn, "buildFilterParams()") {
-		t.Fatalf("fetchBackdrop() does not call buildFilterParams() — it would need its own separate repo-param wiring:\n%s", fn)
+		t.Fatalf("fetchChangesetsPage() does not call buildFilterParams() — it would need its own separate repo-param wiring:\n%s", fn)
 	}
 	if strings.Contains(fn, "asOf") {
-		t.Errorf("fetchBackdrop() references asOf — the timeline backdrop must never send asOf (R27):\n%s", fn)
+		t.Errorf("fetchChangesetsPage() references asOf — the timeline backdrop/pagination fetch must never send asOf (R27):\n%s", fn)
 	}
 }
 
