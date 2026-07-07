@@ -1,9 +1,11 @@
 package filter_test
 
 import (
+	"math/rand"
 	"reflect"
 	"strings"
 	"testing"
+	"testing/quick"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/filter"
 )
@@ -275,6 +277,164 @@ func TestIncludesExcludes_ReturnIndependentCopies(t *testing.T) {
 	}
 	if _, present := again["injected"]; present {
 		t.Errorf("Includes() leaked an injected key from a previous call: got %v", again)
+	}
+}
+
+// TestFilterSpec_ZeroValue_RepoIsUnset verifies that the zero-value
+// FilterSpec (as used everywhere a caller does not scope by repo) reports an
+// empty Repo() and matches any repo — a repo scope, unlike a tri-state
+// facet, is a single distinguished field rather than an include/exclude set.
+func TestFilterSpec_ZeroValue_RepoIsUnset(t *testing.T) {
+	t.Parallel()
+
+	var spec filter.FilterSpec
+	if got := spec.Repo(); got != "" {
+		t.Errorf("Repo() = %q, want empty for the zero-value spec", got)
+	}
+	if !spec.MatchesRepo("apps-repo") {
+		t.Error("MatchesRepo(apps-repo) = false, want true (unset repo scope matches any repo)")
+	}
+}
+
+// TestWithRepo_ReturnsIndependentCopyScopedToRepo verifies that WithRepo
+// returns a new FilterSpec carrying the given repo scope, without mutating
+// the receiver — the receiver keeps matching every repo afterward.
+func TestWithRepo_ReturnsIndependentCopyScopedToRepo(t *testing.T) {
+	t.Parallel()
+
+	base := filter.FilterSpec{}
+	scoped := base.WithRepo("apps-repo")
+
+	if got := scoped.Repo(); got != "apps-repo" {
+		t.Errorf("scoped.Repo() = %q, want apps-repo", got)
+	}
+	if got := base.Repo(); got != "" {
+		t.Errorf("base.Repo() = %q, want empty — WithRepo must not mutate the receiver", got)
+	}
+	if !base.MatchesRepo("other-repo") {
+		t.Error("base.MatchesRepo(other-repo) = false, want true — the receiver must be unaffected by WithRepo")
+	}
+}
+
+// TestMatchesRepo_ScopedSpec_MatchesOnlyExactRepo verifies that once a repo
+// scope is set, MatchesRepo fires only for an exact match — no partial or
+// case-insensitive match.
+func TestMatchesRepo_ScopedSpec_MatchesOnlyExactRepo(t *testing.T) {
+	t.Parallel()
+
+	spec := filter.FilterSpec{}.WithRepo("apps-repo")
+
+	tests := []struct {
+		name string
+		repo string
+		want bool
+	}{
+		{"exact match", "apps-repo", true},
+		{"different repo", "infra-repo", false},
+		{"case differs", "Apps-Repo", false},
+		{"prefix only", "apps-repo-extra", false},
+		{"empty candidate", "", false},
+	}
+	for _, tc := range tests {
+		if got := spec.MatchesRepo(tc.repo); got != tc.want {
+			t.Errorf("%s: MatchesRepo(%q) = %v, want %v", tc.name, tc.repo, got, tc.want)
+		}
+	}
+}
+
+// repoScopeSample is the pool of adversarial repo-scope/candidate strings the
+// property tests below draw from: the empty string (the "unset" sentinel),
+// plain names, near-miss case/whitespace/prefix variants, a very long value,
+// and non-ASCII content.
+var repoScopeSample = []string{
+	"", "apps-repo", "Apps-Repo", " apps-repo", "apps-repo ", "apps-repo-extra",
+	"infra-repo", strings.Repeat("x", 512), "仓库-repo", "apps-repo/sub",
+}
+
+// repoScopeCase is a quick.Generator drawing a (scope, candidate) pair from
+// repoScopeSample so both the "unset scope" and "exact match" branches are
+// exercised often, alongside adversarial near-misses.
+type repoScopeCase struct {
+	scope     string
+	candidate string
+}
+
+func (repoScopeCase) Generate(rnd *rand.Rand, size int) reflect.Value {
+	return reflect.ValueOf(repoScopeCase{
+		scope:     repoScopeSample[rnd.Intn(len(repoScopeSample))],
+		candidate: repoScopeSample[rnd.Intn(len(repoScopeSample))],
+	})
+}
+
+// TestMatchesRepo_Property_UnsetIsNoOpElseExactMatch asserts the repo-scope
+// invariant for every generated (scope, candidate) pair: an unset scope
+// ("") always matches, and a set scope matches only an exact (case-
+// sensitive) candidate — never a partial, case-insensitive, or otherwise
+// fuzzy match.
+func TestMatchesRepo_Property_UnsetIsNoOpElseExactMatch(t *testing.T) {
+	t.Parallel()
+
+	property := func(c repoScopeCase) bool {
+		spec := filter.FilterSpec{}.WithRepo(c.scope)
+		got := spec.MatchesRepo(c.candidate)
+		want := c.scope == "" || c.scope == c.candidate
+		return got == want
+	}
+	if err := quick.Check(property, &quick.Config{MaxCount: 500}); err != nil {
+		t.Error(err)
+	}
+}
+
+// TestMatchesRepoAndMatches_Property_ComposeWithANDNeverOR asserts the
+// structural contract R27 depends on: a Change (repo, facets) satisfies a
+// repo-scoped, facet-filtered FilterSpec only when it satisfies *both* the
+// repo scope (MatchesRepo) and the facet predicate (Matches) — never either
+// alone (OR). It sweeps combinations where exactly one of the two holds,
+// both hold, and neither holds, across generated repo scopes/candidates and
+// include-facet values.
+func TestMatchesRepoAndMatches_Property_ComposeWithANDNeverOR(t *testing.T) {
+	t.Parallel()
+
+	envSample := []string{"", "dev", "prod", "staging"}
+
+	property := func(rc repoScopeCase, includeIdx, candIdx uint8) bool {
+		includeEnv := envSample[int(includeIdx)%len(envSample)]
+		candEnv := envSample[int(candIdx)%len(envSample)]
+
+		params := map[string][]string{}
+		if includeEnv != "" {
+			params["env"] = []string{includeEnv}
+		}
+		spec, err := filter.Parse(params, map[string]struct{}{"env": {}})
+		if err != nil {
+			return false
+		}
+		spec = spec.WithRepo(rc.scope)
+
+		repoMatches := spec.MatchesRepo(rc.candidate)
+		facetMatches := spec.Matches(map[string]string{"env": candEnv})
+		combined := repoMatches && facetMatches
+
+		wantRepo := rc.scope == "" || rc.scope == rc.candidate
+		wantFacet := includeEnv == "" || includeEnv == candEnv
+		want := wantRepo && wantFacet
+
+		if combined != want {
+			return false
+		}
+		// Never OR: a combined true result requires both to independently
+		// hold.
+		if combined && !(repoMatches && facetMatches) {
+			return false
+		}
+		if repoMatches != wantRepo || facetMatches != wantFacet {
+			return false
+		}
+		return true
+	}
+
+	if err := quick.Check(property, &quick.Config{MaxCount: 1000}); err != nil {
+		t.Error(err)
 	}
 }
 

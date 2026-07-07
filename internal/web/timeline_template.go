@@ -53,6 +53,7 @@ const timelineTemplate = `<!DOCTYPE html>
     /* Facet dropdowns */
     .facet-bar { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 1rem; }
     .facet-bar-label { font-size: 0.8rem; font-weight: 700; color: var(--oc-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+    .repo-filter { font-size: 0.8rem; font-weight: 600; padding: 0.25rem 0.5rem; border: 1px solid var(--oc-line); border-radius: 6px; background: #fff; color: var(--oc-ink); max-width: 220px; }
     .facet-controls.facet-dropdowns { display: flex; flex-wrap: wrap; gap: 0.5rem; }
     /* Progressive-enhancement fallback: raw controls before JS builds dropdowns */
     .facet-control { font-size: 0.8rem; padding: 0.25rem 0.6rem; border: 1px solid #ced4da; border-radius: 999px; background: #fff; cursor: pointer; }
@@ -141,6 +142,11 @@ const timelineTemplate = `<!DOCTYPE html>
 
       <div class="facet-bar">
         <span class="facet-bar-label">Filter</span>
+        <select id="repo-filter" class="repo-filter" aria-label="Filter by repository">
+          <option value="">All repositories</option>
+          {{range .RepoOptions}}<option value="{{.}}">{{.}}</option>
+          {{end}}
+        </select>
         <div id="facet-controls" class="facet-controls">
           {{range .FacetControls}}<button type="button" class="facet-control" data-facet="{{.Facet}}" data-value="{{.Value}}" data-state="off">{{.Facet}}: {{.Value}}</button>
           {{end}}

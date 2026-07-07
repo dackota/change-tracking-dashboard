@@ -277,6 +277,187 @@ func TestChangesetsAPI_CombinedIncludeAndExcludeFilter(t *testing.T) {
 	}
 }
 
+// TestChangesetsAPI_RepoFilter_ScopesToOneRepo verifies R26: a ?repo= query
+// param scopes the returned Changesets to that one tracked repository.
+func TestChangesetsAPI_RepoFilter_ScopesToOneRepo(t *testing.T) {
+	t.Parallel()
+
+	st := newTestStore(t)
+	base := time.Now().Add(-2 * time.Hour)
+
+	apps := domain.Change{
+		Repo: "apps-repo", FilePath: "values.yaml", Field: "f",
+		ChangeType: domain.ChangeTypeModified, OldValue: ptr("a"), NewValue: ptr("b"),
+		CommitSha: "commit-apps", Author: "alice", CommittedAt: base,
+	}
+	infra := domain.Change{
+		Repo: "infra-repo", FilePath: "values.yaml", Field: "f",
+		ChangeType: domain.ChangeTypeModified, OldValue: ptr("a"), NewValue: ptr("b"),
+		CommitSha: "commit-infra", Author: "bob", CommittedAt: base.Add(time.Hour),
+	}
+	if err := st.SaveChange(apps); err != nil {
+		t.Fatalf("SaveChange apps: %v", err)
+	}
+	if err := st.SaveChange(infra); err != nil {
+		t.Fatalf("SaveChange infra: %v", err)
+	}
+
+	h := web.NewChangesetsHandler(st)
+	req := httptest.NewRequest(http.MethodGet, "/api/changesets?repo=apps-repo", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+
+	body := decodeChangesetsBody(t, rr)
+	if len(body.Changesets) != 1 {
+		t.Fatalf("Changesets len = %d, want 1 (repo=apps-repo only)", len(body.Changesets))
+	}
+	if body.Changesets[0].CommitSha != "commit-apps" {
+		t.Errorf("CommitSha = %q, want commit-apps", body.Changesets[0].CommitSha)
+	}
+}
+
+// TestChangesetsAPI_RepoFilter_ComposesWithFacetFilterAND verifies R27: the
+// repo filter composes with a tri-state facet filter via AND — a Changeset
+// satisfying only one of the two must not appear.
+func TestChangesetsAPI_RepoFilter_ComposesWithFacetFilterAND(t *testing.T) {
+	t.Parallel()
+
+	st := newTestStore(t)
+	base := time.Now().Add(-3 * time.Hour)
+
+	appsDev := domain.Change{
+		Repo: "apps-repo", FilePath: "values.yaml", Field: "f",
+		ChangeType: domain.ChangeTypeModified, OldValue: ptr("a"), NewValue: ptr("b"),
+		Facets:      map[string]string{"env": "dev"},
+		CommitSha:   "commit-apps-dev",
+		Author:      "alice",
+		CommittedAt: base,
+	}
+	appsProd := domain.Change{
+		Repo: "apps-repo", FilePath: "values.yaml", Field: "f",
+		ChangeType: domain.ChangeTypeModified, OldValue: ptr("a"), NewValue: ptr("b"),
+		Facets:      map[string]string{"env": "prod"},
+		CommitSha:   "commit-apps-prod",
+		Author:      "bob",
+		CommittedAt: base.Add(time.Hour),
+	}
+	infraDev := domain.Change{
+		Repo: "infra-repo", FilePath: "values.yaml", Field: "f",
+		ChangeType: domain.ChangeTypeModified, OldValue: ptr("a"), NewValue: ptr("b"),
+		Facets:      map[string]string{"env": "dev"},
+		CommitSha:   "commit-infra-dev",
+		Author:      "carol",
+		CommittedAt: base.Add(2 * time.Hour),
+	}
+	for _, c := range []domain.Change{appsDev, appsProd, infraDev} {
+		if err := st.SaveChange(c); err != nil {
+			t.Fatalf("SaveChange: %v", err)
+		}
+	}
+
+	h := web.NewChangesetsHandler(st)
+	req := httptest.NewRequest(http.MethodGet, "/api/changesets?repo=apps-repo&env=dev", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+
+	body := decodeChangesetsBody(t, rr)
+	if len(body.Changesets) != 1 {
+		t.Fatalf("Changesets len = %d, want 1 (repo=apps-repo AND env=dev)", len(body.Changesets))
+	}
+	if body.Changesets[0].CommitSha != "commit-apps-dev" {
+		t.Errorf("CommitSha = %q, want commit-apps-dev", body.Changesets[0].CommitSha)
+	}
+}
+
+// TestChangesetsAPI_RepoParamNotTreatedAsFacet verifies that "repo" is a
+// reserved param — even if a stored Change happens to carry a facet
+// literally named "repo", it is never matched as a tri-state facet filter,
+// only as the distinguished repo scope.
+func TestChangesetsAPI_RepoParamNotTreatedAsFacet(t *testing.T) {
+	t.Parallel()
+
+	st := newTestStore(t)
+	base := time.Now().Add(-time.Hour)
+
+	c := domain.Change{
+		Repo: "apps-repo", FilePath: "values.yaml", Field: "f",
+		ChangeType: domain.ChangeTypeModified, OldValue: ptr("a"), NewValue: ptr("b"),
+		Facets:      map[string]string{"repo": "some-facet-value"},
+		CommitSha:   "commit-with-repo-facet",
+		Author:      "alice",
+		CommittedAt: base,
+	}
+	if err := st.SaveChange(c); err != nil {
+		t.Fatalf("SaveChange: %v", err)
+	}
+
+	h := web.NewChangesetsHandler(st)
+	req := httptest.NewRequest(http.MethodGet, "/api/changesets?repo=apps-repo", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+
+	body := decodeChangesetsBody(t, rr)
+	if len(body.Changesets) != 1 {
+		t.Fatalf("Changesets len = %d, want 1 (repo param must scope by Change.Repo, not the \"repo\" facet)", len(body.Changesets))
+	}
+	if body.Changesets[0].CommitSha != "commit-with-repo-facet" {
+		t.Errorf("CommitSha = %q, want commit-with-repo-facet", body.Changesets[0].CommitSha)
+	}
+}
+
+// TestChangesetsAPI_RepoAbsent_MatchesEveryRepo verifies that omitting the
+// repo param is a no-op — Changesets from every repo are returned, matching
+// FilterSpec's empty-scope invariant.
+func TestChangesetsAPI_RepoAbsent_MatchesEveryRepo(t *testing.T) {
+	t.Parallel()
+
+	st := newTestStore(t)
+	base := time.Now().Add(-2 * time.Hour)
+
+	apps := domain.Change{
+		Repo: "apps-repo", FilePath: "values.yaml", Field: "f",
+		ChangeType: domain.ChangeTypeModified, OldValue: ptr("a"), NewValue: ptr("b"),
+		CommitSha: "commit-apps", Author: "alice", CommittedAt: base,
+	}
+	infra := domain.Change{
+		Repo: "infra-repo", FilePath: "values.yaml", Field: "f",
+		ChangeType: domain.ChangeTypeModified, OldValue: ptr("a"), NewValue: ptr("b"),
+		CommitSha: "commit-infra", Author: "bob", CommittedAt: base.Add(time.Hour),
+	}
+	if err := st.SaveChange(apps); err != nil {
+		t.Fatalf("SaveChange apps: %v", err)
+	}
+	if err := st.SaveChange(infra); err != nil {
+		t.Fatalf("SaveChange infra: %v", err)
+	}
+
+	h := web.NewChangesetsHandler(st)
+	req := httptest.NewRequest(http.MethodGet, "/api/changesets", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+
+	body := decodeChangesetsBody(t, rr)
+	if len(body.Changesets) != 2 {
+		t.Fatalf("Changesets len = %d, want 2 (repo absent matches every repo)", len(body.Changesets))
+	}
+}
+
 // TestChangesetsAPI_ReservedParamsAreNotTreatedAsFacets verifies that asOf,
 // cursor, and limit are never interpreted as facet filters — even if a
 // stored Change happens to carry a facet with one of those exact names, the

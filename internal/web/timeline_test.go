@@ -159,6 +159,90 @@ func TestTimelineHandler_FacetControlsHaveNoInlineEventHandlers(t *testing.T) {
 	}
 }
 
+// TestTimelineHandler_RendersOneRepoOptionPerTrackedRepo verifies R26: the
+// repository filter dropdown is populated from store.RepositoryStats() — one
+// <option> per tracked repository, reusing that existing per-repo query
+// rather than a second repo-listing query.
+func TestTimelineHandler_RendersOneRepoOptionPerTrackedRepo(t *testing.T) {
+	t.Parallel()
+
+	st := newTestStore(t)
+	seedChange(t, st, changeSpec{Repo: "apps-repo"})
+	seedChange(t, st, changeSpec{Repo: "infra-repo"})
+
+	h := web.NewTimelineHandler(st, pollstatus.New())
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+
+	body := rr.Body.String()
+	if !strings.Contains(body, `id="repo-filter"`) {
+		t.Fatalf("body missing repo filter dropdown (id=\"repo-filter\"); got:\n%s", body)
+	}
+	for _, wantOption := range []string{
+		`<option value="apps-repo">apps-repo</option>`,
+		`<option value="infra-repo">infra-repo</option>`,
+	} {
+		if !strings.Contains(body, wantOption) {
+			t.Errorf("body missing repo option %q; got:\n%s", wantOption, body)
+		}
+	}
+}
+
+// TestTimelineHandler_EmptyStore_RendersRepoFilterWithOnlyAllOption verifies
+// that an empty store (no Changes, so no tracked repos) still renders the
+// repo filter dropdown with just its "All repositories" default option —
+// never a panic or 500.
+func TestTimelineHandler_EmptyStore_RendersRepoFilterWithOnlyAllOption(t *testing.T) {
+	t.Parallel()
+
+	h := web.NewTimelineHandler(newTestStore(t), pollstatus.New())
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+
+	body := rr.Body.String()
+	if !strings.Contains(body, `id="repo-filter"`) {
+		t.Fatalf("body missing repo filter dropdown (id=\"repo-filter\"); got:\n%s", body)
+	}
+	if strings.Contains(body, `<option value="apps-repo"`) {
+		t.Errorf("expected no repo options for an empty store; got:\n%s", body)
+	}
+}
+
+// TestTimelineHandler_RepoNameIsHTMLEscaped verifies that a repo name
+// containing HTML-significant characters is rendered escaped (via
+// html/template auto-escaping), never string-concatenated raw into the page.
+func TestTimelineHandler_RepoNameIsHTMLEscaped(t *testing.T) {
+	t.Parallel()
+
+	st := newTestStore(t)
+	const maliciousRepo = `"><script>alert(1)</script>`
+	seedChange(t, st, changeSpec{Repo: maliciousRepo})
+
+	h := web.NewTimelineHandler(st, pollstatus.New())
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+
+	body := rr.Body.String()
+	if strings.Contains(body, "<script>alert(1)</script>") {
+		t.Errorf("repo name rendered unescaped — raw <script> tag present in body:\n%s", body)
+	}
+}
+
 // TestStaticHandler_ServesEmbeddedTimelineJS verifies the vendored timeline
 // script is served first-party via go:embed at GET /static/timeline.js with
 // a JavaScript content-type and a non-empty body.
