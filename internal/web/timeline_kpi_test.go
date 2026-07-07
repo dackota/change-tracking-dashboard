@@ -158,12 +158,13 @@ func TestTimelineHandler_LastChangeKPI_ShowsRelativeAndAbsoluteTimestamp(t *test
 
 // TestTimelineHandler_SidebarNav_RegisteredRoutesAreLinksAndCurrentRouteIsActive
 // verifies R1 (superseding this test's earlier "every nav entry is an inert
-// placeholder" contract now that Timeline and Trackers are real routes):
-// Timeline and Trackers render as real <a> links (their routes are
-// registered), Timeline is marked active on GET /, Trackers is a link but
-// not active, and Changes/Repositories — not yet routes — render as plain,
-// non-interactive elements with no href or onclick, so they can never
-// produce a dead link ahead of their own slice landing.
+// placeholder" contract now that Timeline, Repositories, and Trackers are
+// real routes): Timeline, Repositories, and Trackers render as real <a>
+// links (their routes are registered), Timeline is marked active on GET /,
+// Repositories and Trackers are links but not active, and Changes — not yet
+// a route — renders as a plain, non-interactive element with no href or
+// onclick, so it can never produce a dead link ahead of its own slice
+// landing.
 func TestTimelineHandler_SidebarNav_RegisteredRoutesAreLinksAndCurrentRouteIsActive(t *testing.T) {
 	t.Parallel()
 
@@ -186,14 +187,14 @@ func TestTimelineHandler_SidebarNav_RegisteredRoutesAreLinksAndCurrentRouteIsAct
 	if !strings.Contains(body, `<a class="nav-item nav-item-active" data-nav="timeline" href="/" aria-current="page">Timeline</a>`) {
 		t.Errorf("Timeline nav entry not rendered as an active link; got:\n%s", body)
 	}
+	if !strings.Contains(body, `<a class="nav-item" data-nav="repositories" href="/repositories">Repositories</a>`) {
+		t.Errorf("Repositories nav entry not rendered as an (inactive) link; got:\n%s", body)
+	}
 	if !strings.Contains(body, `<a class="nav-item" data-nav="trackers" href="/trackers">Trackers</a>`) {
 		t.Errorf("Trackers nav entry not rendered as an (inactive) link; got:\n%s", body)
 	}
 	if !strings.Contains(body, `<div class="nav-item" data-nav="changes">Changes</div>`) {
 		t.Errorf("Changes nav entry not rendered as an inert placeholder; got:\n%s", body)
-	}
-	if !strings.Contains(body, `<div class="nav-item" data-nav="repositories">Repositories</div>`) {
-		t.Errorf("Repositories nav entry not rendered as an inert placeholder; got:\n%s", body)
 	}
 
 	if strings.Contains(body, `data-nav="changes" aria-current`) ||

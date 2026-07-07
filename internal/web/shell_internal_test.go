@@ -16,6 +16,7 @@ func TestBuildSidebarNav_MarksOnlyTheCurrentRegisteredRouteActive(t *testing.T) 
 	}{
 		{"root path activates timeline", "/", "timeline"},
 		{"trackers path activates trackers", "/trackers", "trackers"},
+		{"repositories path activates repositories", "/repositories", "repositories"},
 		{"unregistered path activates nothing", "/changes", ""},
 	}
 
@@ -38,9 +39,9 @@ func TestBuildSidebarNav_MarksOnlyTheCurrentRegisteredRouteActive(t *testing.T) 
 }
 
 // TestBuildSidebarNav_OnlyRegisteredRoutesCarryAnHref verifies R1: a nav slot
-// with no registered path (Changes, Repositories in this slice) renders with
-// an empty Href — so the template can never emit a dead link for it — while
-// Timeline and Trackers carry their real path.
+// with no registered path (Changes, in this slice) renders with an empty
+// Href — so the template can never emit a dead link for it — while Timeline,
+// Repositories, and Trackers carry their real path.
 func TestBuildSidebarNav_OnlyRegisteredRoutesCarryAnHref(t *testing.T) {
 	t.Parallel()
 
@@ -49,7 +50,7 @@ func TestBuildSidebarNav_OnlyRegisteredRoutesCarryAnHref(t *testing.T) {
 	want := map[string]string{
 		"timeline":     "/",
 		"changes":      "",
-		"repositories": "",
+		"repositories": "/repositories",
 		"trackers":     "/trackers",
 	}
 
