@@ -35,13 +35,12 @@ type navEntry struct {
 	path  string // "" until the route exists
 }
 
-// navRegistry is the fixed v1 sidebar, in display order. Timeline,
-// Repositories, and Trackers have a registered path; Changes remains a
-// reserved slot for its own downstream slice. It is read-only at runtime —
-// buildSidebarNav never mutates it, only copies out of it.
+// navRegistry is the fixed v1 sidebar, in display order. Every slot has a
+// registered path. It is read-only at runtime — buildSidebarNav never
+// mutates it, only copies out of it.
 var navRegistry = []navEntry{
 	{navTimeline, "Timeline", "/"},
-	{navChanges, "Changes", ""},
+	{navChanges, "Changes", "/changes"},
 	{navRepositories, "Repositories", "/repositories"},
 	{navTrackers, "Trackers", "/trackers"},
 }

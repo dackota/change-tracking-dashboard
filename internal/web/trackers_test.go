@@ -113,10 +113,9 @@ func TestTrackersHandler_DegradedConfigRead_RendersEmptyStateNot500(t *testing.T
 }
 
 // TestTrackersHandler_SidebarNav_TrackersActiveOthersUnaffected verifies R1
-// and R6: on GET /trackers, the Trackers nav entry is the active link,
-// Timeline and Repositories are links but not active, and Changes still
-// renders as an inert placeholder — the same shared shell every route
-// builds.
+// and R6: on GET /trackers, the Trackers nav entry is the active link, and
+// Timeline, Changes, and Repositories are all links but not active — the
+// same shared shell every route builds.
 func TestTrackersHandler_SidebarNav_TrackersActiveOthersUnaffected(t *testing.T) {
 	t.Parallel()
 
@@ -139,8 +138,8 @@ func TestTrackersHandler_SidebarNav_TrackersActiveOthersUnaffected(t *testing.T)
 	if !strings.Contains(body, `<a class="nav-item" data-nav="repositories" href="/repositories">Repositories</a>`) {
 		t.Errorf("Repositories nav entry not rendered as an (inactive) link; got:\n%s", body)
 	}
-	if !strings.Contains(body, `<div class="nav-item" data-nav="changes">Changes</div>`) {
-		t.Errorf("Changes nav entry not rendered as an inert placeholder; got:\n%s", body)
+	if !strings.Contains(body, `<a class="nav-item" data-nav="changes" href="/changes">Changes</a>`) {
+		t.Errorf("Changes nav entry not rendered as an (inactive) link; got:\n%s", body)
 	}
 }
 

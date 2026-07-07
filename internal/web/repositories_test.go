@@ -95,9 +95,8 @@ func TestRepositoriesHandler_StoreReadError_RendersEmptyStateNot500(t *testing.T
 
 // TestRepositoriesHandler_SidebarNav_RepositoriesActiveOthersUnaffected
 // verifies R1 and R6: on GET /repositories, the Repositories nav entry is
-// the active link, Timeline and Trackers are links but not active, and
-// Changes still renders as an inert placeholder — the same shared shell
-// every route builds.
+// the active link, and Timeline, Changes, and Trackers are all links but
+// not active — the same shared shell every route builds.
 func TestRepositoriesHandler_SidebarNav_RepositoriesActiveOthersUnaffected(t *testing.T) {
 	t.Parallel()
 
@@ -117,8 +116,8 @@ func TestRepositoriesHandler_SidebarNav_RepositoriesActiveOthersUnaffected(t *te
 	if !strings.Contains(body, `<a class="nav-item" data-nav="trackers" href="/trackers">Trackers</a>`) {
 		t.Errorf("Trackers nav entry not rendered as an (inactive) link; got:\n%s", body)
 	}
-	if !strings.Contains(body, `<div class="nav-item" data-nav="changes">Changes</div>`) {
-		t.Errorf("Changes nav entry not rendered as an inert placeholder; got:\n%s", body)
+	if !strings.Contains(body, `<a class="nav-item" data-nav="changes" href="/changes">Changes</a>`) {
+		t.Errorf("Changes nav entry not rendered as an (inactive) link; got:\n%s", body)
 	}
 }
 
