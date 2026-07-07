@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.5.0...app-v0.6.0) (2026-07-07)
+
+
+### Features
+
+* add OpenTelemetry + RED + structured logging foundation ([#67](https://github.com/dackota/change-tracking-dashboard/issues/67)) ([78db39c](https://github.com/dackota/change-tracking-dashboard/commit/78db39cddcdd8bd36631813189ca2736799b202c))
+
 ## [0.5.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.4.3...app-v0.5.0) (2026-07-07)
 
 
