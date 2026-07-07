@@ -80,9 +80,9 @@ func isGlob(pattern string) bool {
 //     by the backfill window (Tracker.BackfillDays days before now).
 //  3. Persist all resulting Changes and each file's high-water mark.
 func (p *Poller) Poll(t domain.Tracker) error {
-	ex, err := extractor.New(t.ExtractorExpr)
+	ex, err := extractor.Select(t.Engine, t.ExtractorExpr)
 	if err != nil {
-		return fmt.Errorf("poller: compile extractor %q: %w", t.ExtractorExpr, err)
+		return fmt.Errorf("poller: select extractor (engine=%q, expr=%q): %w", t.Engine, t.ExtractorExpr, err)
 	}
 
 	fe, err := facet.NewExtractor(t.FacetPattern)
@@ -126,7 +126,7 @@ func (p *Poller) resolveFilePaths(glob string) ([]string, error) {
 // own HWM, walk its commit history (bounded by the backfill window on first
 // run), diff consecutive snapshots, attach facets from this file's own path,
 // and persist Changes plus the file's new HWM.
-func (p *Poller) pollFile(t domain.Tracker, filePath string, ex *extractor.Extractor, fe *facet.Extractor) error {
+func (p *Poller) pollFile(t domain.Tracker, filePath string, ex extractor.FieldExtractor, fe *facet.Extractor) error {
 	hwm, err := p.st.GetHighWaterMark(t.Repo, filePath)
 	if err != nil {
 		return fmt.Errorf("poller: get HWM for %q/%q: %w", t.Repo, filePath, err)
