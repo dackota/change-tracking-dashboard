@@ -9,12 +9,13 @@
 package web
 
 import (
+	"context"
 	"html/template"
-	"log"
 	"net/http"
 	"time"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/store"
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/telemetry"
 )
 
 // repositoriesTitle and repositoriesSubtitle are the fixed title/subtitle
@@ -87,11 +88,17 @@ func (h *RepositoriesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	setSecurityHeaders(w.Header())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
-	stats, err := h.st.RepositoryStats()
-	if err != nil {
+	logger := telemetry.LoggerFromContext(r.Context())
+
+	var stats []store.RepositoryStats
+	if err := telemetry.WithSpan(r.Context(), tracer, "store.repository_stats", func(context.Context) error {
+		var err error
+		stats, err = h.st.RepositoryStats()
+		return err
+	}); err != nil {
 		// Log the detail server-side; render the shell anyway with an empty
 		// repository list rather than failing the whole page (R7).
-		log.Printf("web: repository stats: %v", err)
+		logger.Error("web: repository stats", "error", err)
 		stats = nil
 	}
 
@@ -103,6 +110,6 @@ func (h *RepositoriesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	if err := h.tmpl.Execute(w, data); err != nil {
 		// The response may already be partly written, so we can't change the
 		// status code here — just record the failure so it's observable.
-		log.Printf("web: render repositories template: %v", err)
+		logger.Error("web: render repositories template", "error", err)
 	}
 }

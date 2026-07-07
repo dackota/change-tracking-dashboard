@@ -21,7 +21,7 @@ func TestExtractFacets(t *testing.T) {
 		wantErrKind string // "none" | "compile"
 	}{
 		{
-			name:    "full convention match extracts all named groups",
+			name:     "full convention match extracts all named groups",
 			filePath: "apps/tenant-zero/dev/us-west-2/Chart.yaml",
 			pattern:  conventionPattern,
 			wantFacets: map[string]string{
@@ -31,22 +31,22 @@ func TestExtractFacets(t *testing.T) {
 			},
 		},
 		{
-			name:    "partial match extracts available groups only",
+			name:     "partial match extracts available groups only",
 			filePath: "apps/tenant-alpha/prod/Chart.yaml",
 			pattern:  conventionPattern,
 			// Does not match convention (only 2 segments before Chart.yaml), so no facets
 			wantFacets: map[string]string{},
 		},
 		{
-			name:    "no match returns empty map not error",
-			filePath: "infra/Chart.yaml",
-			pattern:  conventionPattern,
+			name:       "no match returns empty map not error",
+			filePath:   "infra/Chart.yaml",
+			pattern:    conventionPattern,
 			wantFacets: map[string]string{},
 		},
 		{
-			name:    "empty pattern returns empty map",
-			filePath: "apps/tenant-zero/dev/us-west-2/Chart.yaml",
-			pattern:  "",
+			name:       "empty pattern returns empty map",
+			filePath:   "apps/tenant-zero/dev/us-west-2/Chart.yaml",
+			pattern:    "",
 			wantFacets: map[string]string{},
 		},
 		{
@@ -56,9 +56,9 @@ func TestExtractFacets(t *testing.T) {
 			wantErrKind: "compile",
 		},
 		{
-			name:    "pattern with no named groups returns empty map",
-			filePath: "apps/tenant-zero/dev/us-west-2/Chart.yaml",
-			pattern:  `^apps/`,
+			name:       "pattern with no named groups returns empty map",
+			filePath:   "apps/tenant-zero/dev/us-west-2/Chart.yaml",
+			pattern:    `^apps/`,
 			wantFacets: map[string]string{},
 		},
 	}

@@ -7,8 +7,9 @@
 package web
 
 import (
-	"log"
 	"net/http"
+
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/telemetry"
 )
 
 // HealthzHandler serves GET /healthz: always 200, no dependency checks.
@@ -26,6 +27,6 @@ func (h *HealthzHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write([]byte("ok")); err != nil {
-		log.Printf("web: write healthz response: %v", err)
+		telemetry.LoggerFromContext(r.Context()).Error("web: write healthz response", "error", err)
 	}
 }

@@ -9,12 +9,12 @@ package web
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"path/filepath"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/changeset"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/chartdiff"
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/telemetry"
 )
 
 // ChartDiffEngine computes a Chart diff Outcome for a chart-kind Change.
@@ -93,9 +93,17 @@ func (h *ChartDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// changeset — same http.NotFound call, no distinguishing signal — so a
 	// caller can't tell "unknown commit" apart from "known commit, wrong
 	// path".
-	cs, found, err := h.checker.GetChangeset(repo, commitSha)
+	logger := telemetry.LoggerFromContext(r.Context())
+
+	var cs changeset.Changeset
+	var found bool
+	err := telemetry.WithSpan(r.Context(), tracer, "store.get_changeset", func(context.Context) error {
+		var err error
+		cs, found, err = h.checker.GetChangeset(repo, commitSha)
+		return err
+	})
 	if err != nil {
-		log.Printf("web: check changeset existence for chart diff repo=%q (tenant=%q commit=%q): %v", repo, path, commitSha, err)
+		logger.Error("web: check changeset existence for chart diff", "repo", repo, "tenant", path, "commitSha", commitSha, "error", err)
 		http.Error(w, genericServerErrorMsg, http.StatusInternalServerError)
 		return
 	}
@@ -104,9 +112,14 @@ func (h *ChartDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chartRepo, err := h.resolver.ResolveChartRepo(repo)
+	var chartRepo chartdiff.ChartRepo
+	err = telemetry.WithSpan(r.Context(), tracer, "gitsource.resolve_chart_repo", func(context.Context) error {
+		var err error
+		chartRepo, err = h.resolver.ResolveChartRepo(repo)
+		return err
+	})
 	if err != nil {
-		log.Printf("web: resolve chart repo %q for chart diff (tenant=%q commit=%q): %v", repo, path, commitSha, err)
+		logger.Error("web: resolve chart repo for chart diff", "repo", repo, "tenant", path, "commitSha", commitSha, "error", err)
 		http.Error(w, genericServerErrorMsg, http.StatusInternalServerError)
 		return
 	}
@@ -118,7 +131,7 @@ func (h *ChartDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err := renderChartDiff(w, outcome); err != nil {
-		log.Printf("web: render chart diff repo=%q tenant=%q commit=%q: %v", repo, path, commitSha, err)
+		logger.Error("web: render chart diff", "repo", repo, "tenant", path, "commitSha", commitSha, "error", err)
 	}
 }
 

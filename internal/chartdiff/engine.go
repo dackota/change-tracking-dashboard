@@ -16,14 +16,23 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 
 	lru "github.com/hashicorp/golang-lru/v2"
 	"golang.org/x/sync/singleflight"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/gitsource"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/manifestdiff"
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/telemetry"
 )
+
+// instrumentationName scopes the tracer Engine obtains from the injected (or
+// default global) TracerProvider — used for every downstream git/render call
+// Engine.Diff's call graph makes (gitsource.first_parent,
+// gitsource.materialize_subtree, chartrender.render; criterion 5).
+const instrumentationName = "github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/chartdiff"
 
 // Request identifies one Chart diff to compute: the tenant chart directory
 // (the directory of the chart Change's Chart.yaml, relative to the repo
@@ -55,12 +64,34 @@ type Engine struct {
 	// full rationale.
 	materializeSem chan struct{}
 	group          singleflight.Group
+	// tracer wraps every downstream git/render call Diff's call graph makes
+	// in its own child span (telemetry.WithSpan) — see WithTracerProvider.
+	tracer trace.Tracer
+}
+
+// Option configures optional Engine dependencies (telemetry providers) at
+// construction time. See WithTracerProvider.
+type Option func(*Engine)
+
+// WithTracerProvider wires tp as the source of the tracer Engine.Diff uses
+// for its own span and for every downstream git/render call's child span
+// (gitsource.first_parent, gitsource.materialize_subtree, chartrender.render
+// — criterion 5). Tests inject an sdktrace.TracerProvider backed by an
+// in-memory exporter to assert on emitted spans without a real OTLP backend.
+func WithTracerProvider(tp trace.TracerProvider) Option {
+	return func(e *Engine) {
+		e.tracer = tp.Tracer(instrumentationName)
+	}
 }
 
 // NewEngine constructs an Engine from cfg (resolved and validated via
 // Config.Resolved) and renderer. A nil renderer defaults to the production
-// adapter over chartrender.Render; tests inject a fake.
-func NewEngine(cfg Config, renderer Renderer) (*Engine, error) {
+// adapter over chartrender.Render; tests inject a fake. Without a
+// WithTracerProvider Option, tracing defaults to the ambient global OTel
+// TracerProvider (a safe no-op until cmd/dashboard/main.go calls
+// telemetry.Init and registers the real one) — Diff behaves identically to
+// before this package was instrumented.
+func NewEngine(cfg Config, renderer Renderer, opts ...Option) (*Engine, error) {
 	resolved, err := cfg.Resolved()
 	if err != nil {
 		return nil, err
@@ -75,13 +106,18 @@ func NewEngine(cfg Config, renderer Renderer) (*Engine, error) {
 		renderer = helmRenderer{}
 	}
 
-	return &Engine{
+	e := &Engine{
 		cfg:            resolved,
 		renderer:       renderer,
 		cache:          cache,
 		sem:            make(chan struct{}, resolved.ConcurrencyCap),
 		materializeSem: make(chan struct{}, resolved.MaterializeConcurrencyCap),
-	}, nil
+		tracer:         otel.GetTracerProvider().Tracer(instrumentationName),
+	}
+	for _, opt := range opts {
+		opt(e)
+	}
+	return e, nil
 }
 
 // Diff computes (or returns the cached) Chart diff Outcome for req against
@@ -110,12 +146,18 @@ func NewEngine(cfg Config, renderer Renderer) (*Engine, error) {
 // addressed here; it does not affect the leader, and a follower is still
 // bounded by the leader's own render timeout / bounds checks.
 func (e *Engine) Diff(ctx context.Context, repo ChartRepo, req Request) Outcome {
-	parentSha, err := repo.FirstParent(req.CommitSha)
+	var parentSha string
+	err := telemetry.WithSpan(ctx, e.tracer, "gitsource.first_parent", func(context.Context) error {
+		v, err := repo.FirstParent(req.CommitSha)
+		parentSha = v
+		return err
+	})
 	if err != nil {
 		if errors.Is(err, gitsource.ErrNoParent) {
 			return Outcome{Kind: NoPriorVersion}
 		}
-		log.Printf("chartdiff: resolve first parent repo=%q tenant=%q commit=%q: %v", req.RepoName, req.TenantPath, req.CommitSha, err)
+		telemetry.LoggerFromContext(ctx).Error("chartdiff: resolve first parent",
+			"repo", req.RepoName, "tenant", req.TenantPath, "commit", req.CommitSha, "error", err)
 		return Outcome{Kind: CouldNotRender}
 	}
 

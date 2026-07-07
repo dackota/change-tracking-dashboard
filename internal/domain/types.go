@@ -19,15 +19,15 @@ const (
 type Change struct {
 	Repo        string
 	FilePath    string
-	Field       string            // e.g. "aidp-version"
-	Key         *string           // nil for scalar fields; non-nil for keyed map entries
+	Field       string  // e.g. "aidp-version"
+	Key         *string // nil for scalar fields; non-nil for keyed map entries
 	ChangeType  ChangeType
 	OldValue    *string           // nil when changeType is "added"
 	NewValue    *string           // nil when changeType is "removed"
 	Facets      map[string]string // e.g. {tenant: tenant-zero, env: dev, region: us-west-2}
 	CommitSha   string
 	Author      string
-	CommittedAt time.Time         // feed ordering key; newest first
+	CommittedAt time.Time // feed ordering key; newest first
 }
 
 // TrackedField is the result an Extractor yields for a single watched value.
@@ -54,11 +54,11 @@ func (f TrackedField) IsKeyed() bool {
 // extractor-expression, facet-pattern) configuration entry.
 // The glob fans the tracker across many files.
 type Tracker struct {
-	Repo             string
-	FileGlob         string
-	Field            string // human-readable field name stored on Change
-	ExtractorExpr    string // gojq expression
-	FacetPattern     string // regex with named capture groups for facet extraction
+	Repo          string
+	FileGlob      string
+	Field         string // human-readable field name stored on Change
+	ExtractorExpr string // gojq expression
+	FacetPattern  string // regex with named capture groups for facet extraction
 
 	// PollIntervalSeconds is how often this tracker is polled. Zero is not
 	// valid in production but is accepted for testing/scheduling-logic purposes.

@@ -20,8 +20,9 @@ const maxConfigBytes = 1 << 20 // 1 MiB
 
 // rawConfig is the direct YAML deserialization target.
 type rawConfig struct {
-	Defaults Defaults     `yaml:"defaults"`
-	Trackers []TrackerRaw `yaml:"trackers"`
+	Defaults      Defaults      `yaml:"defaults"`
+	Trackers      []TrackerRaw  `yaml:"trackers"`
+	Observability Observability `yaml:"observability"`
 }
 
 // readConfigFile reads at most maxConfigBytes from path, rejecting anything
@@ -92,6 +93,7 @@ func parseBytes(data []byte) (*Config, error) {
 		Defaults:       raw.Defaults,
 		TrackerConfigs: resolved,
 		Trackers:       domainTrackers,
+		Observability:  raw.Observability,
 	}, nil
 }
 

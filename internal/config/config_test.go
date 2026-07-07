@@ -86,6 +86,43 @@ func TestLoad_MinimalValid_ParsesDefaults(t *testing.T) {
 	}
 }
 
+// TestLoad_ObservabilitySection_ParsesOTLPEndpoint verifies the optional
+// top-level observability.otlp_endpoint config key (Init's config-sourced
+// path, per the observability standard) parses through to
+// Config.Observability.OTLPEndpoint.
+func TestLoad_ObservabilitySection_ParsesOTLPEndpoint(t *testing.T) {
+	yaml := minimalValidYAML + "\nobservability:\n  otlp_endpoint: collector.example.com:4317\n"
+	path := writeTemp(t, yaml)
+
+	w, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load returned unexpected error: %v", err)
+	}
+
+	cfg := w.Current()
+	if cfg.Observability.OTLPEndpoint != "collector.example.com:4317" {
+		t.Errorf("Observability.OTLPEndpoint = %q, want collector.example.com:4317", cfg.Observability.OTLPEndpoint)
+	}
+}
+
+// TestLoad_ObservabilitySection_Absent_DefaultsToEmptyEndpoint verifies that
+// omitting the observability section entirely (every existing ConfigMap,
+// pre-this-slice) parses fine and yields an empty OTLPEndpoint — Init's
+// safe-degrade input.
+func TestLoad_ObservabilitySection_Absent_DefaultsToEmptyEndpoint(t *testing.T) {
+	path := writeTemp(t, minimalValidYAML)
+
+	w, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load returned unexpected error: %v", err)
+	}
+
+	cfg := w.Current()
+	if cfg.Observability.OTLPEndpoint != "" {
+		t.Errorf("Observability.OTLPEndpoint = %q, want empty when section is absent", cfg.Observability.OTLPEndpoint)
+	}
+}
+
 func TestLoad_MinimalValid_FlattensTrackers(t *testing.T) {
 	path := writeTemp(t, minimalValidYAML)
 

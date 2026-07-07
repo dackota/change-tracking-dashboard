@@ -683,9 +683,9 @@ func TestPoller_KeyedEndToEnd(t *testing.T) {
 	st := newTestStore(t)
 
 	tracker := domain.Tracker{
-		Repo:          repoPath,
-		FileGlob:      "Chart.yaml",
-		Field:         "subchart-versions",
+		Repo:     repoPath,
+		FileGlob: "Chart.yaml",
+		Field:    "subchart-versions",
 		// alias-vs-name keying: prefer alias when present, else name.
 		ExtractorExpr: `.dependencies | map({(if .alias then .alias else .name end): .version}) | add`,
 		FacetPattern:  "",

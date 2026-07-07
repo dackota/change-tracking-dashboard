@@ -49,10 +49,10 @@ func TestDiffScalar(t *testing.T) {
 			},
 		},
 		{
-			name:  "value unchanged produces no Change",
-			field: "aidp-version",
-			old:   domain.TrackedField{Value: "1.0.0", Present: true},
-			new:   domain.TrackedField{Value: "1.0.0", Present: true},
+			name:    "value unchanged produces no Change",
+			field:   "aidp-version",
+			old:     domain.TrackedField{Value: "1.0.0", Present: true},
+			new:     domain.TrackedField{Value: "1.0.0", Present: true},
 			wantLen: 0,
 		},
 		{
@@ -271,9 +271,9 @@ func TestDiffKeyed(t *testing.T) {
 			},
 		},
 		{
-			name: "unchanged key produces no Change",
-			old:  domain.TrackedField{Present: true, Map: map[string]string{"gateway": "0.38.0"}},
-			new:  domain.TrackedField{Present: true, Map: map[string]string{"gateway": "0.38.0"}},
+			name:        "unchanged key produces no Change",
+			old:         domain.TrackedField{Present: true, Map: map[string]string{"gateway": "0.38.0"}},
+			new:         domain.TrackedField{Present: true, Map: map[string]string{"gateway": "0.38.0"}},
 			wantChanges: nil,
 		},
 		{

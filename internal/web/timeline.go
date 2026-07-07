@@ -16,8 +16,8 @@
 package web
 
 import (
+	"context"
 	"html/template"
-	"log"
 	"net/http"
 	"sort"
 	"time"
@@ -25,6 +25,7 @@ import (
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/dashboardstats"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/filter"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/store"
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/telemetry"
 )
 
 // TimelineHandler serves the timeline shell page at GET /.
@@ -137,35 +138,45 @@ func (h *TimelineHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w.Header())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
-	opts, err := h.st.FacetOptions()
-	if err != nil {
+	logger := telemetry.LoggerFromContext(r.Context())
+
+	var opts map[string][]string
+	if err := telemetry.WithSpan(r.Context(), tracer, "store.facet_options", func(context.Context) error {
+		var err error
+		opts, err = h.st.FacetOptions()
+		return err
+	}); err != nil {
 		// Log the detail server-side; render the shell anyway with no facet
 		// controls rather than failing the whole page — a rendering
 		// convenience should never take down the timeline itself.
-		log.Printf("web: facet options: %v", err)
+		logger.Error("web: facet options", "error", err)
 		opts = nil
 	}
 
-	repoStats, err := h.st.RepositoryStats()
-	if err != nil {
+	var repoStats []store.RepositoryStats
+	if err := telemetry.WithSpan(r.Context(), tracer, "store.repository_stats", func(context.Context) error {
+		var err error
+		repoStats, err = h.st.RepositoryStats()
+		return err
+	}); err != nil {
 		// Same degrade-to-empty posture as FacetOptions above: an aggregate
 		// read failure shrinks the repo filter to just "All repositories"
 		// rather than failing the whole page.
-		log.Printf("web: repository stats: %v", err)
+		logger.Error("web: repository stats", "error", err)
 		repoStats = nil
 	}
 
 	now := time.Now()
 	data := timelineViewData{
 		shellData:     buildShell(r.URL.Path, timelineTitle, timelineSubtitle, timelineHeaderActions, statusChip(h.pollStatus.Snapshot(), now)),
-		KPI:           buildKPIView(h.loadMetrics(), now),
+		KPI:           buildKPIView(h.loadMetrics(r.Context()), now),
 		FacetControls: buildFacetControls(opts),
 		RepoOptions:   buildRepoOptions(repoStats),
 	}
 	if err := h.tmpl.Execute(w, data); err != nil {
 		// The response may already be partly written, so we can't change the
 		// status code here — just record the failure so it's observable.
-		log.Printf("web: render timeline template: %v", err)
+		logger.Error("web: render timeline template", "error", err)
 	}
 }
 
@@ -196,10 +207,15 @@ const kpiHistoryCap = store.MaxChangesetPageSize
 // and returns the zero Metrics (Changesets=0, Changes=0, Repositories=0,
 // ChartChanges=0, zero LastChangeAt) rather than failing the page — mirroring
 // how the FacetOptions read degrades above (R21).
-func (h *TimelineHandler) loadMetrics() dashboardstats.Metrics {
-	page, err := h.st.QueryChangesets(time.Now(), filter.FilterSpec{}, "", kpiHistoryCap)
+func (h *TimelineHandler) loadMetrics(ctx context.Context) dashboardstats.Metrics {
+	var page store.ChangesetPage
+	err := telemetry.WithSpan(ctx, tracer, "store.query_changesets", func(context.Context) error {
+		var err error
+		page, err = h.st.QueryChangesets(time.Now(), filter.FilterSpec{}, "", kpiHistoryCap)
+		return err
+	})
 	if err != nil {
-		log.Printf("web: kpi changesets: %v", err)
+		telemetry.LoggerFromContext(ctx).Error("web: kpi changesets", "error", err)
 		return dashboardstats.Metrics{}
 	}
 	return dashboardstats.Compute(page.Changesets)

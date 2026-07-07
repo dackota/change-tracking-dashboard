@@ -19,13 +19,16 @@
 package main
 
 import (
+	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/chartdiff"
@@ -37,12 +40,18 @@ import (
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/pollstatus"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/scheduler"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/store"
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/telemetry"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/web"
 	gogithttp "github.com/go-git/go-git/v5/plumbing/transport/http"
+	"go.opentelemetry.io/otel"
 )
 
 // defaultConfigPath is used when CONFIG_PATH is not set.
 const defaultConfigPath = "/etc/dashboard/config.yaml"
+
+// serviceName is the OTel "service.name" resource attribute for every span,
+// metric point, and structured log line this process emits.
+const serviceName = "change-tracking-dashboard"
 
 // HTTP server timeouts guard against slow-client (slow-loris) attacks and
 // connections held open indefinitely.
@@ -52,23 +61,58 @@ const (
 	serverIdleTimeout  = 120 * time.Second
 )
 
+// telemetryInitTimeout/telemetryShutdownTimeout bound the OTLP exporter's
+// setup and final flush respectively — an unreachable/slow collector must
+// never hang startup or shutdown indefinitely.
+const (
+	telemetryInitTimeout     = 5 * time.Second
+	telemetryShutdownTimeout = 5 * time.Second
+	serverShutdownTimeout    = 10 * time.Second
+)
+
 func main() {
 	configPath := envOrDefault("CONFIG_PATH", defaultConfigPath)
 	dbPath := envOrDefault("DB_PATH", "changes.db")
 	listenAddr := envOrDefault("LISTEN_ADDR", ":8080")
 
-	if err := run(configPath, dbPath, listenAddr); err != nil {
-		log.Fatalf("dashboard: %v", err)
+	logger := telemetry.NewLogger(serviceName, os.Stderr)
+	if err := run(configPath, dbPath, listenAddr, logger); err != nil {
+		logger.Error("dashboard: fatal error", "error", err)
+		os.Exit(1)
 	}
 }
 
-func run(configPath, dbPath, listenAddr string) error {
+func run(configPath, dbPath, listenAddr string, logger *slog.Logger) error {
 	// --- Config ---
 	cfgWatcher, err := config.Load(configPath)
 	if err != nil {
 		return fmt.Errorf("load config from %q: %w", configPath, err)
 	}
-	log.Printf("dashboard: loaded config from %s (%d trackers)", configPath, len(cfgWatcher.Current().Trackers))
+	logger.Info("dashboard: loaded config", "path", configPath, "trackers", len(cfgWatcher.Current().Trackers))
+
+	// --- Telemetry ---
+	// The OTLP endpoint is sourced from observability.otlp_endpoint in the
+	// tracker ConfigMap, or the standard OTEL_EXPORTER_OTLP_ENDPOINT env var
+	// (which always takes precedence when set — see ResolveOTLPEndpoint). An
+	// empty value degrades safely: the SDK still initializes (spans/metrics
+	// carry real IDs for log correlation) but exports nothing, since no
+	// backend is assumed to exist.
+	otlpEndpoint := telemetry.ResolveOTLPEndpoint(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"), cfgWatcher.Current().Observability.OTLPEndpoint)
+	initCtx, initCancel := context.WithTimeout(context.Background(), telemetryInitTimeout)
+	sdk, err := telemetry.Init(initCtx, telemetry.Config{ServiceName: serviceName, OTLPEndpoint: otlpEndpoint})
+	initCancel()
+	if err != nil {
+		return fmt.Errorf("init telemetry: %w", err)
+	}
+	otel.SetTracerProvider(sdk.TracerProvider)
+	otel.SetMeterProvider(sdk.MeterProvider)
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), telemetryShutdownTimeout)
+		defer shutdownCancel()
+		if err := sdk.Shutdown(shutdownCtx); err != nil {
+			logger.Error("dashboard: telemetry shutdown failed", "error", err)
+		}
+	}()
 
 	// --- Store ---
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
@@ -95,8 +139,7 @@ func run(configPath, dbPath, listenAddr string) error {
 			return fmt.Errorf("github app provider: %w", err)
 		}
 		tokenProvider = p
-		log.Printf("dashboard: GitHub App auth enabled (appID=%d, installationID=%d)",
-			appCfg.AppID, appCfg.InstallationID)
+		logger.Info("dashboard: GitHub App auth enabled", "appID", appCfg.AppID, "installationID", appCfg.InstallationID)
 	}
 
 	// --- Per-repo gitsource cache ---
@@ -121,7 +164,11 @@ func run(configPath, dbPath, listenAddr string) error {
 		if err != nil {
 			return fmt.Errorf("open git source for %q: %w", t.Repo, err)
 		}
-		p := poller.New(src, st)
+		p := poller.New(src, st,
+			poller.WithTracerProvider(sdk.TracerProvider),
+			poller.WithMeterProvider(sdk.MeterProvider),
+			poller.WithLogger(logger),
+		)
 		return p.Poll(t)
 	}
 
@@ -141,7 +188,7 @@ func run(configPath, dbPath, listenAddr string) error {
 	// defaults (see chartdiff/config.go). Wiring the config file's
 	// timeout/concurrency/cache-size/materialize fields through is deferred
 	// to a later slice per the chart-diff PRD's slice ordering.
-	chartDiffEngine, err := chartdiff.NewEngine(chartdiff.Config{}, nil)
+	chartDiffEngine, err := chartdiff.NewEngine(chartdiff.Config{}, nil, chartdiff.WithTracerProvider(sdk.TracerProvider))
 	if err != nil {
 		return fmt.Errorf("create chart diff engine: %w", err)
 	}
@@ -167,16 +214,51 @@ func run(configPath, dbPath, listenAddr string) error {
 	mux.Handle("GET /changes", changesHandler)
 	mux.Handle("GET /healthz", healthzHandler)
 
+	// RED middleware wraps the whole mux, so every route above — present or
+	// future — emits the generic RED signal and correlated structured logs
+	// without each handler needing its own instrumentation.
+	httpRed, err := telemetry.NewREDMetrics(sdk.MeterProvider, "http")
+	if err != nil {
+		return fmt.Errorf("create HTTP RED metrics: %w", err)
+	}
+	instrumentedMux := telemetry.Middleware(mux, sdk.TracerProvider.Tracer("http"), httpRed, logger)
+
 	srv := &http.Server{
 		Addr:         listenAddr,
-		Handler:      mux,
+		Handler:      instrumentedMux,
 		ReadTimeout:  serverReadTimeout,
 		WriteTimeout: serverWriteTimeout,
 		IdleTimeout:  serverIdleTimeout,
 	}
 
-	log.Printf("dashboard: listening on %s", listenAddr)
-	return srv.ListenAndServe()
+	// Graceful shutdown: on SIGINT/SIGTERM, stop accepting new connections
+	// and let in-flight requests finish (bounded by serverShutdownTimeout)
+	// before the deferred telemetry Shutdown above flushes pending
+	// spans/metrics — an abrupt process kill would otherwise drop them.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	serveErrCh := make(chan error, 1)
+	go func() {
+		logger.Info("dashboard: listening", "addr", listenAddr)
+		serveErrCh <- srv.ListenAndServe()
+	}()
+
+	select {
+	case err := <-serveErrCh:
+		if err != nil && err != http.ErrServerClosed {
+			return fmt.Errorf("serve: %w", err)
+		}
+		return nil
+	case <-ctx.Done():
+		logger.Info("dashboard: shutting down")
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), serverShutdownTimeout)
+		defer shutdownCancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("graceful shutdown: %w", err)
+		}
+		return nil
+	}
 }
 
 // cachedSource bundles a gitsource.Source with the remote URL it was cloned
