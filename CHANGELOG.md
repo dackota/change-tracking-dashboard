@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.2.0...app-v0.3.0) (2026-07-07)
+
+
+### Features
+
+* v0.3 — Changes/Repositories views + poll-health surface ([#51](https://github.com/dackota/change-tracking-dashboard/issues/51)) ([f2985ff](https://github.com/dackota/change-tracking-dashboard/commit/f2985ffe9bac5692751aa3097147cf6fc7e86f36))
+
 ## [0.2.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.1.5...app-v0.2.0) (2026-07-07)
 
 

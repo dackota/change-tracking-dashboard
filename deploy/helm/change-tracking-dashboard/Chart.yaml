@@ -13,4 +13,4 @@ version: 0.1.2
 # changes independently, or it can't split them into separate hunks and
 # conflicts even though the changes don't overlap (reproduced live on PR
 # #44). Keep at least one unchanged line between the two if either moves.
-appVersion: 0.2.0 # x-release-please-version
+appVersion: 0.3.0 # x-release-please-version
