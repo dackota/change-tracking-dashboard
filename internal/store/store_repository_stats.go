@@ -29,12 +29,16 @@ type RepositoryStats struct {
 // check (filepath.Base(filePath) == "Chart.yaml") without importing that
 // package here: file_path is git-style forward-slash-separated throughout
 // this codebase, so "the basename is Chart.yaml" is exactly "the path
-// equals Chart.yaml, or ends with /Chart.yaml".
+// equals Chart.yaml, or ends with /Chart.yaml". That basename comparison is
+// case-sensitive (Go's == on strings), so the SQL predicate uses GLOB, not
+// LIKE: SQLite's LIKE is case-insensitive for ASCII by default and would
+// wrongly count "chart.yaml" or "CHART.YAML" as chart-kind, while GLOB is
+// always case-sensitive and so agrees with ClassifyKind for every input.
 func (s *Store) RepositoryStats() ([]RepositoryStats, error) {
 	const query = `
 SELECT repo,
        COUNT(*) AS change_count,
-       SUM(CASE WHEN file_path = 'Chart.yaml' OR file_path LIKE '%/Chart.yaml' THEN 1 ELSE 0 END) AS chart_changes,
+       SUM(CASE WHEN file_path GLOB 'Chart.yaml' OR file_path GLOB '*/Chart.yaml' THEN 1 ELSE 0 END) AS chart_changes,
        MAX(committed_at) AS last_change_at
 FROM changes
 GROUP BY repo

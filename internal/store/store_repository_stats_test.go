@@ -1,9 +1,11 @@
 package store_test
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/changeset"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/store"
 )
@@ -169,5 +171,77 @@ func TestRepositoryStats_EmptyDatabase_ReturnsEmptyNotNil(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Errorf("RepositoryStats (empty) returned %d rows, want 0", len(got))
+	}
+}
+
+// TestRepositoryStats_ChartChangesMatchesClassifyKindCaseSensitively is a
+// class-level regression test for the chart_changes SQL predicate's
+// case-sensitivity: it must agree with changeset.ClassifyKind's basename
+// check (filepath.Base(filePath) == "Chart.yaml", a case-sensitive, binary
+// comparison) for every file path in the class, not just the single
+// previously-broken example. It seeds one Change per path across exact
+// matches, case variations at the root and nested under a directory, and
+// non-matching basenames, then asserts ChartChanges equals exactly the
+// count ClassifyKind would call chart-kind — closing the whole class the
+// case-insensitive LIKE predicate silently miscounted (e.g. "chart.yaml",
+// "CHART.YAML" wrongly counted as chart changes).
+func TestRepositoryStats_ChartChangesMatchesClassifyKindCaseSensitively(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+
+	paths := []string{
+		"Chart.yaml",           // exact match, root
+		"chart.yaml",           // lowercase, root — NOT chart-kind
+		"CHART.YAML",           // uppercase, root — NOT chart-kind
+		"Chart.YAML",           // mixed case, root — NOT chart-kind
+		"apps/foo/Chart.yaml",  // exact match, nested
+		"apps/foo/chart.yaml",  // lowercase, nested — NOT chart-kind
+		"apps/foo/CHART.YAML",  // uppercase, nested — NOT chart-kind
+		"apps/foo/values.yaml", // unrelated basename — NOT chart-kind
+		"apps/foo/xChart.yaml", // basename isn't exactly Chart.yaml — NOT chart-kind
+		"apps/foo/Chart.yamlx", // basename isn't exactly Chart.yaml — NOT chart-kind
+	}
+
+	const repo = "case-repo"
+	changes := make([]domain.Change, len(paths))
+	wantChartChanges := 0
+	for i, p := range paths {
+		if changeset.ClassifyKind(p) == changeset.KindChart {
+			wantChartChanges++
+		}
+		changes[i] = domain.Change{
+			Repo:        repo,
+			FilePath:    p,
+			Field:       "version",
+			ChangeType:  domain.ChangeTypeModified,
+			OldValue:    ptr("1.0.0"),
+			NewValue:    ptr("1.1.0"),
+			CommitSha:   fmt.Sprintf("case-sha-%d", i),
+			Author:      "case-tester",
+			CommittedAt: repoStatsBase.Add(time.Duration(i) * time.Minute),
+		}
+	}
+
+	seedChanges(t, s, changes)
+
+	got, err := s.RepositoryStats()
+	if err != nil {
+		t.Fatalf("RepositoryStats: %v", err)
+	}
+
+	byRepo := make(map[string]store.RepositoryStats, len(got))
+	for _, rs := range got {
+		byRepo[rs.Repo] = rs
+	}
+
+	stats, ok := byRepo[repo]
+	if !ok {
+		t.Fatalf("missing %s in %#v", repo, got)
+	}
+	if stats.ChangeCount != len(paths) {
+		t.Errorf("%s.ChangeCount = %d, want %d", repo, stats.ChangeCount, len(paths))
+	}
+	if stats.ChartChanges != wantChartChanges {
+		t.Errorf("%s.ChartChanges = %d, want %d (ClassifyKind-derived) for paths %v", repo, stats.ChartChanges, wantChartChanges, paths)
 	}
 }
