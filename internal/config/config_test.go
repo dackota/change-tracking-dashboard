@@ -689,6 +689,121 @@ trackers:
 	}
 }
 
+// --- Behavior 13: per-tracker engine field ---
+
+// TestLoad_EngineJQ_Accepted verifies an explicit `engine: jq` tracker is
+// accepted and flattens with Engine="jq" on the domain.Tracker.
+func TestLoad_EngineJQ_Accepted(t *testing.T) {
+	const yaml = `
+defaults:
+  pollIntervalSeconds: 60
+  backfillDays: 90
+trackers:
+  - repo: /repo
+    engine: jq
+    facetRegex: ''
+    files:
+      - glob: 'Chart.yaml'
+        fields:
+          - name: version
+            expr: '.version'
+`
+	path := writeTemp(t, yaml)
+
+	w, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load should accept engine: jq, got error: %v", err)
+	}
+
+	trackers := w.Current().Trackers
+	if len(trackers) != 1 {
+		t.Fatalf("len(Trackers) = %d, want 1", len(trackers))
+	}
+	if trackers[0].Engine != "jq" {
+		t.Errorf("Tracker.Engine = %q, want %q", trackers[0].Engine, "jq")
+	}
+}
+
+// TestLoad_EngineUnset_DefaultsToEmptyString verifies that omitting `engine`
+// is accepted and flattens with the zero value (Engine=""), which is treated
+// as jq by the poller/extractor selector — no behavior change from today.
+func TestLoad_EngineUnset_DefaultsToEmptyString(t *testing.T) {
+	path := writeTemp(t, minimalValidYAML)
+
+	w, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load returned unexpected error: %v", err)
+	}
+
+	trackers := w.Current().Trackers
+	if len(trackers) != 1 {
+		t.Fatalf("len(Trackers) = %d, want 1", len(trackers))
+	}
+	if trackers[0].Engine != "" {
+		t.Errorf("Tracker.Engine = %q, want empty (unset)", trackers[0].Engine)
+	}
+}
+
+// TestLoad_InvalidEngine_ReturnsError verifies an unrecognized engine value —
+// including "hcl", reserved for a future task — is rejected at config load
+// with a clear, actionable error naming the tracker and the bad value.
+func TestLoad_InvalidEngine_ReturnsError(t *testing.T) {
+	const yaml = `
+defaults:
+  pollIntervalSeconds: 60
+  backfillDays: 90
+trackers:
+  - repo: /repo/bogus-engine
+    engine: hcl
+    facetRegex: ''
+    files:
+      - glob: 'Chart.yaml'
+        fields:
+          - name: version
+            expr: '.version'
+`
+	path := writeTemp(t, yaml)
+
+	_, err := config.Load(path)
+	if err == nil {
+		t.Fatal("Load should have rejected engine: hcl, got nil")
+	}
+	errStr := err.Error()
+	for _, want := range []string{"hcl", "/repo/bogus-engine"} {
+		if !contains(errStr, want) {
+			t.Errorf("error %q does not mention %q", errStr, want)
+		}
+	}
+}
+
+// TestLoad_UnknownEngineValue_ReturnsError double-checks a plain typo (not
+// the reserved "hcl" name) is rejected the same way.
+func TestLoad_UnknownEngineValue_ReturnsError(t *testing.T) {
+	const yaml = `
+defaults:
+  pollIntervalSeconds: 60
+  backfillDays: 90
+trackers:
+  - repo: /repo
+    engine: jqq
+    facetRegex: ''
+    files:
+      - glob: 'Chart.yaml'
+        fields:
+          - name: version
+            expr: '.version'
+`
+	path := writeTemp(t, yaml)
+
+	_, err := config.Load(path)
+	if err == nil {
+		t.Fatal("Load should have rejected engine: jqq, got nil")
+	}
+	if !contains(err.Error(), "jqq") {
+		t.Errorf("error %q does not mention the bad value %q", err.Error(), "jqq")
+	}
+}
+
 // --- helpers ---
 
 func contains(s, substr string) bool {

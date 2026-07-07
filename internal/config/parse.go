@@ -156,9 +156,15 @@ func resolveTracker(idx int, tr TrackerRaw, defaults Defaults) (ResolvedTracker,
 		return ResolvedTracker{}, err
 	}
 
+	// Validate engine: only "" (defaults to jq) and "jq" are legal today.
+	if err := validateEngine(idx, tr.Repo, tr.Engine); err != nil {
+		return ResolvedTracker{}, err
+	}
+
 	return ResolvedTracker{
 		Repo:                tr.Repo,
 		FacetRegex:          tr.FacetRegex,
+		Engine:              tr.Engine,
 		Files:               tr.Files,
 		PollIntervalSeconds: poll,
 		BackfillDays:        backfill,
@@ -196,6 +202,7 @@ func flattenTracker(trackerIdx int, tr TrackerRaw, rt ResolvedTracker) ([]domain
 				Field:               field.Name,
 				ExtractorExpr:       field.Expr,
 				FacetPattern:        tr.FacetRegex,
+				Engine:              rt.Engine,
 				PollIntervalSeconds: rt.PollIntervalSeconds,
 				BackfillDays:        rt.BackfillDays,
 			})
