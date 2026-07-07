@@ -88,7 +88,8 @@
     hasFitWindow: false,
     nextCursor: '',     // R25: the server's opaque cursor for the next page beyond what's loaded, or '' when there is none
     loadingMore: false, // R25: true while a loadMore() fetch is in flight, guarding a double-click from racing two fetches
-    loadMoreError: false // true when the most recent loadMore() fetch failed (non-200/parse/network error) — distinct from a real empty nextCursor, so a transient hiccup never silently removes the Load more row
+    loadMoreError: false, // true when the most recent loadMore() fetch failed (non-200/parse/network error) — distinct from a real empty nextCursor, so a transient hiccup never silently removes the Load more row
+    backdropError: false // true when the most recent loadBackdrop() fetch (fired on initial load and on every filter/repo-scope change via onFilterChanged) failed (non-200/parse/network error) — distinct from a real, successfully-fetched empty page, so a fetch failure is never rendered as "No changes recorded yet"; mirrors loadMoreError's own distinction for the "Load more" affordance
   };
 
   var facetState = {};   // facetState[facet][value] = 'include' | 'exclude'
@@ -669,6 +670,35 @@
     tr.appendChild(td);
     return tr;
   }
+  // buildBackdropErrorRow renders the honest-failure counterpart to
+  // buildEmptyRow's "No changes recorded yet" message: a full-width row (the
+  // same in-table-row convention buildEmptyRow/buildLoadMoreRow both use)
+  // shown whenever state.backdropError is true (a loadBackdrop() fetch
+  // failed — non-200/malformed JSON/network error). Reuses the
+  // feed-load-more-error inline-message class for the danger-colored text —
+  // the same visual treatment loadMore's own failure already uses — and the
+  // feed-clear-btn class for the Retry action (already styled as a small
+  // outlined button; the action here just re-fires loadBackdrop instead of
+  // clearing filters). Also carries feed-empty-row so it inherits that
+  // class's centered layout/padding without a second, duplicate CSS rule.
+  function buildBackdropErrorRow() {
+    var tr = document.createElement('tr');
+    tr.className = 'feed-empty-row feed-backdrop-error-row';
+    var td = document.createElement('td');
+    td.colSpan = FEED_COLUMN_COUNT;
+    var span = document.createElement('span');
+    span.className = 'feed-load-more-error';
+    span.textContent = 'Could not load changes — try again.';
+    td.appendChild(span);
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'feed-clear-btn';
+    btn.textContent = 'Retry';
+    btn.addEventListener('click', loadBackdrop);
+    td.appendChild(btn);
+    tr.appendChild(td);
+    return tr;
+  }
   // maybeAppendLoadMoreRow appends buildLoadMoreRow() whenever
   // state.nextCursor is non-empty, regardless of how many rows (if any) are
   // currently visible. Extracted so the guard lives at a single chokepoint —
@@ -701,8 +731,21 @@
     }
     if (feedEls.count) { feedEls.count.textContent = total === 0 ? '' : visible.length + ' of ' + total; }
 
+    // A backdrop fetch failure (state.backdropError) always gets its own
+    // honest error row, appended before anything else — whether or not there
+    // is prior data to show alongside it. When total === 0 that row IS the
+    // entire feed body (never the misleading "No changes recorded yet"
+    // empty state, which describes a genuinely empty SUCCESSFUL response).
+    // When total > 0 (a filter-reload failure that left previously-loaded
+    // Changesets in place, per renderBackdrop's own care above), the error
+    // row is a banner ahead of those still-showing rows, so stale-but-real
+    // data stays visible alongside the honest failure notice.
+    if (state.backdropError) { feedEls.list.appendChild(buildBackdropErrorRow()); }
+
     if (total === 0) {
-      feedEls.list.appendChild(buildEmptyRow('No changes recorded yet — the poller may still be backfilling.', activeFilterCount() > 0));
+      if (!state.backdropError) {
+        feedEls.list.appendChild(buildEmptyRow('No changes recorded yet — the poller may still be backfilling.', activeFilterCount() > 0));
+      }
       return;
     }
     if (visible.length === 0) {
@@ -889,15 +932,33 @@
   // filtered) page into state.
   var backdropGeneration = 0;
 
-  // renderBackdrop (the fetchChangesetsPage onDone for a FRESH first page)
-  // always replaces state.changesets/state.nextCursor wholesale — pagination
-  // state from a prior filter/window never survives a reload. Contrast with
-  // loadMore's onDone below, which merges rather than replaces.
+  // renderBackdrop (the fetchChangesetsPage onDone for a FRESH first page,
+  // fired by loadBackdrop on both initial load and every filter/repo-scope
+  // reload) replaces state.changesets/state.nextCursor wholesale ONLY on a
+  // SUCCESSFUL fetch — pagination state from a prior filter/window never
+  // survives a reload. Contrast with loadMore's onDone below, which merges
+  // rather than replaces.
+  //
+  // On a FAILED fetch (page.error — non-200/malformed JSON/network error,
+  // the same three failure paths fetchChangesetsPage's own doc comment
+  // describes), state.changesets/state.nextCursor are left completely
+  // untouched instead: a fresh initial load has nothing yet to preserve
+  // (they're still their initial empty/'' values), but a filter-triggered
+  // reload's failure must never silently wipe Changesets that were already
+  // showing — the same care loadMore takes not to overwrite state.nextCursor
+  // on its own failure, applied here to a fresh load's full replacement
+  // instead of an append. state.backdropError drives a distinct, honest
+  // error affordance in the feed (buildBackdropErrorRow, below) instead of
+  // the "No changes recorded yet" empty state, which describes a genuinely
+  // empty SUCCESSFUL response — never a failure.
   function renderBackdrop(page) {
-    state.changesets = page.changesets;
-    state.nextCursor = page.nextCursor;
+    state.backdropError = !!page.error;
+    if (!page.error) {
+      state.changesets = page.changesets;
+      state.nextCursor = page.nextCursor;
+      if (!state.hasFitWindow) { state.hasFitWindow = true; fitWindowToData(); }
+    }
     state.loaded = true;
-    if (!state.hasFitWindow) { state.hasFitWindow = true; fitWindowToData(); }
     render();
     syncWindowInputs();
     renderFeed();
@@ -1123,12 +1184,13 @@
   // (commit-link.property.test.js). `module` is never defined in a browser,
   // so this branch never runs client-side — the app still ships as a single
   // first-party <script src="/static/timeline.js"> (R18); no test-only code
-  // path is reachable in production. loadMore/state are exported for
-  // load-more.behavior.test.js's async-timing regression coverage; every
-  // DOM touch reachable from loadMore (render/syncWindowInputs/renderFeed)
-  // is itself guarded on the relevant element existing, so calling it here
-  // with no DOM present is safe.
+  // path is reachable in production. loadMore/loadBackdrop/state are
+  // exported for load-more.behavior.test.js's and
+  // backdrop-fetch-error.behavior.test.js's async-timing regression
+  // coverage; every DOM touch reachable from either
+  // (render/syncWindowInputs/renderFeed) is itself guarded on the relevant
+  // element existing, so calling them here with no DOM present is safe.
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { commitURL: commitURL, repoShortName: repoShortName, facetChips: facetChips, mergeChangesetPage: mergeChangesetPage, loadMore: loadMore, state: state };
+    module.exports = { commitURL: commitURL, repoShortName: repoShortName, facetChips: facetChips, mergeChangesetPage: mergeChangesetPage, loadMore: loadMore, loadBackdrop: loadBackdrop, state: state };
   }
 })();

@@ -31,6 +31,7 @@ const feedStyles = `
     .feed-load-more-btn { font-size: 0.82rem; font-weight: 600; padding: 0.35rem 1rem; border: 1px solid var(--oc-accent); color: var(--oc-accent); background: #fff; border-radius: 6px; cursor: pointer; }
     .feed-load-more-btn:hover:not(:disabled) { background: var(--oc-accent); color: #fff; }
     .feed-load-more-btn:disabled { opacity: 0.6; cursor: default; }
+    .feed-load-more-error { color: var(--oc-danger); font-size: 0.82rem; font-weight: 600; margin-left: 0.4rem; }
 `
 
 // detailStyles is the CSS for a Changeset's expanded detail panel (per-Change
