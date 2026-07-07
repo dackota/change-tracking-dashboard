@@ -46,6 +46,33 @@ func humanizeRelative(t, now time.Time) string {
 	}
 }
 
+// humanizeUntil renders the time remaining between now and a future instant
+// t as a short, human-readable phrase: "due now", "in 5 minutes", "in 3
+// hours", "in 2 days". A zero t (no scheduled run known) yields "unknown"
+// rather than a nonsensical multi-decade duration. A t at or before now is
+// rendered as "due now" rather than a negative duration.
+func humanizeUntil(t, now time.Time) string {
+	if t.IsZero() {
+		return "unknown"
+	}
+
+	remaining := t.Sub(now)
+	if remaining <= 0 {
+		return "due now"
+	}
+
+	switch {
+	case remaining < time.Minute:
+		return "in under a minute"
+	case remaining < time.Hour:
+		return "in " + pluralUnit(int(remaining/time.Minute), "minute")
+	case remaining < 24*time.Hour:
+		return "in " + pluralUnit(int(remaining/time.Hour), "hour")
+	default:
+		return "in " + pluralUnit(int(remaining/(24*time.Hour)), "day")
+	}
+}
+
 // formatAbsolute renders t as an absolute UTC timestamp, paired with
 // humanizeRelative's phrase so the tile carries both an at-a-glance label and
 // a precise value (R6). A zero t yields "".

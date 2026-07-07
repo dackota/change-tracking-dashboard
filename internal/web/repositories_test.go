@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/pollstatus"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/web"
 )
 
@@ -21,7 +22,7 @@ func TestRepositoriesHandler_PopulatedStore_RendersOneRowPerRepository(t *testin
 	seedChange(t, s, changeSpec{Repo: "apps-repo", FilePath: "Chart.yaml", CommitSha: "apps-2", Age: 0})
 	seedChange(t, s, changeSpec{Repo: "infra-repo", FilePath: "Chart.yaml", CommitSha: "infra-1", Age: 0})
 
-	h := web.NewRepositoriesHandler(s)
+	h := web.NewRepositoriesHandler(s, pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/repositories", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -51,7 +52,7 @@ func TestRepositoriesHandler_EmptyStore_RendersEmptyStateNot500(t *testing.T) {
 	t.Parallel()
 
 	s := newTestStore(t)
-	h := web.NewRepositoriesHandler(s)
+	h := web.NewRepositoriesHandler(s, pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/repositories", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -80,7 +81,7 @@ func TestRepositoriesHandler_StoreReadError_RendersEmptyStateNot500(t *testing.T
 		t.Fatalf("close store: %v", err)
 	}
 
-	h := web.NewRepositoriesHandler(s)
+	h := web.NewRepositoriesHandler(s, pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/repositories", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -101,7 +102,7 @@ func TestRepositoriesHandler_SidebarNav_RepositoriesActiveOthersUnaffected(t *te
 	t.Parallel()
 
 	s := newTestStore(t)
-	h := web.NewRepositoriesHandler(s)
+	h := web.NewRepositoriesHandler(s, pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/repositories", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -128,7 +129,7 @@ func TestRepositoriesHandler_Header_ShowsTitleAndSubtitle(t *testing.T) {
 	t.Parallel()
 
 	s := newTestStore(t)
-	h := web.NewRepositoriesHandler(s)
+	h := web.NewRepositoriesHandler(s, pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/repositories", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -149,7 +150,7 @@ func TestRepositoriesHandler_SecurityHeadersPresent(t *testing.T) {
 	t.Parallel()
 
 	s := newTestStore(t)
-	h := web.NewRepositoriesHandler(s)
+	h := web.NewRepositoriesHandler(s, pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/repositories", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -181,7 +182,7 @@ func TestRepositoriesHandler_RepoValueIsHTMLEscaped(t *testing.T) {
 	s := newTestStore(t)
 	seedChange(t, s, changeSpec{Repo: maliciousRepo, CommitSha: "sha-1"})
 
-	h := web.NewRepositoriesHandler(s)
+	h := web.NewRepositoriesHandler(s, pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/repositories", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)

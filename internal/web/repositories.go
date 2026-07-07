@@ -26,16 +26,18 @@ const (
 
 // RepositoriesHandler serves the Repositories page at GET /repositories (R3).
 type RepositoriesHandler struct {
-	tmpl *template.Template
-	st   *store.Store
+	tmpl       *template.Template
+	st         *store.Store
+	pollStatus PollHealthSnapshot
 }
 
 // NewRepositoriesHandler creates a RepositoriesHandler backed by st and
-// pre-parses the page template. Panics if the embedded template is invalid
-// (a programming error, not a runtime condition).
-func NewRepositoriesHandler(st *store.Store) *RepositoriesHandler {
+// pollStatus (the poll-health registry, used for the shared header's chip,
+// R11), and pre-parses the page template. Panics if the embedded template is
+// invalid (a programming error, not a runtime condition).
+func NewRepositoriesHandler(st *store.Store, pollStatus PollHealthSnapshot) *RepositoriesHandler {
 	tmpl := template.Must(template.New("repositories").Parse(shellTemplates + repositoriesTemplate))
-	return &RepositoriesHandler{tmpl: tmpl, st: st}
+	return &RepositoriesHandler{tmpl: tmpl, st: st, pollStatus: pollStatus}
 }
 
 // repositoriesViewData is the data passed to the Repositories page template:
@@ -93,9 +95,10 @@ func (h *RepositoriesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		stats = nil
 	}
 
+	now := time.Now()
 	data := repositoriesViewData{
-		shellData:    buildShell(r.URL.Path, repositoriesTitle, repositoriesSubtitle, ""),
-		Repositories: buildRepositoriesView(stats, time.Now()),
+		shellData:    buildShell(r.URL.Path, repositoriesTitle, repositoriesSubtitle, "", statusChip(h.pollStatus.Snapshot(), now)),
+		Repositories: buildRepositoriesView(stats, now),
 	}
 	if err := h.tmpl.Execute(w, data); err != nil {
 		// The response may already be partly written, so we can't change the

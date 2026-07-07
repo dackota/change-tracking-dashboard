@@ -14,6 +14,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"time"
 )
 
 // changesTitle and changesSubtitle are the fixed title/subtitle rendered in
@@ -25,15 +26,17 @@ const (
 
 // ChangesHandler serves the Changes page at GET /changes (R2).
 type ChangesHandler struct {
-	tmpl *template.Template
+	tmpl       *template.Template
+	pollStatus PollHealthSnapshot
 }
 
-// NewChangesHandler creates a ChangesHandler and pre-parses the page
-// template. Panics if the embedded template is invalid (a programming
-// error, not a runtime condition).
-func NewChangesHandler() *ChangesHandler {
+// NewChangesHandler creates a ChangesHandler backed by pollStatus (the
+// poll-health registry, used for the shared header's chip, R11), and
+// pre-parses the page template. Panics if the embedded template is invalid
+// (a programming error, not a runtime condition).
+func NewChangesHandler(pollStatus PollHealthSnapshot) *ChangesHandler {
 	tmpl := template.Must(template.New("changes").Parse(shellTemplates + changesTemplate))
-	return &ChangesHandler{tmpl: tmpl}
+	return &ChangesHandler{tmpl: tmpl, pollStatus: pollStatus}
 }
 
 // ServeHTTP satisfies http.Handler.
@@ -41,7 +44,8 @@ func (h *ChangesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w.Header())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
-	data := buildShell(r.URL.Path, changesTitle, changesSubtitle, "")
+	now := time.Now()
+	data := buildShell(r.URL.Path, changesTitle, changesSubtitle, "", statusChip(h.pollStatus.Snapshot(), now))
 	if err := h.tmpl.Execute(w, data); err != nil {
 		// The response may already be partly written, so we can't change the
 		// status code here — just record the failure so it's observable.

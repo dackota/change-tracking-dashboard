@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/pollstatus"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/web"
 )
 
@@ -22,7 +23,7 @@ import (
 func TestChangesHandler_ReturnsHTMLShellWithFeedTable(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewChangesHandler()
+	h := web.NewChangesHandler(pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/changes", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -56,7 +57,7 @@ func TestChangesHandler_ReturnsHTMLShellWithFeedTable(t *testing.T) {
 func TestChangesHandler_SidebarNav_ChangesActiveOthersUnaffected(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewChangesHandler()
+	h := web.NewChangesHandler(pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/changes", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -86,7 +87,7 @@ func TestChangesHandler_SidebarNav_ChangesActiveOthersUnaffected(t *testing.T) {
 func TestChangesHandler_Header_ShowsTitleAndSubtitle(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewChangesHandler()
+	h := web.NewChangesHandler(pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/changes", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -105,7 +106,7 @@ func TestChangesHandler_Header_ShowsTitleAndSubtitle(t *testing.T) {
 func TestChangesHandler_SecurityHeadersPresent(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewChangesHandler()
+	h := web.NewChangesHandler(pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/changes", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -135,7 +136,7 @@ func TestChangesHandler_SecurityHeadersPresent(t *testing.T) {
 func TestChangesHandler_OmitsTimelineTrackButKeepsFeedPanelForDetailMount(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewChangesHandler()
+	h := web.NewChangesHandler(pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/changes", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)

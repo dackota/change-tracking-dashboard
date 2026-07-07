@@ -145,14 +145,15 @@ func run(configPath, dbPath, listenAddr string) error {
 	}
 
 	// --- HTTP ---
-	timelineHandler := web.NewTimelineHandler(st)
+	timelineHandler := web.NewTimelineHandler(st, pollStatus)
 	staticHandler := web.NewStaticHandler()
 	changesetsHandler := web.NewChangesetsHandler(st)
 	changesetDetailHandler := web.NewChangesetDetailHandler(st)
 	chartDiffHandler := web.NewChartDiffHandler(chartDiffEngine, sources, st)
-	trackersHandler := web.NewTrackersHandler(cfgWatcher)
-	repositoriesHandler := web.NewRepositoriesHandler(st)
-	changesHandler := web.NewChangesHandler()
+	trackersHandler := web.NewTrackersHandler(cfgWatcher, pollStatus)
+	repositoriesHandler := web.NewRepositoriesHandler(st, pollStatus)
+	changesHandler := web.NewChangesHandler(pollStatus)
+	healthzHandler := web.NewHealthzHandler()
 	mux := http.NewServeMux()
 	mux.Handle("/", timelineHandler)
 	mux.Handle("/static/", staticHandler)
@@ -162,6 +163,7 @@ func run(configPath, dbPath, listenAddr string) error {
 	mux.Handle("GET /trackers", trackersHandler)
 	mux.Handle("GET /repositories", repositoriesHandler)
 	mux.Handle("GET /changes", changesHandler)
+	mux.Handle("GET /healthz", healthzHandler)
 
 	srv := &http.Server{
 		Addr:         listenAddr,

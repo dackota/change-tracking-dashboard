@@ -2,6 +2,28 @@ package web
 
 import "testing"
 
+// TestBuildShell_CarriesPollHealthIntoHeader verifies R6/R11: buildShell
+// threads the caller-supplied poll-health chip view straight into the
+// shared header, so every page's header (built via buildShell) renders the
+// same aggregate poll-status chip.
+func TestBuildShell_CarriesPollHealthIntoHeader(t *testing.T) {
+	t.Parallel()
+
+	chip := statusChipView{
+		Status:       statusError,
+		LastPollText: "Last poll: 5 minutes ago",
+		NextPollText: "Next poll: in 10 minutes",
+		ErrorCount:   1,
+		ErrorText:    "1 tracker failing",
+	}
+
+	got := buildShell("/", "Title", "Subtitle", "", chip)
+
+	if got.Header.PollHealth != chip {
+		t.Errorf("Header.PollHealth = %+v, want %+v", got.Header.PollHealth, chip)
+	}
+}
+
 // TestBuildSidebarNav_MarksOnlyTheCurrentRegisteredRouteActive verifies R1:
 // buildSidebarNav returns one entry per navRegistry slot, with a registered
 // route's Href set and Active true only when it equals currentPath — never
