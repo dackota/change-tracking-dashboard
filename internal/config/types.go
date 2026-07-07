@@ -38,10 +38,14 @@ type FileConfig struct {
 type TrackerRaw struct {
 	Repo string `yaml:"repo"`
 	// Optional per-tracker overrides; zero means "use default".
-	PollIntervalSecondsOverride int          `yaml:"pollIntervalSeconds"`
-	BackfillDaysOverride        *int         `yaml:"backfillDays"` // pointer to distinguish 0 from absent
-	FacetRegex                  string       `yaml:"facetRegex"`
-	Files                       []FileConfig `yaml:"files"`
+	PollIntervalSecondsOverride int    `yaml:"pollIntervalSeconds"`
+	BackfillDaysOverride        *int   `yaml:"backfillDays"` // pointer to distinguish 0 from absent
+	FacetRegex                  string `yaml:"facetRegex"`
+	// Engine selects the FieldExtractor backend for this tracker. Empty
+	// defaults to jq (today's only implementation). See extractor.ValidateEngine
+	// for the set of legal values.
+	Engine string       `yaml:"engine"`
+	Files  []FileConfig `yaml:"files"`
 }
 
 // ResolvedTracker is a tracker entry with defaults already applied.
@@ -53,6 +57,7 @@ type TrackerRaw struct {
 type ResolvedTracker struct {
 	Repo                string
 	FacetRegex          string
+	Engine              string
 	Files               []FileConfig
 	PollIntervalSeconds int
 	BackfillDays        int

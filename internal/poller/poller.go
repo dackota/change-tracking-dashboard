@@ -214,9 +214,9 @@ func (p *Poller) Poll(t domain.Tracker) error {
 // purely so Poll can wrap the whole cycle in a span/RED signal without
 // mixing that concern into the tracker-polling logic itself.
 func (p *Poller) pollTracker(ctx context.Context, logger *slog.Logger, t domain.Tracker) error {
-	ex, err := extractor.New(t.ExtractorExpr)
+	ex, err := extractor.Select(t.Engine, t.ExtractorExpr)
 	if err != nil {
-		return fmt.Errorf("poller: compile extractor %q: %w", t.ExtractorExpr, err)
+		return fmt.Errorf("poller: select extractor (engine=%q, expr=%q): %w", t.Engine, t.ExtractorExpr, err)
 	}
 
 	fe, err := facet.NewExtractor(t.FacetPattern)
@@ -270,7 +270,7 @@ func (p *Poller) resolveFilePaths(ctx context.Context, glob string) ([]string, e
 // both logged (with repo/path context — safe here, since logs, unlike
 // metric labels, are not cardinality-bounded) and returned unchanged, so
 // existing callers and tests observe identical error behavior to before.
-func (p *Poller) pollFile(ctx context.Context, logger *slog.Logger, t domain.Tracker, filePath string, ex *extractor.Extractor, fe *facet.Extractor) error {
+func (p *Poller) pollFile(ctx context.Context, logger *slog.Logger, t domain.Tracker, filePath string, ex extractor.FieldExtractor, fe *facet.Extractor) error {
 	var hwm string
 	err := telemetry.WithSpan(ctx, p.tracer, "store.get_high_water_mark", func(context.Context) error {
 		v, err := p.st.GetHighWaterMark(t.Repo, filePath)

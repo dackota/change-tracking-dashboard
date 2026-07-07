@@ -770,6 +770,79 @@ func TestPoller_KeyedEndToEnd(t *testing.T) {
 	}
 }
 
+// --- Engine selector tests ---
+
+// TestPoller_EngineJQ_BehavesIdenticallyToUnset verifies that an explicit
+// Engine: "jq" tracker produces the exact same Changes as an unset Engine —
+// the FieldExtractor seam must not change today's default behavior.
+func TestPoller_EngineJQ_BehavesIdenticallyToUnset(t *testing.T) {
+	t.Parallel()
+
+	repoPath, _, _ := buildFixtureRepo(t)
+
+	src, err := gitsource.Open(repoPath)
+	if err != nil {
+		t.Fatalf("gitsource.Open: %v", err)
+	}
+	st := newTestStore(t)
+
+	tracker := domain.Tracker{
+		Repo:          repoPath,
+		FileGlob:      "apps/tenant-zero/dev/us-west-2/Chart.yaml",
+		Field:         "aidp-version",
+		ExtractorExpr: ".version",
+		Engine:        "jq",
+		FacetPattern:  `^apps/(?P<tenant>[^/]+)/(?P<env>[^/]+)/(?P<region>[^/]+)/`,
+		BackfillDays:  3650,
+	}
+
+	p := poller.New(src, st)
+	if err := p.Poll(tracker); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+
+	feed, err := st.QueryFeed(100)
+	if err != nil {
+		t.Fatalf("QueryFeed: %v", err)
+	}
+	if len(feed) != 1 {
+		t.Fatalf("QueryFeed after poll: got %d changes, want 1", len(feed))
+	}
+	if feed[0].OldValue == nil || *feed[0].OldValue != "1.0.0" || feed[0].NewValue == nil || *feed[0].NewValue != "1.1.0" {
+		t.Errorf("change = %v -> %v, want 1.0.0 -> 1.1.0", feed[0].OldValue, feed[0].NewValue)
+	}
+}
+
+// TestPoller_UnrecognizedEngine_ReturnsError verifies Poll rejects a tracker
+// carrying an unrecognized Engine value rather than silently defaulting or
+// panicking. Config load is the primary guard, but the poller must not trust
+// a Tracker value blindly — defense in depth through the same seam.
+func TestPoller_UnrecognizedEngine_ReturnsError(t *testing.T) {
+	t.Parallel()
+
+	repoPath, _, _ := buildFixtureRepo(t)
+
+	src, err := gitsource.Open(repoPath)
+	if err != nil {
+		t.Fatalf("gitsource.Open: %v", err)
+	}
+	st := newTestStore(t)
+
+	tracker := domain.Tracker{
+		Repo:          repoPath,
+		FileGlob:      "apps/tenant-zero/dev/us-west-2/Chart.yaml",
+		Field:         "aidp-version",
+		ExtractorExpr: ".version",
+		Engine:        "hcl",
+		BackfillDays:  3650,
+	}
+
+	p := poller.New(src, st)
+	if err := p.Poll(tracker); err == nil {
+		t.Fatal("Poll should have returned an error for an unrecognized engine, got nil")
+	}
+}
+
 // --- Glob fan-out tests ---
 
 // buildGlobFanOutRepo creates a fixture repo with two files matching the glob

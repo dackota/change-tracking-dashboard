@@ -60,6 +60,11 @@ type Tracker struct {
 	ExtractorExpr string // gojq expression
 	FacetPattern  string // regex with named capture groups for facet extraction
 
+	// Engine selects which FieldExtractor implementation evaluates
+	// ExtractorExpr. Empty defaults to the jq engine (today's only
+	// implementation, unchanged behavior). See extractor.Select.
+	Engine string
+
 	// PollIntervalSeconds is how often this tracker is polled. Zero is not
 	// valid in production but is accepted for testing/scheduling-logic purposes.
 	PollIntervalSeconds int

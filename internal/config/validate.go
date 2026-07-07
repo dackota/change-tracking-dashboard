@@ -36,3 +36,14 @@ func validateFacetRegex(trackerIdx int, repo, pattern string) error {
 	}
 	return nil
 }
+
+// validateEngine checks engine via extractor.ValidateEngine and wraps any
+// error with a message identifying the tracker, so an unrecognized value
+// (e.g. a typo, or "hcl" before that engine exists) fails fast at config load
+// with an actionable error.
+func validateEngine(trackerIdx int, repo, engine string) error {
+	if err := extractor.ValidateEngine(engine); err != nil {
+		return fmt.Errorf("config: tracker[%d] (repo=%q): %w", trackerIdx, repo, err)
+	}
+	return nil
+}
