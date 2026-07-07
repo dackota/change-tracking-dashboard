@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/pollstatus"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/web"
 )
 
@@ -23,7 +24,7 @@ import (
 // markup (and its single inline <style>) a browser receives.
 func servedTimelinePage(t *testing.T) string {
 	t.Helper()
-	h := web.NewTimelineHandler(newTestStore(t))
+	h := web.NewTimelineHandler(newTestStore(t), pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)

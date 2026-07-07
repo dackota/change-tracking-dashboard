@@ -2,14 +2,19 @@
 // sidebar nav and the page header — every route's page handler builds its
 // view data from (R6), so nav and header rendering never drift between
 // routes. buildShell is the single entry point: it takes the current
-// request path plus a page's title/subtitle/header-actions and returns the
-// shellData every page's template embeds.
+// request path, a page's title/subtitle/header-actions, and the caller's
+// already-computed poll-health chip view (R11), and returns the shellData
+// every page's template embeds.
 //
 // R1: a sidebar nav slot is a real, navigable link only once its route is
 // registered (has a non-empty path in navRegistry); an unregistered slot
 // renders inert — no href, no click handler — so it can never produce a
 // dead link ahead of the slice that adds its route. The slot whose
 // registered path equals the current request path is marked Active.
+//
+// R11: every page's header (built via buildShell) renders the same
+// aggregate poll-status chip, computed by statusChip (pollhealth.go) from
+// the live pollstatus snapshot the calling handler holds a reference to.
 package web
 
 import "html/template"
@@ -57,15 +62,17 @@ type sidebarNavItem struct {
 }
 
 // headerView is the page header rendered above every route's body (R6): a
-// title, a short descriptive subtitle, and any page-specific header actions
-// (e.g. the timeline's Reset zoom button) as pre-rendered, trusted markup.
+// title, a short descriptive subtitle, any page-specific header actions
+// (e.g. the timeline's Reset zoom button) as pre-rendered, trusted markup,
+// and the aggregate poll-status chip (R11) shared by every page's header.
 // Actions is always a compile-time constant supplied by the calling
 // handler — never built from request or stored data — so bypassing
 // html/template's usual auto-escaping here does not open an injection path.
 type headerView struct {
-	Title    string
-	Subtitle string
-	Actions  template.HTML
+	Title      string
+	Subtitle   string
+	Actions    template.HTML
+	PollHealth statusChipView
 }
 
 // shellData is the sidebar+header chrome every page handler's view data
@@ -77,11 +84,14 @@ type shellData struct {
 
 // buildShell assembles the shared shell (sidebar nav + header) for a
 // request to currentPath. Every page handler calls this to build its own
-// view data so nav and header stay consistent across routes (R6).
-func buildShell(currentPath, title, subtitle string, actions template.HTML) shellData {
+// view data so nav and header stay consistent across routes (R6). pollHealth
+// is the caller's already-computed aggregate poll-status chip (R11) — built
+// by statusChip from the live pollstatus snapshot — so buildShell itself
+// stays a pure function with no I/O.
+func buildShell(currentPath, title, subtitle string, actions template.HTML, pollHealth statusChipView) shellData {
 	return shellData{
 		SidebarNav: buildSidebarNav(currentPath),
-		Header:     headerView{Title: title, Subtitle: subtitle, Actions: actions},
+		Header:     headerView{Title: title, Subtitle: subtitle, Actions: actions, PollHealth: pollHealth},
 	}
 }
 

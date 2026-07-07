@@ -1,12 +1,16 @@
 package web_test
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/pollstatus"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/web"
 )
 
@@ -16,7 +20,7 @@ import (
 func TestTimelineHandler_ReturnsHTMLShell(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewTimelineHandler(newTestStore(t))
+	h := web.NewTimelineHandler(newTestStore(t), pollstatus.New())
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
@@ -60,7 +64,7 @@ func TestTimelineHandler_RendersOneControlPerFacetValue(t *testing.T) {
 	seedChangeWithFacets(t, st, "commit-a", map[string]string{"env": "dev", "tier": "sbx"})
 	seedChangeWithFacets(t, st, "commit-b", map[string]string{"env": "prod"})
 
-	h := web.NewTimelineHandler(st)
+	h := web.NewTimelineHandler(st, pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -89,7 +93,7 @@ func TestTimelineHandler_RendersOneControlPerFacetValue(t *testing.T) {
 func TestTimelineHandler_EmptyStore_RendersNoFacetControlsWithoutError(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewTimelineHandler(newTestStore(t))
+	h := web.NewTimelineHandler(newTestStore(t), pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -112,7 +116,7 @@ func TestTimelineHandler_FacetValueIsHTMLEscaped(t *testing.T) {
 	const maliciousValue = `"><script>alert(1)</script>`
 	seedChangeWithFacets(t, st, "commit-xss", map[string]string{"env": maliciousValue})
 
-	h := web.NewTimelineHandler(st)
+	h := web.NewTimelineHandler(st, pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -138,7 +142,7 @@ func TestTimelineHandler_FacetControlsHaveNoInlineEventHandlers(t *testing.T) {
 	st := newTestStore(t)
 	seedChangeWithFacets(t, st, "commit-a", map[string]string{"env": "dev"})
 
-	h := web.NewTimelineHandler(st)
+	h := web.NewTimelineHandler(st, pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -249,7 +253,7 @@ func TestTimelineJS_GuardsAgainstStaleClickCallbacks(t *testing.T) {
 func TestTimelineHandler_CSPPermitsOnlySelfScript(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewTimelineHandler(newTestStore(t))
+	h := web.NewTimelineHandler(newTestStore(t), pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -321,7 +325,7 @@ func TestStaticHandler_SecurityHeaders(t *testing.T) {
 func TestTimelineHandler_RootPathOnly(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewTimelineHandler(newTestStore(t))
+	h := web.NewTimelineHandler(newTestStore(t), pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/?anything=ignored", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -331,6 +335,31 @@ func TestTimelineHandler_RootPathOnly(t *testing.T) {
 	}
 	if rr.Body.Len() == 0 {
 		t.Error("empty body — handler panicked")
+	}
+}
+
+// TestTimelineHandler_HeaderPollChip_RendersAcrossEveryPage verifies R11/R6:
+// the Timeline page's header (the same shared shell every route builds)
+// renders the aggregate poll-status chip too — not just the Trackers page —
+// reflecting the injected poll-status registry's current state.
+func TestTimelineHandler_HeaderPollChip_RendersAcrossEveryPage(t *testing.T) {
+	t.Parallel()
+
+	reg := pollstatus.New()
+	tr := domain.Tracker{Repo: "repo-a", FileGlob: "Chart.yaml", Field: "version", PollIntervalSeconds: 60}
+	reg.Record(tr, time.Now(), errors.New("network unreachable"))
+
+	h := web.NewTimelineHandler(newTestStore(t), reg)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	body := rr.Body.String()
+	if !strings.Contains(body, `data-poll-status="error"`) {
+		t.Errorf("Timeline header missing error-state poll chip; got:\n%s", body)
+	}
+	if !strings.Contains(body, "1 tracker failing") {
+		t.Errorf("Timeline header chip missing error summary text; got:\n%s", body)
 	}
 }
 

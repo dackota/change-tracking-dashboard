@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/pollstatus"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/web"
 )
 
@@ -25,7 +26,7 @@ func TestTimelineHandler_KPIStoreError_RendersZeroedMetrics(t *testing.T) {
 		t.Fatalf("close store: %v", err)
 	}
 
-	h := web.NewTimelineHandler(st)
+	h := web.NewTimelineHandler(st, pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -63,7 +64,7 @@ func TestTimelineHandler_KPIStoreError_RendersZeroedMetrics(t *testing.T) {
 func TestTimelineHandler_EmptyStore_KPITilesZeroedWithSensibleLastChange(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewTimelineHandler(newTestStore(t))
+	h := web.NewTimelineHandler(newTestStore(t), pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -104,7 +105,7 @@ func TestTimelineHandler_KPITiles_ReflectSeededChangesetMetrics(t *testing.T) {
 	// Commit 2 in repo-b: one Change (Chart.yaml).
 	seedChange(t, st, changeSpec{Repo: "repo-b", FilePath: "Chart.yaml", CommitSha: "c2"})
 
-	h := web.NewTimelineHandler(st)
+	h := web.NewTimelineHandler(st, pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -137,7 +138,7 @@ func TestTimelineHandler_LastChangeKPI_ShowsRelativeAndAbsoluteTimestamp(t *test
 	seedChange(t, st, changeSpec{Repo: "repo-a", FilePath: "values.yaml", CommitSha: "recent", Age: recentAge})
 	seedChange(t, st, changeSpec{Repo: "repo-a", FilePath: "values.yaml", CommitSha: "older", Age: 30 * 24 * time.Hour})
 
-	h := web.NewTimelineHandler(st)
+	h := web.NewTimelineHandler(st, pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -167,7 +168,7 @@ func TestTimelineHandler_LastChangeKPI_ShowsRelativeAndAbsoluteTimestamp(t *test
 func TestTimelineHandler_SidebarNav_RegisteredRoutesAreLinksAndCurrentRouteIsActive(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewTimelineHandler(newTestStore(t))
+	h := web.NewTimelineHandler(newTestStore(t), pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -209,7 +210,7 @@ func TestTimelineHandler_SidebarNav_RegisteredRoutesAreLinksAndCurrentRouteIsAct
 func TestTimelineHandler_Header_ShowsTitleSubtitleAndResetZoomControl(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewTimelineHandler(newTestStore(t))
+	h := web.NewTimelineHandler(newTestStore(t), pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -246,7 +247,7 @@ func TestTimelineHandler_Header_ShowsTitleSubtitleAndResetZoomControl(t *testing
 func TestTimelineHandler_FeedContainer_IsTableSkeletonPreservingDataHooks(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewTimelineHandler(newTestStore(t))
+	h := web.NewTimelineHandler(newTestStore(t), pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -310,7 +311,7 @@ func TestTimelineHandler_ValueChangesTile_IsDistinctFromChartChangesTile(t *test
 	seedChange(t, st, changeSpec{Repo: "repo-a", FilePath: "values.yaml", CommitSha: "c1"})
 	seedChange(t, st, changeSpec{Repo: "repo-b", FilePath: "Chart.yaml", CommitSha: "c2"})
 
-	h := web.NewTimelineHandler(st)
+	h := web.NewTimelineHandler(st, pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -346,7 +347,7 @@ func TestTimelineHandler_ValueChangesTile_IsDistinctFromChartChangesTile(t *test
 func TestTimelineHandler_KPITiles_EachExposeADefinitionInCanonicalTerms(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewTimelineHandler(newTestStore(t))
+	h := web.NewTimelineHandler(newTestStore(t), pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
