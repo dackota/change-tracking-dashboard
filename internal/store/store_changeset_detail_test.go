@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
+	"github.com/dackota/change-tracking-dashboard/internal/domain"
 )
 
 // TestGetChangeset_ReturnsAllChangesForCommit verifies that GetChangeset

@@ -8,7 +8,7 @@
 // file; a bad reload keeps the last-good config and logs a clear error.
 package config
 
-import "github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
+import "github.com/dackota/change-tracking-dashboard/internal/domain"
 
 // Defaults holds the global defaults from the ConfigMap that individual
 // trackers may override.

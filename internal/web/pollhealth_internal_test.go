@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/pollstatus"
+	"github.com/dackota/change-tracking-dashboard/internal/pollstatus"
 )
 
 // TestStatusChip_NoTrackersEverPolled_ReturnsUnknownStatus verifies R11's

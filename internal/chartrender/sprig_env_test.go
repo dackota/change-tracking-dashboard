@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/chartrender"
+	"github.com/dackota/change-tracking-dashboard/internal/chartrender"
 )
 
 // TestRender_Sprig_EnvAndExpandenvNeverLeakHostSecret proves the PRD's

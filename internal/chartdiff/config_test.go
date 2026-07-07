@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/chartdiff"
+	"github.com/dackota/change-tracking-dashboard/internal/chartdiff"
 )
 
 // TestConfig_Resolved_AppliesDefaultsWhenAllFieldsUnset proves acceptance

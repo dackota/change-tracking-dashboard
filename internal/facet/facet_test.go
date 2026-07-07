@@ -3,7 +3,7 @@ package facet_test
 import (
 	"testing"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/facet"
+	"github.com/dackota/change-tracking-dashboard/internal/facet"
 )
 
 // conventionPattern mirrors the standard directory convention described in CONTEXT.md:

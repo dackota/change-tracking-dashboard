@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/githubapp"
+	"github.com/dackota/change-tracking-dashboard/internal/githubapp"
 )
 
 // --- Config behavior: disabled when no env vars are set ---

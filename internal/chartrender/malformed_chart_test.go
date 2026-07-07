@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/chartrender"
+	"github.com/dackota/change-tracking-dashboard/internal/chartrender"
 )
 
 // TestRender_MalformedChart_ClassifiesFailure proves acceptance criterion 2:

@@ -15,7 +15,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/telemetry"
+	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
 )
 
 // changesTitle and changesSubtitle are the fixed title/subtitle rendered in

@@ -3,7 +3,7 @@ package changeset_test
 import (
 	"testing"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/changeset"
+	"github.com/dackota/change-tracking-dashboard/internal/changeset"
 )
 
 func TestClassifyKind(t *testing.T) {

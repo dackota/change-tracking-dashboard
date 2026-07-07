@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
+	"github.com/dackota/change-tracking-dashboard/internal/domain"
 )
 
 // TrackerStatus is a point-in-time, immutable snapshot of one tracker's poll

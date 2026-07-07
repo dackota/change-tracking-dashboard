@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/changeset"
+	"github.com/dackota/change-tracking-dashboard/internal/changeset"
 )
 
 // gitSuffixPattern matches a trailing ".git" suffix together with any

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/manifestdiff"
+	"github.com/dackota/change-tracking-dashboard/internal/manifestdiff"
 )
 
 // Conservative defaults applied by Config.Resolved when a field is left

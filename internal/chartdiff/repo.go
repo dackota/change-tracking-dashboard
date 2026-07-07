@@ -1,6 +1,6 @@
 package chartdiff
 
-import "github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/gitsource"
+import "github.com/dackota/change-tracking-dashboard/internal/gitsource"
 
 // ChartRepo is the git-access seam Engine.Diff depends on: resolving a
 // commit's first parent, and materializing a tenant chart subtree (bounded)

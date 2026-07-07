@@ -1,6 +1,6 @@
 package extractor
 
-import "github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
+import "github.com/dackota/change-tracking-dashboard/internal/domain"
 
 // FieldExtractor is the seam the poller depends on to pull a TrackedField out
 // of raw file content. Extract must treat "no match" (including a path/key

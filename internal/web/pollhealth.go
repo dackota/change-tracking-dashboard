@@ -12,7 +12,7 @@ package web
 import (
 	"time"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/pollstatus"
+	"github.com/dackota/change-tracking-dashboard/internal/pollstatus"
 )
 
 // Poll-health status values, shared by statusChipView.Status and (via the

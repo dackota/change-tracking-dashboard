@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/githubapp"
+	"github.com/dackota/change-tracking-dashboard/internal/githubapp"
 )
 
 // generateTestKey creates a fresh RSA-2048 key for test use.

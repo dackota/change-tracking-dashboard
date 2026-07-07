@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
+	"github.com/dackota/change-tracking-dashboard/internal/domain"
 )
 
 // facetKeyPattern constrains facet key names to a safe identifier charset.

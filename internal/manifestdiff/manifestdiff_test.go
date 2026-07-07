@@ -6,7 +6,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/manifestdiff"
+	"github.com/dackota/change-tracking-dashboard/internal/manifestdiff"
 )
 
 // assertEveryLineIsPrefixed fails the test if any non-empty physical line in

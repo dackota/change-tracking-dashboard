@@ -18,7 +18,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/web"
+	"github.com/dackota/change-tracking-dashboard/internal/web"
 )
 
 // servedTimelineJS fetches the exact bytes served at /static/timeline.js.

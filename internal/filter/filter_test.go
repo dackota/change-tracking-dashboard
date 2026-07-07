@@ -7,7 +7,7 @@ import (
 	"testing"
 	"testing/quick"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/filter"
+	"github.com/dackota/change-tracking-dashboard/internal/filter"
 )
 
 // TestParse_EmptyParams_MatchesEverything verifies that parsing an empty

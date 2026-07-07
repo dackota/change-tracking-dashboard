@@ -23,16 +23,16 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/gitsource"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/manifestdiff"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/telemetry"
+	"github.com/dackota/change-tracking-dashboard/internal/gitsource"
+	"github.com/dackota/change-tracking-dashboard/internal/manifestdiff"
+	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
 )
 
 // instrumentationName scopes the tracer Engine obtains from the injected (or
 // default global) TracerProvider — used for every downstream git/render call
 // Engine.Diff's call graph makes (gitsource.first_parent,
 // gitsource.materialize_subtree, chartrender.render; criterion 5).
-const instrumentationName = "github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/chartdiff"
+const instrumentationName = "github.com/dackota/change-tracking-dashboard/internal/chartdiff"
 
 // Request identifies one Chart diff to compute: the tenant chart directory
 // (the directory of the chart Change's Chart.yaml, relative to the repo
