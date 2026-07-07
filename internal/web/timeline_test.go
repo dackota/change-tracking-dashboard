@@ -86,6 +86,52 @@ func TestTimelineHandler_RendersOneControlPerFacetValue(t *testing.T) {
 	}
 }
 
+// TestTimelineHandler_ReservedFacetNameNeverRendersAsControl is a table test
+// over the full reserved-name set {repo, asOf, cursor, limit}: none of them
+// may ever render as a tri-state facet control, even when a stored Change
+// carries a facet keyed with exactly that reserved name. Rendering one would
+// let an admin-configured facet named "repo" (etc.) collide with the
+// dedicated repo-scope dropdown/reserved query param — the repo-param
+// facet-shadowing defect this test guards against. A co-seeded non-reserved
+// facet ("region") must still render, proving the exclusion is narrowly
+// scoped to the reserved set only.
+func TestTimelineHandler_ReservedFacetNameNeverRendersAsControl(t *testing.T) {
+	t.Parallel()
+
+	reservedNames := []string{"repo", "asOf", "cursor", "limit"}
+
+	st := newTestStore(t)
+	for i, name := range reservedNames {
+		seedChangeWithFacets(t, st, fmt.Sprintf("commit-reserved-%d", i), map[string]string{
+			name:     "hijack-value",
+			"region": "us-west-2",
+		})
+	}
+
+	h := web.NewTimelineHandler(st, pollstatus.New())
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+
+	body := rr.Body.String()
+	for _, name := range reservedNames {
+		t.Run(name, func(t *testing.T) {
+			wantAttr := fmt.Sprintf(`data-facet="%s"`, name)
+			if strings.Contains(body, wantAttr) {
+				t.Errorf("body rendered a control for reserved facet name %q (attr %q present), want excluded", name, wantAttr)
+			}
+		})
+	}
+
+	if !strings.Contains(body, `data-facet="region" data-value="us-west-2"`) {
+		t.Errorf("body missing control for non-reserved facet region=us-west-2 (exclusion must not affect non-reserved facets); got:\n%s", body)
+	}
+}
+
 // TestTimelineHandler_EmptyStore_RendersNoFacetControlsWithoutError verifies
 // that an empty store (no Changes, so no known facets) still renders the
 // shell successfully with no facet controls — an edge case that must not
