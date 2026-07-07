@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.3.0...app-v0.4.0) (2026-07-07)
+
+
+### Features
+
+* feed pagination ([#55](https://github.com/dackota/change-tracking-dashboard/issues/55)) ([62072f2](https://github.com/dackota/change-tracking-dashboard/commit/62072f2f4d0886b41355140b517dafeb3c1b1db5))
+* repository filter scoping the changeset feed ([#54](https://github.com/dackota/change-tracking-dashboard/issues/54)) ([d38f655](https://github.com/dackota/change-tracking-dashboard/commit/d38f65572b26c29798f762903e9109c8e65c5b50))
+* responsive layout breakpoints across the shared shell ([#53](https://github.com/dackota/change-tracking-dashboard/issues/53)) ([0b0598d](https://github.com/dackota/change-tracking-dashboard/commit/0b0598d1a601b43606184961f539c368ae7a6b4b))
+
 ## [0.3.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.2.0...app-v0.3.0) (2026-07-07)
 
 
