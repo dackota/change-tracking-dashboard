@@ -55,7 +55,7 @@ const timelineTemplate = `<!DOCTYPE html>
     .page-header .btn { font-size: 0.8rem; background: var(--oc-panel); border: 1px solid var(--oc-line); border-radius: 8px; padding: 0.4rem 0.75rem; cursor: pointer; color: var(--oc-ink); }
 
     /* KPI tiles */
-    .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.9rem; margin-bottom: 1.3rem; }
+    .kpis { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.9rem; margin-bottom: 1.3rem; }
     .kpi-tile { background: var(--oc-panel); border: 1px solid var(--oc-line); border-radius: 12px; padding: 0.9rem 1rem; }
     .kpi-label { font-size: 0.72rem; color: var(--oc-muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
     .kpi-value { display: block; font-size: 1.7rem; font-weight: 750; margin-top: 0.15rem; letter-spacing: -0.02em; }
@@ -175,25 +175,30 @@ const timelineTemplate = `<!DOCTYPE html>
       </div>
 
       <section class="kpis" aria-label="Headline metrics">
-        <div class="kpi-tile" data-kpi="changes" data-value="{{.KPI.Changes}}" data-changesets="{{.KPI.Changesets}}">
+        <div class="kpi-tile" data-kpi="changes" data-value="{{.KPI.Changes}}" data-changesets="{{.KPI.Changesets}}" title="Change: a detected delta in a tracked field between two consecutive commits (old to new, with commit SHA, author, timestamp), diffed by key. A Changeset is all the Changes produced by a single commit.">
           <div class="kpi-label">Changes</div>
           <div class="kpi-value">{{.KPI.Changes}}</div>
           <div class="kpi-sub">across {{.KPI.Changesets}} changesets</div>
         </div>
-        <div class="kpi-tile" data-kpi="repositories" data-value="{{.KPI.Repositories}}">
+        <div class="kpi-tile" data-kpi="repositories" data-value="{{.KPI.Repositories}}" title="Repositories: the number of distinct repositories with at least one tracked Change in the retained history shown here.">
           <div class="kpi-label">Repositories</div>
           <div class="kpi-value">{{.KPI.Repositories}}</div>
           <div class="kpi-sub">tracked</div>
         </div>
-        <div class="kpi-tile" data-kpi="last-change" data-value="{{.KPI.LastChangeRelative}}" data-absolute="{{.KPI.LastChangeAbsolute}}">
+        <div class="kpi-tile" data-kpi="last-change" data-value="{{.KPI.LastChangeRelative}}" data-absolute="{{.KPI.LastChangeAbsolute}}" title="Last change: the commit timestamp of the most recent Changeset, the latest commit that produced at least one Change.">
           <div class="kpi-label">Last change</div>
           <div class="kpi-value">{{.KPI.LastChangeRelative}}</div>
           <div class="kpi-sub">{{.KPI.LastChangeAbsolute}}</div>
         </div>
-        <div class="kpi-tile" data-kpi="chart-changes" data-value="{{.KPI.ChartChanges}}" data-value-changes="{{.KPI.ValueChanges}}">
-          <div class="kpi-label">Chart bumps</div>
+        <div class="kpi-tile" data-kpi="chart-changes" data-value="{{.KPI.ChartChanges}}" title="ChartChanges: Changes whose kind is a chart-version bump, reflected as a Chart diff (the rendered-manifest delta between the old and new chart version, same tenant/values).">
+          <div class="kpi-label">Chart-version bumps</div>
           <div class="kpi-value">{{.KPI.ChartChanges}}</div>
-          <div class="kpi-sub">{{.KPI.ValueChanges}} value changes</div>
+          <div class="kpi-sub">of {{.KPI.Changes}} total changes</div>
+        </div>
+        <div class="kpi-tile" data-kpi="value-changes" data-value="{{.KPI.ValueChanges}}" title="ValueChanges: edits to a tracked field that are not chart-version bumps (Changes minus ChartChanges), e.g. a dependency version, a subchart version, or an image tag.">
+          <div class="kpi-label">Value changes</div>
+          <div class="kpi-value">{{.KPI.ValueChanges}}</div>
+          <div class="kpi-sub">of {{.KPI.Changes}} total changes</div>
         </div>
       </section>
 
