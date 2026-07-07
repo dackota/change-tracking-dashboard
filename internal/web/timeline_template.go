@@ -11,6 +11,15 @@ package web
 // rows — there is no longer a separate skeleton placeholder for the empty
 // state.
 //
+// <div id="facet-chips"> is an empty mount point: timeline.js's
+// renderFacetChips fills it with one removable chip per active facet/value
+// pair (R21), derived from the pure facetChips(facetState) mapping (R24).
+// #facet-clear (now labeled "Clear all filters", R22) resets all facet
+// state and re-syncs the chips in lockstep. Include vs exclude chips are
+// visually distinct via the .facet-chip-include/.facet-chip-exclude CSS
+// classes below (R23) — the same accent/danger colors already used for the
+// per-value pills.
+//
 // The option-C palette (blue accent, slate sidebar, light-slate canvas) is
 // expressed as the --oc-* CSS custom properties below and used across the
 // entire page — shell, facet controls, timeline track, feed, detail view,
@@ -88,6 +97,18 @@ const timelineTemplate = `<!DOCTYPE html>
     .facet-clear { font-size: 0.78rem; font-weight: 600; padding: 0.3rem 0.7rem; border: 1px solid var(--oc-line); background: #fff; border-radius: 6px; cursor: pointer; color: #495057; }
     .facet-clear:hover { border-color: var(--oc-danger); color: var(--oc-danger); }
     .facet-clear[hidden] { display: none; }
+
+    /* Active-filter chips (R21/R23): one removable chip per facet/value pair,
+       rendered by timeline.js's renderFacetChips from the pure
+       facetChips(facetState) mapping. Include vs exclude get distinct
+       accent/danger colors so mode is visually obvious without reading text. */
+    .facet-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+    .facet-chip { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.78rem; font-weight: 600; padding: 0.2rem 0.3rem 0.2rem 0.6rem; border-radius: 999px; border: 1px solid transparent; }
+    .facet-chip-include { background: rgba(37, 99, 235, 0.12); border-color: var(--oc-accent); color: var(--oc-accent); }
+    .facet-chip-exclude { background: rgba(220, 53, 69, 0.10); border-color: var(--oc-danger); color: var(--oc-danger); }
+    .facet-chip-label { white-space: nowrap; }
+    .facet-chip-remove { font-size: 0.85rem; line-height: 1; border: none; background: none; cursor: pointer; color: inherit; padding: 0 0.15rem; border-radius: 50%; }
+    .facet-chip-remove:hover { background: rgba(0, 0, 0, 0.08); }
 
     /* Timeline controls + track */
     #timeline-root { background: var(--oc-panel); border: 1px solid var(--oc-line); border-radius: 10px; padding: 0.75rem 0.9rem; margin-bottom: 1.3rem; }
@@ -203,7 +224,8 @@ const timelineTemplate = `<!DOCTYPE html>
           {{range .FacetControls}}<button type="button" class="facet-control" data-facet="{{.Facet}}" data-value="{{.Value}}" data-state="off">{{.Facet}}: {{.Value}}</button>
           {{end}}
         </div>
-        <button type="button" id="facet-clear" class="facet-clear" hidden>Clear filters</button>
+        <div id="facet-chips" class="facet-chips"></div>
+        <button type="button" id="facet-clear" class="facet-clear" hidden>Clear all filters</button>
       </div>
       <div id="timeline-root"></div>
       <div id="feed-panel" class="feed-panel">
