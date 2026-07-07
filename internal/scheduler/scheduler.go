@@ -29,6 +29,17 @@ const BaseTickInterval = 1 * time.Second
 // can be plugged in directly.
 type PollFunc func(domain.Tracker) error
 
+// StatusRecorder is the seam through which the Scheduler reports the outcome
+// of every poll attempt (success or failure). pollstatus.Registry satisfies
+// this interface directly; tests may substitute a fake recorder without
+// importing that package. Record is called exactly once per Tick per due
+// tracker, with the same clock reading (now) the due-calculation used and the
+// exact error PollFunc returned (nil on success) — so a poll error is
+// reported here, not just logged and discarded.
+type StatusRecorder interface {
+	Record(t domain.Tracker, at time.Time, err error)
+}
+
 // trackerState holds the last-polled time for a single tracker identity.
 type trackerState struct {
 	lastPolledAt time.Time
@@ -45,18 +56,21 @@ func trackerKey(t domain.Tracker) string {
 // Tick calls; the caller must serialize them (which is natural when driven from
 // a single background goroutine).
 type Scheduler struct {
-	now   func() time.Time
-	poll  PollFunc
-	state map[string]trackerState
+	now    func() time.Time
+	poll   PollFunc
+	status StatusRecorder
+	state  map[string]trackerState
 }
 
-// New returns a Scheduler that uses the provided clock and poll function.
-// now is injectable so tests can use a fake clock for deterministic behavior.
-func New(now func() time.Time, poll PollFunc) *Scheduler {
+// New returns a Scheduler that uses the provided clock and poll function,
+// reporting every poll outcome to status. now is injectable so tests can use
+// a fake clock for deterministic behavior.
+func New(now func() time.Time, poll PollFunc, status StatusRecorder) *Scheduler {
 	return &Scheduler{
-		now:   now,
-		poll:  poll,
-		state: make(map[string]trackerState),
+		now:    now,
+		poll:   poll,
+		status: status,
+		state:  make(map[string]trackerState),
 	}
 }
 
@@ -85,10 +99,15 @@ func (s *Scheduler) Tick(trackers []domain.Tracker) {
 			continue
 		}
 
-		if err := s.poll(t); err != nil {
+		err := s.poll(t)
+		if err != nil {
 			log.Printf("scheduler: poll error for tracker %q/%q/%q: %v",
 				t.Repo, t.FileGlob, t.Field, err)
 		}
+		// Report every outcome — success or failure — to the status
+		// recorder. Errors used to be logged and then dropped; they are now
+		// fed into pollstatus so LastError/LastSuccessAt reflect reality.
+		s.status.Record(t, now, err)
 
 		s.state[key] = trackerState{lastPolledAt: now}
 	}
