@@ -36,12 +36,12 @@ const changesTemplate = `<!DOCTYPE html>
           <h2 id="feed-title">Changes</h2>
           <span id="feed-count" class="feed-count"></span>
         </div>
-        <table class="feed-table">
+        <div class="table-scroll"><table class="feed-table">
           <thead>
             <tr><th>When</th><th>Repository</th><th>Commit</th><th>Author</th><th>Changes</th></tr>
           </thead>
           <tbody id="feed-list"></tbody>
-        </table>
+        </table></div>
       </div>
       <script src="/static/timeline.js"></script>
     </main>

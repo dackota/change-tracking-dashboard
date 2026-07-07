@@ -39,6 +39,30 @@ const shellStyles = `
     .poll-chip-ok .poll-chip-dot { background: var(--oc-success); }
     .poll-chip-error { background: rgba(220, 53, 69, 0.08); border-color: rgba(220, 53, 69, 0.35); color: var(--oc-danger); }
     .poll-chip-error .poll-chip-dot { background: var(--oc-danger); }
+
+    /* Wide-table containment (R18): any page's data table opts into this
+       wrapper so an unavoidably wide table scrolls locally, never forcing
+       the whole page to scroll horizontally. */
+    .table-scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+    /* Responsive shell (R15-R18): below ~860px the persistent sidebar column
+       no longer fits alongside real content, so it collapses into a
+       full-width horizontal top bar and the app stacks vertically instead.
+       Below ~600px the header row (title/subtitle/poll-chip/actions) also
+       wraps rather than overflowing, and the main column's side padding
+       shrinks to give narrow viewports more usable width. */
+    @media (max-width: 860px) {
+      .app { flex-direction: column; }
+      .sidebar { flex: 0 0 auto; width: 100%; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 0.6rem 0.9rem; gap: 0.5rem 0.9rem; }
+      .sidebar-brand { padding: 0; margin-right: auto; }
+      .sidebar-nav { flex-direction: row; flex-wrap: wrap; gap: 0.3rem 0.5rem; }
+    }
+    @media (max-width: 600px) {
+      body { overflow-x: hidden; }
+      .main { padding: 1rem 1rem 3rem; }
+      .page-header { flex-wrap: wrap; }
+      .poll-chip { white-space: normal; }
+    }
 `
 
 // sidebarTemplate defines the "sidebar" named template shared by every page
