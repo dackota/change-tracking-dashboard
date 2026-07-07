@@ -12,12 +12,15 @@
 package web_test
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/config"
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/pollstatus"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/web"
 )
@@ -259,4 +262,78 @@ func TestSharedShell_PollChipWrapsInsteadOfOverflowingAtMobileWidth(t *testing.T
 	if !strings.Contains(body, ".poll-chip { white-space: normal; }") {
 		t.Errorf("body missing the narrow-width poll-chip wrap override; got:\n%s", body)
 	}
+}
+
+// TestSharedShell_PollChipWrapOverrideAppliesAtTabletBreakpoint is a
+// fast-follow regression test for a HIGH finding on the responsive-layout
+// slice's acceptance gate: the sidebar already collapses into a top bar at
+// the 860px breakpoint (R15), but the poll-chip's wrap override previously
+// only lived in the 600px media query, leaving a ~620-720px tablet band
+// where the chip's nowrap-by-default text still overflows horizontally even
+// though the sidebar has already collapsed and nothing else in the layout
+// overflows there. The chip's error state is the worst case — it appends a
+// "· N tracker(s) failing" suffix — so this test renders the header with two
+// failing trackers and asserts the wrap override lives inside the 860px
+// media query block specifically, not only the 600px one.
+func TestSharedShell_PollChipWrapOverrideAppliesAtTabletBreakpoint(t *testing.T) {
+	t.Parallel()
+
+	reg := pollstatus.New()
+	now := time.Now()
+	reg.Record(domain.Tracker{Repo: "repo-a", FileGlob: "Chart.yaml", Field: "version", PollIntervalSeconds: 60}, now, errors.New("network unreachable"))
+	reg.Record(domain.Tracker{Repo: "repo-b", FileGlob: "Chart.yaml", Field: "version", PollIntervalSeconds: 60}, now, errors.New("timeout"))
+
+	h := web.NewTrackersHandler(fakeConfigSnapshot{cfg: &config.Config{}}, reg)
+	req := httptest.NewRequest(http.MethodGet, "/trackers", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+
+	body := rr.Body.String()
+	if !strings.Contains(body, "2 trackers failing") {
+		t.Fatalf("body missing the error-state chip's failure-count text; got:\n%s", body)
+	}
+
+	block := mediaQueryBlock(t, body, "@media (max-width: 860px)")
+	if !strings.Contains(block, ".poll-chip { white-space: normal; }") {
+		t.Errorf("860px media query block missing the poll-chip wrap override; block:\n%s", block)
+	}
+}
+
+// mediaQueryBlock returns the brace-delimited body of the first CSS media
+// query in css whose header is exactly query (e.g. "@media (max-width:
+// 860px)"), matching braces by depth so a nested rule's own braces don't
+// truncate the block early. It lets a test assert a declaration lives
+// inside one specific breakpoint rather than merely appearing anywhere in
+// the whole stylesheet.
+func mediaQueryBlock(t *testing.T, css, query string) string {
+	t.Helper()
+
+	start := strings.Index(css, query)
+	if start == -1 {
+		t.Fatalf("media query %q not found in CSS:\n%s", query, css)
+	}
+	openRel := strings.Index(css[start:], "{")
+	if openRel == -1 {
+		t.Fatalf("media query %q has no opening brace in CSS:\n%s", query, css)
+	}
+	open := start + openRel
+
+	depth := 0
+	for i := open; i < len(css); i++ {
+		switch css[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return css[open+1 : i]
+			}
+		}
+	}
+	t.Fatalf("media query %q never closes in CSS:\n%s", query, css)
+	return ""
 }
