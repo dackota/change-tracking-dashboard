@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.1](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.6.0...app-v0.6.1) (2026-07-07)
+
+
+### Bug Fixes
+
+* correct module path to github.com/dackota/change-tracking-dashboard ([3007a50](https://github.com/dackota/change-tracking-dashboard/commit/3007a503f729d3fcf977d00e7393d4711263931b))
+* correct module path to github.com/dackota/change-tracking-dashboard ([c63bb27](https://github.com/dackota/change-tracking-dashboard/commit/c63bb272cec615602b0eba54a4432d68004d036f))
+
 ## [0.6.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.5.0...app-v0.6.0) (2026-07-07)
 
 
