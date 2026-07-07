@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -21,8 +22,8 @@ func seedChanges(t *testing.T, s interface {
 }
 
 var (
-	base           = time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
-	changeDevZero  = domain.Change{
+	base          = time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+	changeDevZero = domain.Change{
 		Repo:        "apps-repo",
 		FilePath:    "apps/tenant-zero/dev/us-west-2/Chart.yaml",
 		Field:       "aidp-version",
@@ -252,5 +253,60 @@ func TestFacetOptions_EmptyDatabase(t *testing.T) {
 
 	if len(opts) != 0 {
 		t.Errorf("FacetOptions (empty): got %v, want empty map", opts)
+	}
+}
+
+// TestFacetOptions_ExcludesReservedNames is a table/property test over the
+// full reserved-name set {repo, asOf, cursor, limit}: none of them may ever
+// survive into FacetOptions()'s returned map, even when a stored Change is
+// seeded with a facet keyed with exactly that reserved name. This closes the
+// repo-param facet-shadowing defect — an admin-configured facet literally
+// named "repo" (or asOf/cursor/limit) must never be offered as a UI checkbox
+// or accepted as a facet-filter key, because both consumers (the timeline's
+// buildFacetControls and the JSON API's parseChangesetsFilter whitelist)
+// derive their known-facet set from this one function.
+func TestFacetOptions_ExcludesReservedNames(t *testing.T) {
+	t.Parallel()
+
+	reservedNames := []string{"repo", "asOf", "cursor", "limit"}
+
+	s := newTestStore(t)
+	for i, name := range reservedNames {
+		c := domain.Change{
+			Repo:       "apps-repo",
+			FilePath:   fmt.Sprintf("file-%d.yaml", i),
+			Field:      "f",
+			ChangeType: domain.ChangeTypeModified,
+			OldValue:   ptr("a"),
+			NewValue:   ptr("b"),
+			// Each seeded Change carries the reserved name plus a co-located
+			// non-reserved facet ("region"), so the test also proves the
+			// exclusion is narrowly scoped — a legitimate facet on the same
+			// Change must still survive.
+			Facets:      map[string]string{name: "hijack-value", "region": "us-west-2"},
+			CommitSha:   fmt.Sprintf("sha-reserved-%d", i),
+			Author:      "alice",
+			CommittedAt: base.Add(time.Duration(i) * time.Minute),
+		}
+		if err := s.SaveChange(c); err != nil {
+			t.Fatalf("SaveChange(%q): %v", name, err)
+		}
+	}
+
+	opts, err := s.FacetOptions()
+	if err != nil {
+		t.Fatalf("FacetOptions: %v", err)
+	}
+
+	for _, name := range reservedNames {
+		t.Run(name, func(t *testing.T) {
+			if vals, ok := opts[name]; ok {
+				t.Errorf("FacetOptions returned reserved key %q with values %v, want excluded entirely", name, vals)
+			}
+		})
+	}
+
+	if _, ok := opts["region"]; !ok {
+		t.Errorf("FacetOptions missing non-reserved key %q, want present (exclusion must not affect non-reserved facets)", "region")
 	}
 }
