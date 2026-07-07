@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/extractor"
+	"github.com/dackota/change-tracking-dashboard/internal/domain"
+	"github.com/dackota/change-tracking-dashboard/internal/extractor"
 )
 
 // scalarFieldEqual compares two TrackedFields by their scalar fields only

@@ -1,8 +1,8 @@
 package chartdiff
 
 import (
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/chartrender"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/manifestdiff"
+	"github.com/dackota/change-tracking-dashboard/internal/chartrender"
+	"github.com/dackota/change-tracking-dashboard/internal/manifestdiff"
 )
 
 // Renderer is the chart-render seam Engine.Diff depends on. helmRenderer

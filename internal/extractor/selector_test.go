@@ -3,7 +3,7 @@ package extractor_test
 import (
 	"testing"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/extractor"
+	"github.com/dackota/change-tracking-dashboard/internal/extractor"
 )
 
 // TestValidateEngine covers the legal-value contract: unset/empty and "jq" are

@@ -7,10 +7,10 @@ import (
 	"os"
 	"time"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/chartrender"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/gitsource"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/manifestdiff"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/telemetry"
+	"github.com/dackota/change-tracking-dashboard/internal/chartrender"
+	"github.com/dackota/change-tracking-dashboard/internal/gitsource"
+	"github.com/dackota/change-tracking-dashboard/internal/manifestdiff"
+	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
 )
 
 // materializeAndRender materializes sha's tenant subtree into a fresh,

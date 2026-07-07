@@ -9,7 +9,7 @@ package web
 import (
 	"net/http"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/telemetry"
+	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
 )
 
 // HealthzHandler serves GET /healthz: always 200, no dependency checks.

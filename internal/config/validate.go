@@ -6,9 +6,9 @@ package config
 import (
 	"fmt"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/extractor"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/facet"
+	"github.com/dackota/change-tracking-dashboard/internal/domain"
+	"github.com/dackota/change-tracking-dashboard/internal/extractor"
+	"github.com/dackota/change-tracking-dashboard/internal/facet"
 )
 
 // domainTrackerType aliases domain.Tracker so parse.go can reference it

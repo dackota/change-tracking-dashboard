@@ -22,10 +22,10 @@ import (
 	"sort"
 	"time"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/dashboardstats"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/filter"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/store"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/telemetry"
+	"github.com/dackota/change-tracking-dashboard/internal/dashboardstats"
+	"github.com/dackota/change-tracking-dashboard/internal/filter"
+	"github.com/dackota/change-tracking-dashboard/internal/store"
+	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
 )
 
 // TimelineHandler serves the timeline shell page at GET /.

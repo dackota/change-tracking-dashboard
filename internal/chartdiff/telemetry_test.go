@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/chartdiff"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/gitsource"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/telemetry"
+	"github.com/dackota/change-tracking-dashboard/internal/chartdiff"
+	"github.com/dackota/change-tracking-dashboard/internal/gitsource"
+	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"

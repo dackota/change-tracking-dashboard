@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/web"
+	"github.com/dackota/change-tracking-dashboard/internal/web"
 )
 
 // TestHealthzHandler_ReturnsOK verifies R13: GET /healthz always returns 200

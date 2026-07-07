@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/telemetry"
+	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
 )
 
 // watchInterval is the period between background file-hash checks.

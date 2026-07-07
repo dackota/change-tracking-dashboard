@@ -6,7 +6,7 @@ package dashboardstats
 import (
 	"time"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/changeset"
+	"github.com/dackota/change-tracking-dashboard/internal/changeset"
 )
 
 // Metrics carries the headline KPI values computed over a set of

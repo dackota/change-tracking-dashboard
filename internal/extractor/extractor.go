@@ -7,7 +7,7 @@ package extractor
 import (
 	"fmt"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
+	"github.com/dackota/change-tracking-dashboard/internal/domain"
 	"github.com/itchyny/gojq"
 	"gopkg.in/yaml.v3"
 )

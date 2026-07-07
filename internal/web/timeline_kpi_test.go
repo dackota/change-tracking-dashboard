@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/pollstatus"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/web"
+	"github.com/dackota/change-tracking-dashboard/internal/pollstatus"
+	"github.com/dackota/change-tracking-dashboard/internal/web"
 )
 
 // TestTimelineHandler_KPIStoreError_RendersZeroedMetrics is the R21

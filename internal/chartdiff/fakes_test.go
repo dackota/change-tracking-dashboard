@@ -4,8 +4,8 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/chartrender"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/gitsource"
+	"github.com/dackota/change-tracking-dashboard/internal/chartrender"
+	"github.com/dackota/change-tracking-dashboard/internal/gitsource"
 )
 
 // errUnexpected stands in for a generic, unclassified failure (neither a

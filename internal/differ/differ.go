@@ -13,7 +13,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
+	"github.com/dackota/change-tracking-dashboard/internal/domain"
 )
 
 // ScalarParams carries the immutable commit-level metadata passed through to

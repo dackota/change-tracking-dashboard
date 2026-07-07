@@ -31,13 +31,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/differ"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/extractor"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/facet"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/gitsource"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/store"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/telemetry"
+	"github.com/dackota/change-tracking-dashboard/internal/differ"
+	"github.com/dackota/change-tracking-dashboard/internal/domain"
+	"github.com/dackota/change-tracking-dashboard/internal/extractor"
+	"github.com/dackota/change-tracking-dashboard/internal/facet"
+	"github.com/dackota/change-tracking-dashboard/internal/gitsource"
+	"github.com/dackota/change-tracking-dashboard/internal/store"
+	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
@@ -51,7 +51,7 @@ const pollOperation = "poll"
 
 // instrumentationName scopes the tracer/meter this package obtains from the
 // injected (or default global) providers.
-const instrumentationName = "github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/poller"
+const instrumentationName = "github.com/dackota/change-tracking-dashboard/internal/poller"
 
 // diffFields dispatches to DiffKeyed or DiffScalar based on whether either
 // TrackedField is a keyed map result. If either old or new is keyed, both are

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/config"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
+	"github.com/dackota/change-tracking-dashboard/internal/config"
+	"github.com/dackota/change-tracking-dashboard/internal/domain"
 )
 
 // minimalValidYAML is the smallest syntactically-valid config that satisfies

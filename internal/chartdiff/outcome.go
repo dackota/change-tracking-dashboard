@@ -1,6 +1,6 @@
 package chartdiff
 
-import "github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/manifestdiff"
+import "github.com/dackota/change-tracking-dashboard/internal/manifestdiff"
 
 // Kind classifies a Chart diff Outcome. Diff always returns exactly one Kind
 // — see Engine.Diff's doc for the classification rules.

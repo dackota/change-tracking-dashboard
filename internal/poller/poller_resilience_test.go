@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/gitsource"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/poller"
+	"github.com/dackota/change-tracking-dashboard/internal/domain"
+	"github.com/dackota/change-tracking-dashboard/internal/gitsource"
+	"github.com/dackota/change-tracking-dashboard/internal/poller"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
 )

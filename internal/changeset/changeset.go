@@ -8,7 +8,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
+	"github.com/dackota/change-tracking-dashboard/internal/domain"
 )
 
 // Change is a domain.Change projected with its classified Kind. It embeds

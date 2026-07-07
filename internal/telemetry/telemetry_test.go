@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/telemetry"
+	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
 )
 
 // TestInit_EmptyEndpoint_DegradesSafely is the tracer bullet for criterion 6:

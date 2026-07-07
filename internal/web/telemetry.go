@@ -11,7 +11,7 @@ package web
 import "go.opentelemetry.io/otel"
 
 // instrumentationName scopes the tracer this package's handlers use.
-const instrumentationName = "github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/web"
+const instrumentationName = "github.com/dackota/change-tracking-dashboard/internal/web"
 
 // tracer wraps every handler's downstream store/git call in its own child
 // span via telemetry.WithSpan.

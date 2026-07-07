@@ -14,8 +14,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/store"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/telemetry"
+	"github.com/dackota/change-tracking-dashboard/internal/store"
+	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
 )
 
 // repositoriesTitle and repositoriesSubtitle are the fixed title/subtitle

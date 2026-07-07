@@ -16,10 +16,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/changeset"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/filter"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/store"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/telemetry"
+	"github.com/dackota/change-tracking-dashboard/internal/changeset"
+	"github.com/dackota/change-tracking-dashboard/internal/filter"
+	"github.com/dackota/change-tracking-dashboard/internal/store"
+	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
 )
 
 // genericServerErrorMsg is the only text sent to the client on an internal

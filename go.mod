@@ -1,4 +1,4 @@
-module github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard
+module github.com/dackota/change-tracking-dashboard
 
 go 1.26.0
 

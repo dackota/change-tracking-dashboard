@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/config"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/pollstatus"
+	"github.com/dackota/change-tracking-dashboard/internal/config"
+	"github.com/dackota/change-tracking-dashboard/internal/pollstatus"
 )
 
 // TestBuildTrackersView_MapsResolvedTrackerFieldsToViewRows verifies R5: a

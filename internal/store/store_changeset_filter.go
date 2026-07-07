@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/filter"
+	"github.com/dackota/change-tracking-dashboard/internal/filter"
 )
 
 // appendFilterClauses translates spec's repo scope, includes, and excludes

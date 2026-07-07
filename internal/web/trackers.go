@@ -15,9 +15,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/config"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/pollstatus"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/telemetry"
+	"github.com/dackota/change-tracking-dashboard/internal/config"
+	"github.com/dackota/change-tracking-dashboard/internal/pollstatus"
+	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
 )
 
 // maxPollErrorDisplayLen bounds how much of a tracker's raw poll-error text

@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/config"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/pollstatus"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/web"
+	"github.com/dackota/change-tracking-dashboard/internal/config"
+	"github.com/dackota/change-tracking-dashboard/internal/domain"
+	"github.com/dackota/change-tracking-dashboard/internal/pollstatus"
+	"github.com/dackota/change-tracking-dashboard/internal/web"
 )
 
 // fakeConfigSnapshot is a test double for web.ConfigSnapshot, letting a test

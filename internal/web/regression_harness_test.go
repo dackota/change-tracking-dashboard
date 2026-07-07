@@ -49,12 +49,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/chartdiff"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/gitsource"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/pollstatus"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/store"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/web"
+	"github.com/dackota/change-tracking-dashboard/internal/chartdiff"
+	"github.com/dackota/change-tracking-dashboard/internal/domain"
+	"github.com/dackota/change-tracking-dashboard/internal/gitsource"
+	"github.com/dackota/change-tracking-dashboard/internal/pollstatus"
+	"github.com/dackota/change-tracking-dashboard/internal/store"
+	"github.com/dackota/change-tracking-dashboard/internal/web"
 )
 
 // regressionHarnessTimeout bounds the whole Node-driven browser run so a

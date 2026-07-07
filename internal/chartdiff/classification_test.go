@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/chartdiff"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/chartrender"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/gitsource"
+	"github.com/dackota/change-tracking-dashboard/internal/chartdiff"
+	"github.com/dackota/change-tracking-dashboard/internal/chartrender"
+	"github.com/dackota/change-tracking-dashboard/internal/gitsource"
 )
 
 // TestDiff_RootCommit_ReturnsNoPriorVersion proves acceptance criterion 2's

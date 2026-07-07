@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
+	"github.com/dackota/change-tracking-dashboard/internal/domain"
 )
 
 // seed inserts a set of Changes into s and returns them. The caller controls

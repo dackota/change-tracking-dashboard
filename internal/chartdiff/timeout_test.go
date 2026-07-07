@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/chartdiff"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/chartrender"
+	"github.com/dackota/change-tracking-dashboard/internal/chartdiff"
+	"github.com/dackota/change-tracking-dashboard/internal/chartrender"
 )
 
 // TestDiff_RenderExceedsTimeout_ReturnsExceededLimits proves acceptance

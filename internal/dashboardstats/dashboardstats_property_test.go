@@ -8,9 +8,9 @@ import (
 	"testing/quick"
 	"time"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/changeset"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/dashboardstats"
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
+	"github.com/dackota/change-tracking-dashboard/internal/changeset"
+	"github.com/dackota/change-tracking-dashboard/internal/dashboardstats"
+	"github.com/dackota/change-tracking-dashboard/internal/domain"
 )
 
 // repoPool is the small fixed set of repo names changesetBatch draws from,

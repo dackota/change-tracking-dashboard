@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/chartdiff"
+	"github.com/dackota/change-tracking-dashboard/internal/chartdiff"
 )
 
 // TestDiff_CacheEntriesOne_EvictsOlderEntry proves the LRU eviction Config

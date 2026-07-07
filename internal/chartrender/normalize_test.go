@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/chartrender"
+	"github.com/dackota/change-tracking-dashboard/internal/chartrender"
 )
 
 // writeChartWithTemplate writes a minimal, dependency-free chart whose single
