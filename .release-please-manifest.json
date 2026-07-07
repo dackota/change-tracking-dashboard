@@ -1,4 +1,4 @@
 {
-  ".": "0.4.2",
+  ".": "0.4.3",
   "deploy/helm/change-tracking-dashboard": "0.1.2"
 }

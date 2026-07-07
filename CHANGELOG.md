@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.3](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.4.2...app-v0.4.3) (2026-07-07)
+
+
+### Bug Fixes
+
+* reset state.backdropError synchronously in loadBackdrop() ([#64](https://github.com/dackota/change-tracking-dashboard/issues/64)) ([1e0d459](https://github.com/dackota/change-tracking-dashboard/commit/1e0d45919019229a45d59d5ba2b20389058fab7e))
+
 ## [0.4.2](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.4.1...app-v0.4.2) (2026-07-07)
 
 
