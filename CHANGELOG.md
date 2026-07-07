@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.4.0...app-v0.4.1) (2026-07-07)
+
+
+### Bug Fixes
+
+* update stale fetchBackdrop test reference to fetchChangesetsPage ([#59](https://github.com/dackota/change-tracking-dashboard/issues/59)) ([91cf14d](https://github.com/dackota/change-tracking-dashboard/commit/91cf14d841f837b3299bad0dbf4aac9d33885e89))
+
 ## [0.4.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.3.0...app-v0.4.0) (2026-07-07)
 
 
