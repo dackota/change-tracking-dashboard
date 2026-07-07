@@ -85,7 +85,9 @@
     windowMs: DEFAULT_WINDOW_MS,
     changesets: [],
     loaded: false,
-    hasFitWindow: false
+    hasFitWindow: false,
+    nextCursor: '',    // R25: the server's opaque cursor for the next page beyond what's loaded, or '' when there is none
+    loadingMore: false // R25: true while a loadMore() fetch is in flight, guarding a double-click from racing two fetches
   };
 
   var facetState = {};   // facetState[facet][value] = 'include' | 'exclude'
@@ -143,6 +145,40 @@
   }
   function repoColor(repo) {
     return REPO_COLORS[repo] || REPO_COLORS[repoShortName(repo)] || DEFAULT_COLOR;
+  }
+
+  // changesetKey returns the (repo, commitSha) identity string a Changeset
+  // is keyed by for merge/de-dup purposes (R25) — the same pair
+  // QueryChangesets' cursor pages by, so a page boundary can never split a
+  // Changeset's identity. Defensive against a non-object or missing-field
+  // entry: coerced via String() rather than thrown on, so a malformed page
+  // entry can never crash the merge.
+  function changesetKey(cs) {
+    if (!cs || typeof cs !== 'object') { return String(cs); }
+    return String(cs.repo) + ' ' + String(cs.commitSha);
+  }
+  // mergeChangesetPage (R25) is the pure transformation behind "Load more":
+  // it merges a newly-fetched page's Changesets into the already-rendered
+  // list without ever duplicating or dropping one already present, keyed by
+  // (repo, commitSha). Existing entries keep their original relative order
+  // and come first; each incoming entry not already present is appended in
+  // the order it arrived. Returns a NEW array and never mutates either
+  // input. Guards a non-array existing/incoming (treated as empty) so a
+  // defensive caller never has to pre-validate.
+  function mergeChangesetPage(existing, incoming) {
+    var existingArr = Array.isArray(existing) ? existing : [];
+    var incomingArr = Array.isArray(incoming) ? incoming : [];
+    var seen = {};
+    existingArr.forEach(function (cs) { seen[changesetKey(cs)] = true; });
+    var merged = existingArr.slice();
+    incomingArr.forEach(function (cs) {
+      var key = changesetKey(cs);
+      if (!Object.prototype.hasOwnProperty.call(seen, key)) {
+        seen[key] = true;
+        merged.push(cs);
+      }
+    });
+    return merged;
   }
 
   function windowStart() { return state.windowEnd - state.windowMs; }
@@ -216,16 +252,30 @@
     return pairs.map(function (p) { return encodeURIComponent(p[0]) + '=' + encodeURIComponent(p[1]); }).join('&');
   }
 
-  function fetchBackdrop(onDone) {
+  // fetchChangesetsPage (R25) fetches one page of Changesets from
+  // /api/changesets: the first page when cursor is '' (the cursor param is
+  // omitted entirely, matching the server's own "empty cursor means start
+  // from the top" contract), or the next page when cursor is a prior
+  // response's nextCursor. onDone is always called with a
+  // {changesets, nextCursor} object — never a bare array — so callers never
+  // have to special-case the first fetch vs. a subsequent one. Any failure
+  // (non-200, malformed JSON, network error) reports an empty page with no
+  // further cursor, never leaving the caller waiting or crashing on a
+  // malformed body.
+  function fetchChangesetsPage(cursor, onDone) {
     var pairs = buildFilterParams();
     pairs.push(['limit', String(BACKDROP_LIMIT)]);
+    if (cursor) { pairs.push(['cursor', cursor]); }
     var xhr = new XMLHttpRequest();
     xhr.open('GET', API_PATH + '?' + buildQueryString(pairs), true);
     xhr.onload = function () {
-      if (xhr.status !== 200) { onDone([]); return; }
-      try { onDone((JSON.parse(xhr.responseText).changesets) || []); } catch (e) { onDone([]); }
+      if (xhr.status !== 200) { onDone({ changesets: [], nextCursor: '' }); return; }
+      try {
+        var parsed = JSON.parse(xhr.responseText);
+        onDone({ changesets: parsed.changesets || [], nextCursor: parsed.nextCursor || '' });
+      } catch (e) { onDone({ changesets: [], nextCursor: '' }); }
     };
-    xhr.onerror = function () { onDone([]); };
+    xhr.onerror = function () { onDone({ changesets: [], nextCursor: '' }); };
     xhr.send();
   }
 
@@ -432,6 +482,17 @@
 
   function clampWindow(ms) { return Math.max(MIN_WINDOW_MS, Math.min(MAX_WINDOW_MS, ms)); }
 
+  // windowCoversAllData reports whether the visible window already spans
+  // every currently-loaded Changeset (i.e. the user has not manually zoomed
+  // to a sub-range). Drives the embedded Reset zoom control's disabled state
+  // (syncWindowInputs) and, since R25, loadMore's decision on whether
+  // re-fitting the window after a Load more is safe (won't yank a
+  // manually-chosen view out from under the user).
+  function windowCoversAllData() {
+    var span = dataSpan();
+    return !span || (windowStart() <= span.min && state.windowEnd >= span.max);
+  }
+
   function setWindow(startMs, endMs) {
     if (endMs <= startMs) { return; }
     state.windowMs = clampWindow(endMs - startMs);
@@ -462,10 +523,8 @@
     if (winEls.from) { winEls.from.value = toLocalInput(windowStart()); }
     if (winEls.to) { winEls.to.value = toLocalInput(state.windowEnd); }
     if (winEls.reset) {
-      var span = dataSpan();
       // "Reset" is meaningful whenever the view doesn't already cover all data.
-      var coversAll = !span || (windowStart() <= span.min && state.windowEnd >= span.max);
-      winEls.reset.disabled = coversAll;
+      winEls.reset.disabled = windowCoversAllData();
     }
   }
 
@@ -549,6 +608,28 @@
 
     return tr;
   }
+  // buildLoadMoreRow (R25) renders the "Load more" affordance as one more
+  // full-width row (one <td> spanning every column) appended after the
+  // visible feed rows — the same in-table-row convention buildEmptyRow uses
+  // for loading/empty states, so the feed never needs a footer outside the
+  // <table> for this. Disabled + relabeled while a fetch is already in
+  // flight (state.loadingMore) so a fast double-click can't be mistaken for
+  // two separate requests.
+  function buildLoadMoreRow() {
+    var tr = document.createElement('tr');
+    tr.className = 'feed-load-more-row';
+    var td = document.createElement('td');
+    td.colSpan = FEED_COLUMN_COUNT;
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'feed-load-more-btn';
+    btn.textContent = state.loadingMore ? 'Loading more…' : 'Load more';
+    btn.disabled = state.loadingMore;
+    btn.addEventListener('click', loadMore);
+    td.appendChild(btn);
+    tr.appendChild(td);
+    return tr;
+  }
   function renderFeed() {
     if (!feedEls.list) { return; }
     while (feedEls.list.firstChild) { feedEls.list.removeChild(feedEls.list.firstChild); }
@@ -580,6 +661,7 @@
       return;
     }
     visible.forEach(function (cs) { feedEls.list.appendChild(buildFeedRow(cs)); });
+    if (state.nextCursor) { feedEls.list.appendChild(buildLoadMoreRow()); }
   }
 
   // ---- facet dropdowns ----
@@ -748,8 +830,22 @@
   }
 
   // ---- backdrop load ----
-  function renderBackdrop(changesets) {
-    state.changesets = changesets;
+  // backdropGeneration (R25) guards against a loadMore() fetch that is still
+  // in flight when a fresh backdrop reload (loadBackdrop) fires — mirroring
+  // clickGeneration's exact guard for the analogous stale-async-response
+  // hazard around onFlagClick. Bumped on every loadBackdrop call; loadMore
+  // captures the generation it fired under and compares it against the
+  // current value before merging its (now possibly stale, differently
+  // filtered) page into state.
+  var backdropGeneration = 0;
+
+  // renderBackdrop (the fetchChangesetsPage onDone for a FRESH first page)
+  // always replaces state.changesets/state.nextCursor wholesale — pagination
+  // state from a prior filter/window never survives a reload. Contrast with
+  // loadMore's onDone below, which merges rather than replaces.
+  function renderBackdrop(page) {
+    state.changesets = page.changesets;
+    state.nextCursor = page.nextCursor;
     state.loaded = true;
     if (!state.hasFitWindow) { state.hasFitWindow = true; fitWindowToData(); }
     render();
@@ -759,9 +855,41 @@
   function loadBackdrop() {
     state.loaded = false;
     renderFeed();
-    fetchBackdrop(renderBackdrop);
+    backdropGeneration++;
+    var gen = backdropGeneration;
+    fetchChangesetsPage('', function (page) {
+      if (gen !== backdropGeneration) { return; }
+      renderBackdrop(page);
+    });
   }
   function onFilterChanged() { loadBackdrop(); }
+
+  // loadMore (R25) fetches the next page using the cursor the last page
+  // returned, and merges it into state.changesets (never a replace — the
+  // Changesets already loaded and possibly already viewed must never
+  // disappear). Guarded against firing a second overlapping fetch (a fast
+  // double-click) and against firing with no further page available. When
+  // the window already covered every previously-loaded Changeset (the
+  // common, unzoomed case), the window is re-fit so the newly merged
+  // (necessarily older) Changesets actually become visible; a manually
+  // zoomed window is left untouched. Also guarded (via backdropGeneration)
+  // against a fresh filter reload superseding this fetch before it resolves
+  // — see backdropGeneration's own doc comment above loadBackdrop.
+  function loadMore() {
+    if (state.loadingMore || !state.nextCursor) { return; }
+    state.loadingMore = true;
+    renderFeed();
+    var shouldRefitWindow = windowCoversAllData();
+    var gen = backdropGeneration;
+    fetchChangesetsPage(state.nextCursor, function (page) {
+      state.loadingMore = false;
+      if (gen !== backdropGeneration) { return; }
+      state.changesets = mergeChangesetPage(state.changesets, page.changesets);
+      state.nextCursor = page.nextCursor;
+      if (shouldRefitWindow) { fitWindowToData(); }
+      afterWindowChange();
+    });
+  }
 
   // ---- interactions ----
   function zoom(factor) { state.windowMs = clampWindow(state.windowMs / factor); afterWindowChange(); }
@@ -909,6 +1037,6 @@
   // first-party <script src="/static/timeline.js"> (R18); no test-only code
   // path is reachable in production.
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { commitURL: commitURL, repoShortName: repoShortName, facetChips: facetChips };
+    module.exports = { commitURL: commitURL, repoShortName: repoShortName, facetChips: facetChips, mergeChangesetPage: mergeChangesetPage };
   }
 })();
