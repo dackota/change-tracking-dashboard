@@ -290,3 +290,101 @@ func TestTimelineJS_WiresHeaderResetZoomButton(t *testing.T) {
 		t.Error("served timeline.js does not reference header-reset-zoom — the header's Reset zoom button has nothing wired to it")
 	}
 }
+
+// TestTimelineHandler_ValueChangesTile_IsDistinctFromChartChangesTile verifies
+// R20: ChartChanges (chart-version bumps) and ValueChanges (tracked-field
+// edits that are not chart-version bumps) render as two separate,
+// self-explanatory tiles rather than one tile's value/sub-line pair — the
+// pre-fix shape read as a riddle (e.g. "Chart bumps 8 · 0 value changes").
+// The ValueChanges tile's value reuses the handler's existing Changes -
+// ChartChanges derivation; this test pins the seeded numbers so a
+// regression that recomputes it differently is caught.
+func TestTimelineHandler_ValueChangesTile_IsDistinctFromChartChangesTile(t *testing.T) {
+	t.Parallel()
+
+	st := newTestStore(t)
+	// repo-a/c1: one Chart.yaml Change (a chart-version bump) and one
+	// values.yaml Change (a tracked-value edit). repo-b/c2: one more
+	// Chart.yaml Change. So ChartChanges = 2, ValueChanges = 1.
+	seedChange(t, st, changeSpec{Repo: "repo-a", FilePath: "Chart.yaml", CommitSha: "c1"})
+	seedChange(t, st, changeSpec{Repo: "repo-a", FilePath: "values.yaml", CommitSha: "c1"})
+	seedChange(t, st, changeSpec{Repo: "repo-b", FilePath: "Chart.yaml", CommitSha: "c2"})
+
+	h := web.NewTimelineHandler(st)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+
+	body := rr.Body.String()
+	for _, want := range []string{
+		`data-kpi="chart-changes" data-value="2"`,
+		`data-kpi="value-changes" data-value="1"`,
+		"Chart-version bumps",
+		"Value changes",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q; got:\n%s", want, body)
+		}
+	}
+
+	// The old riddle phrasing packed both numbers into the chart tile's
+	// sub-line; it must be gone now that ValueChanges has its own tile.
+	if strings.Contains(body, "value changes</div>") {
+		t.Errorf("body still contains the old combined-tile sub-line phrasing; got:\n%s", body)
+	}
+}
+
+// TestTimelineHandler_KPITiles_EachExposeADefinitionInCanonicalTerms verifies
+// R19: every KPI tile carries a definition affordance (the native `title`
+// attribute — CSP-safe, no inline JS, no CSP change) whose text uses the
+// project's canonical vocabulary, so a viewer can hover any tile to learn
+// exactly what it counts without leaving the page.
+func TestTimelineHandler_KPITiles_EachExposeADefinitionInCanonicalTerms(t *testing.T) {
+	t.Parallel()
+
+	h := web.NewTimelineHandler(newTestStore(t))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+
+	body := rr.Body.String()
+	for _, tile := range []struct {
+		dataKPI string
+		terms   []string // canonical vocabulary the definition must use
+	}{
+		{"changes", []string{"Change", "Changeset"}},
+		{"repositories", []string{"repositories"}},
+		{"last-change", []string{"Changeset"}},
+		{"chart-changes", []string{"ChartChanges", "chart-version bump"}},
+		{"value-changes", []string{"ValueChanges", "tracked field"}},
+	} {
+		idx := strings.Index(body, `data-kpi="`+tile.dataKPI+`"`)
+		if idx == -1 {
+			t.Fatalf("tile data-kpi=%q not found in body:\n%s", tile.dataKPI, body)
+		}
+		// Look at the tile's opening element (up to its first '>') for a
+		// title attribute carrying the definition.
+		end := strings.Index(body[idx:], ">")
+		if end == -1 {
+			t.Fatalf("could not find end of opening tag for tile %q", tile.dataKPI)
+		}
+		openTag := body[idx : idx+end]
+		if !strings.Contains(openTag, `title="`) {
+			t.Errorf("tile %q has no title definition affordance; open tag:\n%s", tile.dataKPI, openTag)
+			continue
+		}
+		for _, term := range tile.terms {
+			if !strings.Contains(openTag, term) {
+				t.Errorf("tile %q definition missing canonical term %q; open tag:\n%s", tile.dataKPI, term, openTag)
+			}
+		}
+	}
+}
