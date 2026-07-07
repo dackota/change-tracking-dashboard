@@ -7,7 +7,10 @@
 //   - renders one flag per Changeset on a single dated time track
 //   - groups the server-rendered facet controls into per-facet dropdowns, each
 //     value cycling off -> include -> exclude, plus an "only" shortcut, plus a
-//     single "Clear filters" reset
+//     single "Clear all filters" reset
+//   - mirrors every active facet/value pair as a removable chip (facet,
+//     value, and include/exclude mode) via the pure facetChips(facetState)
+//     mapping — the chip model driving what renderFacetChips puts on screen
 //   - uses the visible window AS the feed filter (Datadog-style): drag on the
 //     track to zoom into a range (the feed follows), scroll to zoom, shift-drag
 //     to pan, "Reset zoom" to return to the full span (both the track's own
@@ -83,6 +86,7 @@
   var feedEls = { list: null, title: null, count: null };
   var winEls = { from: null, to: null, reset: null, hint: null };
   var facetClearEl = null;
+  var facetChipsEl = null; // container the removable facet chips (R21) render into
 
   var brush = { active: false, pan: false, moved: false, x0: 0, x1: 0 };
 
@@ -161,6 +165,31 @@
     for (var f in facetState) { if (Object.prototype.hasOwnProperty.call(facetState, f)) { n += Object.keys(facetState[f]).length; } }
     return n;
   }
+  // facetChips is a pure mapping from facetState to the chip model that
+  // drives the filter bar's removable chips (R21/R24): one {facet, value,
+  // mode} entry per active (include/exclude) facet/value pair, sorted by
+  // facet then value for a deterministic render order, regardless of
+  // insertion order. It never mutates facetState (or anything reachable from
+  // it) and always returns a fresh array — callers (renderFacetChips) may
+  // read the result but must never treat it as shared/cached state. Guards
+  // against malformed nesting (a non-object facetState, or a non-object
+  // per-facet value map) so a defensive caller never has to pre-validate.
+  function facetChips(facetState) {
+    if (!facetState || typeof facetState !== 'object') { return []; }
+    var chips = [];
+    Object.keys(facetState).sort().forEach(function (facet) {
+      var values = facetState[facet];
+      if (!values || typeof values !== 'object') { return; }
+      Object.keys(values).sort().forEach(function (value) {
+        var mode = values[value];
+        if (mode === 'include' || mode === 'exclude') {
+          chips.push({ facet: facet, value: value, mode: mode });
+        }
+      });
+    });
+    return chips;
+  }
+
   function buildFilterParams() {
     var pairs = [];
     for (var facet in facetState) {
@@ -567,6 +596,61 @@
   function refreshFacetClear() {
     if (facetClearEl) { facetClearEl.hidden = activeFilterCount() === 0; }
   }
+  // removeFacetChip (R21) removes a single chip: it drives the facet/value
+  // pair back to 'off' through the same setFacetState machinery the pill
+  // cycle and "only" shortcut use (never a bespoke path), then re-syncs every
+  // piece of facet chrome (pills, badges, clear control, chips) and refetches.
+  function removeFacetChip(facet, value) {
+    setFacetState(facet, value, 'off');
+    refreshAllFacetPills();
+    refreshFacetChrome();
+    onFilterChanged();
+  }
+  // buildFacetChip renders one chip element from a facetChips() entry: a
+  // facet/value label plus a remove button, wired with addEventListener (no
+  // inline handlers) and built entirely from createElement + textContent —
+  // facet/value strings come from server-observed data and must never reach
+  // innerHTML. The mode-named class (facet-chip-include / facet-chip-exclude)
+  // is what makes include vs exclude visually distinct in the filter bar
+  // (R23); the CSS rules live in timeline_template.go's inline <style>.
+  function buildFacetChip(chip) {
+    var el = document.createElement('span');
+    el.className = 'facet-chip facet-chip-' + chip.mode;
+    el.setAttribute('data-facet', chip.facet);
+    el.setAttribute('data-value', chip.value);
+
+    var label = document.createElement('span');
+    label.className = 'facet-chip-label';
+    label.textContent = chip.facet + ': ' + chip.value;
+    el.appendChild(label);
+
+    var remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'facet-chip-remove';
+    remove.textContent = '×';
+    remove.setAttribute('aria-label', 'Remove filter ' + chip.facet + ': ' + chip.value);
+    remove.addEventListener('click', function () { removeFacetChip(chip.facet, chip.value); });
+    el.appendChild(remove);
+
+    return el;
+  }
+  // renderFacetChips (R21/R24) re-renders the chip row from the pure
+  // facetChips(facetState) mapping — the chip model is never hand-assembled
+  // here, only mapped to DOM.
+  function renderFacetChips() {
+    if (!facetChipsEl) { return; }
+    while (facetChipsEl.firstChild) { facetChipsEl.removeChild(facetChipsEl.firstChild); }
+    facetChips(facetState).forEach(function (chip) { facetChipsEl.appendChild(buildFacetChip(chip)); });
+  }
+  // refreshFacetChrome re-syncs every facetState-derived affordance that
+  // isn't a specific pill/badge: the "Clear all filters" control's
+  // visibility (R22) and the chip row (R21/R24). Every call site that used to
+  // call refreshFacetClear() alone now calls this, so a chip can never drift
+  // out of sync with the pills/badges it mirrors.
+  function refreshFacetChrome() {
+    refreshFacetClear();
+    renderFacetChips();
+  }
   function buildFacetDropdowns(container) {
     collectServerFacets(container);
     container.innerHTML = '';
@@ -599,7 +683,7 @@
         pill.textContent = value;
         pill.addEventListener('click', function () {
           pill.setAttribute('data-state', cycleFacetState(facet, value));
-          refreshFacetBadge(facet); refreshFacetClear(); onFilterChanged();
+          refreshFacetBadge(facet); refreshFacetChrome(); onFilterChanged();
         });
         pillEls[facet][value] = pill;
         rowEl.appendChild(pill);
@@ -614,7 +698,7 @@
           for (var v in pillEls[facet]) {
             if (Object.prototype.hasOwnProperty.call(pillEls[facet], v)) { pillEls[facet][v].setAttribute('data-state', getFacetState(facet, v)); }
           }
-          refreshFacetBadge(facet); refreshFacetClear(); onFilterChanged();
+          refreshFacetBadge(facet); refreshFacetChrome(); onFilterChanged();
         });
         rowEl.appendChild(only);
         body.appendChild(rowEl);
@@ -623,16 +707,20 @@
       container.appendChild(dd);
     });
   }
+  // clearFacets is the "clear all filters" control's handler (R22, the
+  // #facet-clear button in the filter bar): reset every facet to 'off' in
+  // one click, re-syncing pills, badges, the clear control itself, and the
+  // chip row (via refreshFacetChrome) before refetching.
   function clearFacets() {
     facetState = {};
     refreshAllFacetPills();
-    refreshFacetClear();
+    refreshFacetChrome();
     onFilterChanged();
   }
   function clearAllFilters() {
     facetState = {};
     refreshAllFacetPills();
-    refreshFacetClear();
+    refreshFacetChrome();
     // Clearing facets refetches the (now unfiltered) backdrop. The window must
     // be fit to that FRESH data, not the stale filtered set we currently hold —
     // so drop the one-shot fit latch and let renderBackdrop re-fit inside the
@@ -763,7 +851,8 @@
     if (facetContainer) { buildFacetDropdowns(facetContainer); }
     facetClearEl = document.getElementById('facet-clear');
     if (facetClearEl) { facetClearEl.addEventListener('click', clearFacets); }
-    refreshFacetClear();
+    facetChipsEl = document.getElementById('facet-chips');
+    refreshFacetChrome();
 
     feedEls.list = document.getElementById('feed-list');
     feedEls.title = document.getElementById('feed-title');
@@ -797,6 +886,6 @@
   // first-party <script src="/static/timeline.js"> (R18); no test-only code
   // path is reachable in production.
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { commitURL: commitURL, repoShortName: repoShortName };
+    module.exports = { commitURL: commitURL, repoShortName: repoShortName, facetChips: facetChips };
   }
 })();

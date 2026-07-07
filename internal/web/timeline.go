@@ -38,38 +38,30 @@ type TimelineHandler struct {
 // shell template. Panics if the embedded template is invalid (programming
 // error).
 func NewTimelineHandler(st *store.Store) *TimelineHandler {
-	tmpl := template.Must(template.New("timeline").Parse(timelineTemplate))
+	tmpl := template.Must(template.New("timeline").Parse(shellTemplates + timelineTemplate))
 	return &TimelineHandler{tmpl: tmpl, st: st}
 }
 
-// timelineViewData is the data passed to the shell template: the persistent
-// sidebar nav, the headline KPI tiles, and the known facet set (rendered as
-// one control per facet/value pair).
+// timelineHeaderActions is the timeline page's header action button (Reset
+// zoom), rendered inside the shared header shell (R2, R6). It is a
+// compile-time constant, never built from request/stored data, so it is
+// safe to carry as trusted template.HTML.
+const timelineHeaderActions template.HTML = `<button type="button" id="header-reset-zoom" class="btn">Reset zoom</button>`
+
+// timelineTitle and timelineSubtitle are the fixed title/subtitle rendered
+// in the shared header shell for this page (R6).
+const (
+	timelineTitle    = "Timeline"
+	timelineSubtitle = "Change activity across tracked repositories."
+)
+
+// timelineViewData is the data passed to the shell template: the shared
+// shell (sidebar nav + header, R6), the headline KPI tiles, and the known
+// facet set (rendered as one control per facet/value pair).
 type timelineViewData struct {
-	SidebarNav    []sidebarNavItem
+	shellData
 	KPI           kpiView
 	FacetControls []facetControlView
-}
-
-// sidebarNavItem is one entry in the persistent left sidebar (R1). Key is a
-// stable identifier used for the data-nav attribute the template renders and
-// tests key off of. Only the Timeline entry is a functioning destination in
-// v1; the rest are inert placeholders (R20) — rendered as plain,
-// non-interactive elements (no href, no click handler) so they can never
-// produce a dead link or a broken navigation state.
-type sidebarNavItem struct {
-	Key    string
-	Label  string
-	Active bool
-}
-
-// sidebarNavItems is the fixed v1 sidebar. It never changes per request, so
-// it is built once as a package-level value rather than per-ServeHTTP.
-var sidebarNavItems = []sidebarNavItem{
-	{Key: "timeline", Label: "Timeline", Active: true},
-	{Key: "changes", Label: "Changes"},
-	{Key: "repositories", Label: "Repositories"},
-	{Key: "trackers", Label: "Trackers"},
 }
 
 // kpiView is the headline KPI tile row rendered from dashboardstats.Metrics
@@ -150,7 +142,7 @@ func (h *TimelineHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := timelineViewData{
-		SidebarNav:    sidebarNavItems,
+		shellData:     buildShell(r.URL.Path, timelineTitle, timelineSubtitle, timelineHeaderActions),
 		KPI:           buildKPIView(h.loadMetrics(), time.Now()),
 		FacetControls: buildFacetControls(opts),
 	}

@@ -34,6 +34,7 @@ import (
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/githubapp"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/gitsource"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/poller"
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/pollstatus"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/scheduler"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/store"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/web"
@@ -101,6 +102,13 @@ func run(configPath, dbPath, listenAddr string) error {
 	// --- Per-repo gitsource cache ---
 	sources := newSourceCache(tokenProvider)
 
+	// --- Poll status registry ---
+	// Records, per tracker, the last attempt/success time and last error —
+	// in-process only, no persistence; it rebuilds naturally on restart. A
+	// downstream slice wires pollStatus.Snapshot() into the web layer
+	// (header status chip, Trackers-view columns, /healthz).
+	pollStatus := pollstatus.New()
+
 	// --- Per-tracker scheduler ---
 	// The scheduler calls Tick on a 1s base interval, passing the latest
 	// tracker list from the config watcher each time. Trackers added or removed
@@ -115,7 +123,7 @@ func run(configPath, dbPath, listenAddr string) error {
 		return p.Poll(t)
 	}
 
-	sched := scheduler.New(time.Now, scheduler.PollFunc(pollFn))
+	sched := scheduler.New(time.Now, scheduler.PollFunc(pollFn), pollStatus)
 
 	go func() {
 		ticker := time.NewTicker(scheduler.BaseTickInterval)
@@ -142,12 +150,14 @@ func run(configPath, dbPath, listenAddr string) error {
 	changesetsHandler := web.NewChangesetsHandler(st)
 	changesetDetailHandler := web.NewChangesetDetailHandler(st)
 	chartDiffHandler := web.NewChartDiffHandler(chartDiffEngine, sources, st)
+	trackersHandler := web.NewTrackersHandler(cfgWatcher)
 	mux := http.NewServeMux()
 	mux.Handle("/", timelineHandler)
 	mux.Handle("/static/", staticHandler)
 	mux.Handle("/api/changesets", changesetsHandler)
 	mux.Handle("/api/changesets/detail", changesetDetailHandler)
 	mux.Handle("/api/changesets/detail/chart-diff", chartDiffHandler)
+	mux.Handle("GET /trackers", trackersHandler)
 
 	srv := &http.Server{
 		Addr:         listenAddr,

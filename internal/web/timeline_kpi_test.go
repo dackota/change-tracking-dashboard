@@ -156,12 +156,15 @@ func TestTimelineHandler_LastChangeKPI_ShowsRelativeAndAbsoluteTimestamp(t *test
 	}
 }
 
-// TestTimelineHandler_SidebarNav_TimelineActiveAndPlaceholdersInert verifies
-// R1 and R20: a persistent sidebar renders Timeline (marked active) plus
-// Changes, Repositories, and Trackers as inert placeholders — no href,
-// onclick, or other navigation/interaction affordance that could produce a
-// dead link or broken state.
-func TestTimelineHandler_SidebarNav_TimelineActiveAndPlaceholdersInert(t *testing.T) {
+// TestTimelineHandler_SidebarNav_RegisteredRoutesAreLinksAndCurrentRouteIsActive
+// verifies R1 (superseding this test's earlier "every nav entry is an inert
+// placeholder" contract now that Timeline and Trackers are real routes):
+// Timeline and Trackers render as real <a> links (their routes are
+// registered), Timeline is marked active on GET /, Trackers is a link but
+// not active, and Changes/Repositories — not yet routes — render as plain,
+// non-interactive elements with no href or onclick, so they can never
+// produce a dead link ahead of their own slice landing.
+func TestTimelineHandler_SidebarNav_RegisteredRoutesAreLinksAndCurrentRouteIsActive(t *testing.T) {
 	t.Parallel()
 
 	h := web.NewTimelineHandler(newTestStore(t))
@@ -180,21 +183,23 @@ func TestTimelineHandler_SidebarNav_TimelineActiveAndPlaceholdersInert(t *testin
 		}
 	}
 
-	if !strings.Contains(body, `data-nav="timeline" aria-current="page"`) {
-		t.Errorf("Timeline nav entry not marked active (aria-current); got:\n%s", body)
+	if !strings.Contains(body, `<a class="nav-item nav-item-active" data-nav="timeline" href="/" aria-current="page">Timeline</a>`) {
+		t.Errorf("Timeline nav entry not rendered as an active link; got:\n%s", body)
 	}
+	if !strings.Contains(body, `<a class="nav-item" data-nav="trackers" href="/trackers">Trackers</a>`) {
+		t.Errorf("Trackers nav entry not rendered as an (inactive) link; got:\n%s", body)
+	}
+	if !strings.Contains(body, `<div class="nav-item" data-nav="changes">Changes</div>`) {
+		t.Errorf("Changes nav entry not rendered as an inert placeholder; got:\n%s", body)
+	}
+	if !strings.Contains(body, `<div class="nav-item" data-nav="repositories">Repositories</div>`) {
+		t.Errorf("Repositories nav entry not rendered as an inert placeholder; got:\n%s", body)
+	}
+
 	if strings.Contains(body, `data-nav="changes" aria-current`) ||
 		strings.Contains(body, `data-nav="repositories" aria-current`) ||
 		strings.Contains(body, `data-nav="trackers" aria-current`) {
-		t.Errorf("a placeholder nav entry was marked active; only Timeline should be; got:\n%s", body)
-	}
-
-	// Placeholder entries must never carry an href or onclick — that would
-	// risk a dead link or a broken interactive state (R20).
-	for _, forbidden := range []string{"href=", "onclick="} {
-		if strings.Contains(body, forbidden) {
-			t.Errorf("body contains forbidden navigation affordance %q on sidebar entries; got:\n%s", forbidden, body)
-		}
+		t.Errorf("a non-current nav entry was marked active; only Timeline should be on GET /; got:\n%s", body)
 	}
 }
 
@@ -283,5 +288,103 @@ func TestTimelineJS_WiresHeaderResetZoomButton(t *testing.T) {
 	body := rr.Body.String()
 	if !strings.Contains(body, "header-reset-zoom") {
 		t.Error("served timeline.js does not reference header-reset-zoom — the header's Reset zoom button has nothing wired to it")
+	}
+}
+
+// TestTimelineHandler_ValueChangesTile_IsDistinctFromChartChangesTile verifies
+// R20: ChartChanges (chart-version bumps) and ValueChanges (tracked-field
+// edits that are not chart-version bumps) render as two separate,
+// self-explanatory tiles rather than one tile's value/sub-line pair — the
+// pre-fix shape read as a riddle (e.g. "Chart bumps 8 · 0 value changes").
+// The ValueChanges tile's value reuses the handler's existing Changes -
+// ChartChanges derivation; this test pins the seeded numbers so a
+// regression that recomputes it differently is caught.
+func TestTimelineHandler_ValueChangesTile_IsDistinctFromChartChangesTile(t *testing.T) {
+	t.Parallel()
+
+	st := newTestStore(t)
+	// repo-a/c1: one Chart.yaml Change (a chart-version bump) and one
+	// values.yaml Change (a tracked-value edit). repo-b/c2: one more
+	// Chart.yaml Change. So ChartChanges = 2, ValueChanges = 1.
+	seedChange(t, st, changeSpec{Repo: "repo-a", FilePath: "Chart.yaml", CommitSha: "c1"})
+	seedChange(t, st, changeSpec{Repo: "repo-a", FilePath: "values.yaml", CommitSha: "c1"})
+	seedChange(t, st, changeSpec{Repo: "repo-b", FilePath: "Chart.yaml", CommitSha: "c2"})
+
+	h := web.NewTimelineHandler(st)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+
+	body := rr.Body.String()
+	for _, want := range []string{
+		`data-kpi="chart-changes" data-value="2"`,
+		`data-kpi="value-changes" data-value="1"`,
+		"Chart-version bumps",
+		"Value changes",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q; got:\n%s", want, body)
+		}
+	}
+
+	// The old riddle phrasing packed both numbers into the chart tile's
+	// sub-line; it must be gone now that ValueChanges has its own tile.
+	if strings.Contains(body, "value changes</div>") {
+		t.Errorf("body still contains the old combined-tile sub-line phrasing; got:\n%s", body)
+	}
+}
+
+// TestTimelineHandler_KPITiles_EachExposeADefinitionInCanonicalTerms verifies
+// R19: every KPI tile carries a definition affordance (the native `title`
+// attribute — CSP-safe, no inline JS, no CSP change) whose text uses the
+// project's canonical vocabulary, so a viewer can hover any tile to learn
+// exactly what it counts without leaving the page.
+func TestTimelineHandler_KPITiles_EachExposeADefinitionInCanonicalTerms(t *testing.T) {
+	t.Parallel()
+
+	h := web.NewTimelineHandler(newTestStore(t))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+
+	body := rr.Body.String()
+	for _, tile := range []struct {
+		dataKPI string
+		terms   []string // canonical vocabulary the definition must use
+	}{
+		{"changes", []string{"Change", "Changeset"}},
+		{"repositories", []string{"repositories"}},
+		{"last-change", []string{"Changeset"}},
+		{"chart-changes", []string{"ChartChanges", "chart-version bump"}},
+		{"value-changes", []string{"ValueChanges", "tracked field"}},
+	} {
+		idx := strings.Index(body, `data-kpi="`+tile.dataKPI+`"`)
+		if idx == -1 {
+			t.Fatalf("tile data-kpi=%q not found in body:\n%s", tile.dataKPI, body)
+		}
+		// Look at the tile's opening element (up to its first '>') for a
+		// title attribute carrying the definition.
+		end := strings.Index(body[idx:], ">")
+		if end == -1 {
+			t.Fatalf("could not find end of opening tag for tile %q", tile.dataKPI)
+		}
+		openTag := body[idx : idx+end]
+		if !strings.Contains(openTag, `title="`) {
+			t.Errorf("tile %q has no title definition affordance; open tag:\n%s", tile.dataKPI, openTag)
+			continue
+		}
+		for _, term := range tile.terms {
+			if !strings.Contains(openTag, term) {
+				t.Errorf("tile %q definition missing canonical term %q; open tag:\n%s", tile.dataKPI, term, openTag)
+			}
+		}
 	}
 }
