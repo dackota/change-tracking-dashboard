@@ -1,10 +1,20 @@
 // timeline.js — vendored, embedded (go:embed) client-side rendering for the
-// Change Tracking Dashboard timeline. This is the dashboard's only client-side
-// script; it stays thin. All querying, grouping, classification, facet
-// filtering, and per-kind (chart vs value) detail rendering stay server-side
-// (store/changeset/filter and the /api/changesets* endpoints). This file:
+// Change Tracking Dashboard. This is the dashboard's only client-side
+// script; it stays thin, and it is shared, unmodified, by every page that
+// renders the changeset feed: the Timeline page (GET /, the zoomable track
+// plus the feed) and the Changes page (GET /changes, R2 — the same feed as a
+// standalone full page, "without the timeline in the way"). init() only
+// builds the timeline track, its controls, and the facet dropdowns when
+// #timeline-root is present on the page; the feed itself (and a clicked
+// row's detail panel, which mounts into #timeline-root when present or
+// #feed-panel otherwise) initializes unconditionally, so a track-less page
+// still gets the exact same feed rendering — never a reimplementation. All
+// querying, grouping, classification, facet filtering, and per-kind (chart
+// vs value) detail rendering stay server-side (store/changeset/filter and
+// the /api/changesets* endpoints). This file:
 //   - fetches Changesets from /api/changesets (backdrop, facet-filtered)
-//   - renders one flag per Changeset on a single dated time track
+//   - renders one flag per Changeset on a single dated time track (Timeline
+//     page only)
 //   - groups the server-rendered facet controls into per-facet dropdowns, each
 //     value cycling off -> include -> exclude, plus an "only" shortcut, plus a
 //     single "Clear all filters" reset
@@ -246,13 +256,18 @@
 
   // ---- detail + chart diff ----
   var detailPanel = null;
+  // detailHost is where a clicked row's detail panel mounts: #timeline-root
+  // on the Timeline page, or the feed's own #feed-panel on a track-less page
+  // (e.g. the Changes page) that renders the same feed via this same script
+  // but omits the timeline track — resolved once in init().
+  var detailHost = null;
   var clickGeneration = 0;
 
   function ensureDetailPanel() {
-    if (!detailPanel && root) {
+    if (!detailPanel && detailHost) {
       detailPanel = document.createElement('div');
       detailPanel.id = 'timeline-detail-panel';
-      root.appendChild(detailPanel);
+      detailHost.appendChild(detailPanel);
     }
     return detailPanel;
   }
@@ -838,33 +853,41 @@
 
   function init() {
     root = document.getElementById('timeline-root');
-    if (!root) { return; }
-    trackWidth = Math.max(600, (root.clientWidth || 900));
+    // The feed itself, and a clicked row's detail panel, are shared by every
+    // page that renders this script (Timeline and Changes) — wired up below
+    // unconditionally. The timeline track (SVG + controls), facet dropdowns,
+    // and header Reset-zoom action are Timeline-page-only chrome, built only
+    // when #timeline-root is actually present on the page.
+    detailHost = root || document.getElementById('feed-panel');
 
-    root.appendChild(buildControls());
-    svg = svgEl('svg', { width: trackWidth, height: trackHeight, viewBox: '0 0 ' + trackWidth + ' ' + trackHeight, 'class': 'timeline-svg' });
-    svg.style.cursor = 'crosshair';
-    root.appendChild(svg);
-    attachInteractions();
+    if (root) {
+      trackWidth = Math.max(600, (root.clientWidth || 900));
 
-    var facetContainer = document.getElementById('facet-controls');
-    if (facetContainer) { buildFacetDropdowns(facetContainer); }
-    facetClearEl = document.getElementById('facet-clear');
-    if (facetClearEl) { facetClearEl.addEventListener('click', clearFacets); }
-    facetChipsEl = document.getElementById('facet-chips');
-    refreshFacetChrome();
+      root.appendChild(buildControls());
+      svg = svgEl('svg', { width: trackWidth, height: trackHeight, viewBox: '0 0 ' + trackWidth + ' ' + trackHeight, 'class': 'timeline-svg' });
+      svg.style.cursor = 'crosshair';
+      root.appendChild(svg);
+      attachInteractions();
+
+      var facetContainer = document.getElementById('facet-controls');
+      if (facetContainer) { buildFacetDropdowns(facetContainer); }
+      facetClearEl = document.getElementById('facet-clear');
+      if (facetClearEl) { facetClearEl.addEventListener('click', clearFacets); }
+      facetChipsEl = document.getElementById('facet-chips');
+      refreshFacetChrome();
+
+      // The observability shell's header carries its own "Reset zoom" action
+      // (the global timeline action) alongside the embedded track's own
+      // range-clear control built in buildControls() above; both call the same
+      // resetView so either affordance returns the visible window to the full
+      // data span.
+      var headerReset = document.getElementById('header-reset-zoom');
+      if (headerReset) { headerReset.addEventListener('click', resetView); }
+    }
 
     feedEls.list = document.getElementById('feed-list');
     feedEls.title = document.getElementById('feed-title');
     feedEls.count = document.getElementById('feed-count');
-
-    // The observability shell's header carries its own "Reset zoom" action
-    // (the global timeline action) alongside the embedded track's own
-    // range-clear control built in buildControls() above; both call the same
-    // resetView so either affordance returns the visible window to the full
-    // data span.
-    var headerReset = document.getElementById('header-reset-zoom');
-    if (headerReset) { headerReset.addEventListener('click', resetView); }
 
     loadBackdrop();
   }

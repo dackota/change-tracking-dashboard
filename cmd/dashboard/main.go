@@ -151,6 +151,7 @@ func run(configPath, dbPath, listenAddr string) error {
 	changesetDetailHandler := web.NewChangesetDetailHandler(st)
 	chartDiffHandler := web.NewChartDiffHandler(chartDiffEngine, sources, st)
 	trackersHandler := web.NewTrackersHandler(cfgWatcher)
+	changesHandler := web.NewChangesHandler()
 	mux := http.NewServeMux()
 	mux.Handle("/", timelineHandler)
 	mux.Handle("/static/", staticHandler)
@@ -158,6 +159,7 @@ func run(configPath, dbPath, listenAddr string) error {
 	mux.Handle("/api/changesets/detail", changesetDetailHandler)
 	mux.Handle("/api/changesets/detail/chart-diff", chartDiffHandler)
 	mux.Handle("GET /trackers", trackersHandler)
+	mux.Handle("GET /changes", changesHandler)
 
 	srv := &http.Server{
 		Addr:         listenAddr,
