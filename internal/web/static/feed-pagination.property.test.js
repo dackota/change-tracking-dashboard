@@ -1,0 +1,231 @@
+// feed-pagination.property.test.js — property/invariant test for
+// timeline.js's mergeChangesetPage(existing, incoming) (R25): the pure
+// transformation behind the feed's "Load more" affordance. It merges a
+// newly-fetched page of Changesets into the already-rendered list, keyed by
+// (repo, commitSha) — the identity QueryChangesets' cursor pages by — and
+// must never duplicate or drop a Changeset already present, must never
+// mutate either input, must preserve existing order (existing entries first,
+// in their original relative order), and must append each new incoming
+// entry not already present in the order it arrived.
+//
+// This is a plain Node script (no test framework, no new npm dependency),
+// mirroring internal/web/static/commit-link.property.test.js's and
+// facet-chips.property.test.js's own conventions (seeded PRNG sweep, example
+// table, adversarial-input sweep). Run with:
+//
+//   node internal/web/static/feed-pagination.property.test.js
+//
+// mergeChangesetPage is exposed for this file only via the same CommonJS
+// export hook at the bottom of timeline.js's IIFE used by commitURL/
+// repoShortName/facetChips, gated on `typeof module !== 'undefined'` — a
+// no-op in the browser.
+'use strict';
+
+const assert = require('node:assert/strict');
+const path = require('node:path');
+
+const { mergeChangesetPage } = require(path.join(__dirname, 'timeline.js'));
+
+let failures = 0;
+let checks = 0;
+
+function check(description, fn) {
+  checks++;
+  try {
+    fn();
+  } catch (err) {
+    failures++;
+    console.error(`FAIL: ${description}\n  ${err.message}`);
+  }
+}
+
+function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
+
+function cs(repo, commitSha, extra) {
+  return Object.assign({ repo, commitSha, author: 'a', committedAt: '2024-01-01T00:00:00Z', changes: [] }, extra || {});
+}
+
+// ---- example table ----
+
+check('merging an empty incoming page into an empty existing list yields an empty list', () => {
+  assert.deepEqual(mergeChangesetPage([], []), []);
+});
+
+check('merging a non-overlapping incoming page appends every incoming entry after existing entries, in order', () => {
+  const existing = [cs('r1', 'a'), cs('r1', 'b')];
+  const incoming = [cs('r1', 'c'), cs('r1', 'd')];
+  assert.deepEqual(mergeChangesetPage(existing, incoming), [cs('r1', 'a'), cs('r1', 'b'), cs('r1', 'c'), cs('r1', 'd')]);
+});
+
+check('an incoming page that exactly repeats existing entries changes nothing (no duplicates)', () => {
+  const existing = [cs('r1', 'a'), cs('r1', 'b')];
+  const incoming = [cs('r1', 'a'), cs('r1', 'b')];
+  assert.deepEqual(mergeChangesetPage(existing, incoming), existing);
+});
+
+check('a partially-overlapping incoming page only appends the genuinely new entries', () => {
+  const existing = [cs('r1', 'a'), cs('r1', 'b')];
+  const incoming = [cs('r1', 'b'), cs('r1', 'c')];
+  assert.deepEqual(mergeChangesetPage(existing, incoming), [cs('r1', 'a'), cs('r1', 'b'), cs('r1', 'c')]);
+});
+
+check('identity is (repo, commitSha) — the same commitSha in a different repo is a distinct Changeset, not a duplicate', () => {
+  const existing = [cs('r1', 'a')];
+  const incoming = [cs('r2', 'a')];
+  assert.deepEqual(mergeChangesetPage(existing, incoming), [cs('r1', 'a'), cs('r2', 'a')]);
+});
+
+check('mergeChangesetPage never mutates the existing or incoming arrays', () => {
+  const existing = [cs('r1', 'a')];
+  const incoming = [cs('r1', 'b')];
+  const existingBefore = deepClone(existing);
+  const incomingBefore = deepClone(incoming);
+  mergeChangesetPage(existing, incoming);
+  assert.deepEqual(existing, existingBefore, 'existing must not be mutated');
+  assert.deepEqual(incoming, incomingBefore, 'incoming must not be mutated');
+});
+
+check('mergeChangesetPage returns a NEW array, never the same reference as existing', () => {
+  const existing = [cs('r1', 'a')];
+  const merged = mergeChangesetPage(existing, []);
+  assert.notEqual(merged, existing);
+});
+
+// ---- property/invariant sweep: generated + adversarial inputs ----
+
+function makeRng(seed) {
+  let state = seed >>> 0;
+  return function next() {
+    state ^= state << 13; state >>>= 0;
+    state ^= state >>> 17;
+    state ^= state << 5; state >>>= 0;
+    return state / 0xffffffff;
+  };
+}
+
+const rng = makeRng(0xBADA55);
+
+function pick(rng, arr) { return arr[Math.floor(rng() * arr.length)]; }
+
+// REPOS/SHAS include a couple of adversarial, delimiter-containing values
+// (a literal space, and JSON-metacharacters) alongside the plain ones, so
+// the generated sweep below also exercises collision-prone identity inputs,
+// not just the happy-path alphabet.
+const REPOS = ['r1', 'r2', 'r1 x', 'r"e][po'];
+const SHAS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'x a', 's"h][a'];
+
+// buildRandomPages returns a random { existing, incoming } pair of Changeset
+// arrays drawn from a small (repo, sha) key space — small enough that
+// collisions between existing and incoming (the interesting case) are
+// common. existing is deduped by key on generation (mirroring its real
+// precondition: state.changesets is itself always the output of a previous
+// merge/fresh page, which never carries an internal duplicate key); incoming
+// is left free to contain an internal duplicate key, since mergeChangesetPage
+// must stay defensive against that too.
+function buildRandomPages(rng) {
+  const existing = [];
+  const existingKeys = new Set();
+  const incoming = [];
+  const existingLen = Math.floor(rng() * 6);
+  const incomingLen = Math.floor(rng() * 6);
+  for (let i = 0; i < existingLen; i++) {
+    const c = cs(pick(rng, REPOS), pick(rng, SHAS));
+    const k = keyOf(c);
+    if (existingKeys.has(k)) { continue; }
+    existingKeys.add(k);
+    existing.push(c);
+  }
+  for (let i = 0; i < incomingLen; i++) { incoming.push(cs(pick(rng, REPOS), pick(rng, SHAS))); }
+  return { existing, incoming };
+}
+
+// keyOf is the test's own identity oracle -- deliberately collision-free
+// (JSON.stringify, not a naive delimiter join) regardless of what the
+// production changesetKey implementation does internally, so that the
+// delimiter-containing REPOS/SHAS values above can never produce a false
+// positive (two distinct pairs the oracle itself conflates) in the sweep
+// below.
+function keyOf(c) { return JSON.stringify([c.repo, c.commitSha]); }
+
+check('for many generated (existing, incoming) pairs: the merged result contains exactly the union of keys (no duplicate key, no dropped key), existing entries retain their original relative order and come first, neither input is mutated, and repeated calls are deterministic', () => {
+  for (let i = 0; i < 300; i++) {
+    const { existing, incoming } = buildRandomPages(rng);
+    const existingBefore = deepClone(existing);
+    const incomingBefore = deepClone(incoming);
+
+    const merged = mergeChangesetPage(existing, incoming);
+    const mergedAgain = mergeChangesetPage(existing, incoming);
+
+    assert.deepEqual(existing, existingBefore, 'existing must not be mutated');
+    assert.deepEqual(incoming, incomingBefore, 'incoming must not be mutated');
+    assert.deepEqual(mergedAgain, merged, 'mergeChangesetPage must be deterministic across repeated calls');
+
+    // No duplicate key in the output.
+    const mergedKeys = merged.map(keyOf);
+    const uniqueKeys = new Set(mergedKeys);
+    assert.equal(mergedKeys.length, uniqueKeys.size, `merged result has a duplicate key; keys=${JSON.stringify(mergedKeys)}`);
+
+    // The union of keys (deduped, first-seen order across existing-then-incoming)
+    // must equal the merged output's keys, in that exact order.
+    const wantKeys = [];
+    const seen = new Set();
+    existing.concat(incoming).forEach((c) => {
+      const k = keyOf(c);
+      if (!seen.has(k)) { seen.add(k); wantKeys.push(k); }
+    });
+    assert.deepEqual(mergedKeys, wantKeys, `merged key order must be existing-then-new-incoming, deduped by first occurrence; existing=${JSON.stringify(existing)} incoming=${JSON.stringify(incoming)}`);
+
+    // Existing entries must all still be present, at the front, in their
+    // original relative order (a prefix of the merged result).
+    assert.deepEqual(merged.slice(0, existing.length), existing, 'existing entries must form an unchanged prefix of the merged result');
+  }
+});
+
+// ---- adversarial: malformed/degenerate inputs never throw ----
+
+const MALFORMED_LISTS = [null, undefined, {}, 'not-an-array', 42, [null], [undefined], [42], ['not-an-object'], [{}], [{ repo: 'r1' }], [{ commitSha: 'a' }], [{ repo: null, commitSha: undefined }]];
+
+check('mergeChangesetPage never throws and always returns an array for malformed/adversarial existing or incoming inputs', () => {
+  for (const existing of MALFORMED_LISTS) {
+    for (const incoming of MALFORMED_LISTS) {
+      let result;
+      assert.doesNotThrow(() => { result = mergeChangesetPage(existing, incoming); }, `threw for existing=${JSON.stringify(existing)} incoming=${JSON.stringify(incoming)}`);
+      assert.ok(Array.isArray(result), `must always return an array, got ${typeof result}`);
+    }
+  }
+});
+
+check('mergeChangesetPage handles an oversized incoming page (5000 unique entries) without throwing and appends them all', () => {
+  const existing = [cs('r1', 'seed')];
+  const incoming = [];
+  for (let i = 0; i < 5000; i++) { incoming.push(cs('big', 'sha-' + i)); }
+  let result;
+  assert.doesNotThrow(() => { result = mergeChangesetPage(existing, incoming); });
+  assert.equal(result.length, 5001);
+});
+
+// ---- adversarial: (repo, commitSha) identity must never collide ----
+
+check('changesetKey identity (repo, commitSha) never collides even when repo/commitSha values themselves contain the naive join delimiter — two distinct pairs that would collide under a plain space-joined key stay distinct', () => {
+  // Under a naive `repo + ' ' + commitSha` key, ('r1 x', 'a') and
+  // ('r1', 'x a') both produce the identical string "r1 x a" even though
+  // they are two genuinely different (repo, commitSha) pairs.
+  const existing = [cs('r1 x', 'a')];
+  const incoming = [cs('r1', 'x a')];
+  const merged = mergeChangesetPage(existing, incoming);
+  assert.equal(merged.length, 2, `two genuinely distinct (repo, commitSha) pairs collided into one entry; merged=${JSON.stringify(merged)}`);
+});
+
+check('mergeChangesetPage correctly de-dupes an entry whose key is the literal string "__proto__" (a malformed non-object entry), instead of the seen-map\'s own object-literal prototype silently swallowing the assignment', () => {
+  const existing = ['__proto__'];
+  const incoming = ['__proto__', '__proto__'];
+  const merged = mergeChangesetPage(existing, incoming);
+  assert.deepEqual(merged, ['__proto__'], `a "__proto__"-keyed entry must still be de-duped, not duplicated; merged=${JSON.stringify(merged)}`);
+});
+
+if (failures > 0) {
+  console.error(`\n${failures}/${checks} checks failed`);
+  process.exitCode = 1;
+} else {
+  console.log(`PASS: ${checks}/${checks} checks passed (feed-pagination property test)`);
+}

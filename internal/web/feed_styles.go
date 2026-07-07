@@ -27,6 +27,10 @@ const feedStyles = `
     .feed-cell-author { color: var(--oc-muted); }
     .feed-empty-row td { text-align: center; color: var(--oc-muted); font-size: 0.9rem; padding: 1.5rem 1rem; }
     .feed-clear-btn { font-size: 0.8rem; padding: 0.3rem 0.8rem; margin-left: 0.6rem; border: 1px solid var(--oc-accent); color: var(--oc-accent); background: #fff; border-radius: 6px; cursor: pointer; }
+    .feed-load-more-row td { text-align: center; padding: 0.7rem 1rem; }
+    .feed-load-more-btn { font-size: 0.82rem; font-weight: 600; padding: 0.35rem 1rem; border: 1px solid var(--oc-accent); color: var(--oc-accent); background: #fff; border-radius: 6px; cursor: pointer; }
+    .feed-load-more-btn:hover:not(:disabled) { background: var(--oc-accent); color: #fff; }
+    .feed-load-more-btn:disabled { opacity: 0.6; cursor: default; }
 `
 
 // detailStyles is the CSS for a Changeset's expanded detail panel (per-Change

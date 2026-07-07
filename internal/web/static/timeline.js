@@ -85,7 +85,10 @@
     windowMs: DEFAULT_WINDOW_MS,
     changesets: [],
     loaded: false,
-    hasFitWindow: false
+    hasFitWindow: false,
+    nextCursor: '',     // R25: the server's opaque cursor for the next page beyond what's loaded, or '' when there is none
+    loadingMore: false, // R25: true while a loadMore() fetch is in flight, guarding a double-click from racing two fetches
+    loadMoreError: false // true when the most recent loadMore() fetch failed (non-200/parse/network error) — distinct from a real empty nextCursor, so a transient hiccup never silently removes the Load more row
   };
 
   var facetState = {};   // facetState[facet][value] = 'include' | 'exclude'
@@ -143,6 +146,53 @@
   }
   function repoColor(repo) {
     return REPO_COLORS[repo] || REPO_COLORS[repoShortName(repo)] || DEFAULT_COLOR;
+  }
+
+  // changesetKey returns the (repo, commitSha) identity string a Changeset
+  // is keyed by for merge/de-dup purposes (R25) — the same pair
+  // QueryChangesets' cursor pages by, so a page boundary can never split a
+  // Changeset's identity. Defensive against a non-object or missing-field
+  // entry: coerced via String() rather than thrown on, so a malformed page
+  // entry can never crash the merge. Joined via JSON.stringify of the
+  // [repo, commitSha] pair — never a literal-delimiter join (e.g.
+  // `repo + ' ' + commitSha`) — because repo/commitSha are untrusted,
+  // server-observed strings that can themselves contain any delimiter a
+  // fixed join would pick; JSON.stringify's length-prefixed-by-construction
+  // encoding of each element can't be reproduced by two different (repo,
+  // commitSha) pairs.
+  function changesetKey(cs) {
+    if (!cs || typeof cs !== 'object') { return String(cs); }
+    return JSON.stringify([String(cs.repo), String(cs.commitSha)]);
+  }
+  // mergeChangesetPage (R25) is the pure transformation behind "Load more":
+  // it merges a newly-fetched page's Changesets into the already-rendered
+  // list without ever duplicating or dropping one already present, keyed by
+  // (repo, commitSha). Existing entries keep their original relative order
+  // and come first; each incoming entry not already present is appended in
+  // the order it arrived. Returns a NEW array and never mutates either
+  // input. Guards a non-array existing/incoming (treated as empty) so a
+  // defensive caller never has to pre-validate.
+  function mergeChangesetPage(existing, incoming) {
+    var existingArr = Array.isArray(existing) ? existing : [];
+    var incomingArr = Array.isArray(incoming) ? incoming : [];
+    // Object.create(null) — not {} — so a changesetKey() result that happens
+    // to equal a magic Object.prototype key name (e.g. "__proto__", reachable
+    // via the non-object fallback branch above for a malformed entry) is a
+    // plain own data property here, never the object's own [[Prototype]]
+    // assignment that an {} literal's inherited __proto__ setter would
+    // silently swallow (which would make that key's "have I seen this
+    // already" check always false, defeating de-dup for it).
+    var seen = Object.create(null);
+    existingArr.forEach(function (cs) { seen[changesetKey(cs)] = true; });
+    var merged = existingArr.slice();
+    incomingArr.forEach(function (cs) {
+      var key = changesetKey(cs);
+      if (!Object.prototype.hasOwnProperty.call(seen, key)) {
+        seen[key] = true;
+        merged.push(cs);
+      }
+    });
+    return merged;
   }
 
   function windowStart() { return state.windowEnd - state.windowMs; }
@@ -216,16 +266,36 @@
     return pairs.map(function (p) { return encodeURIComponent(p[0]) + '=' + encodeURIComponent(p[1]); }).join('&');
   }
 
-  function fetchBackdrop(onDone) {
+  // fetchChangesetsPage (R25) fetches one page of Changesets from
+  // /api/changesets: the first page when cursor is '' (the cursor param is
+  // omitted entirely, matching the server's own "empty cursor means start
+  // from the top" contract), or the next page when cursor is a prior
+  // response's nextCursor. onDone is always called with a
+  // {changesets, nextCursor, error} object — never a bare array — so callers
+  // never have to special-case the first fetch vs. a subsequent one. Any
+  // failure (non-200, malformed JSON, network error) reports error: true
+  // alongside an empty page — deliberately kept DISTINCT from a genuinely
+  // successful response with an empty nextCursor (the server's real
+  // end-of-data signal), so a caller like loadMore can tell "a transient
+  // hiccup happened, the Load more control should stay" apart from "there is
+  // truly nothing more to load" instead of the two collapsing into the same
+  // shape. A successful response never sets error (only the three failure
+  // paths below do), so callers can test `if (page.error)` without also
+  // checking nextCursor.
+  function fetchChangesetsPage(cursor, onDone) {
     var pairs = buildFilterParams();
     pairs.push(['limit', String(BACKDROP_LIMIT)]);
+    if (cursor) { pairs.push(['cursor', cursor]); }
     var xhr = new XMLHttpRequest();
     xhr.open('GET', API_PATH + '?' + buildQueryString(pairs), true);
     xhr.onload = function () {
-      if (xhr.status !== 200) { onDone([]); return; }
-      try { onDone((JSON.parse(xhr.responseText).changesets) || []); } catch (e) { onDone([]); }
+      if (xhr.status !== 200) { onDone({ changesets: [], nextCursor: '', error: true }); return; }
+      try {
+        var parsed = JSON.parse(xhr.responseText);
+        onDone({ changesets: parsed.changesets || [], nextCursor: parsed.nextCursor || '' });
+      } catch (e) { onDone({ changesets: [], nextCursor: '', error: true }); }
     };
-    xhr.onerror = function () { onDone([]); };
+    xhr.onerror = function () { onDone({ changesets: [], nextCursor: '', error: true }); };
     xhr.send();
   }
 
@@ -432,6 +502,17 @@
 
   function clampWindow(ms) { return Math.max(MIN_WINDOW_MS, Math.min(MAX_WINDOW_MS, ms)); }
 
+  // windowCoversAllData reports whether the visible window already spans
+  // every currently-loaded Changeset (i.e. the user has not manually zoomed
+  // to a sub-range). Drives the embedded Reset zoom control's disabled state
+  // (syncWindowInputs) and, since R25, loadMore's decision on whether
+  // re-fitting the window after a Load more is safe (won't yank a
+  // manually-chosen view out from under the user).
+  function windowCoversAllData() {
+    var span = dataSpan();
+    return !span || (windowStart() <= span.min && state.windowEnd >= span.max);
+  }
+
   function setWindow(startMs, endMs) {
     if (endMs <= startMs) { return; }
     state.windowMs = clampWindow(endMs - startMs);
@@ -462,10 +543,8 @@
     if (winEls.from) { winEls.from.value = toLocalInput(windowStart()); }
     if (winEls.to) { winEls.to.value = toLocalInput(state.windowEnd); }
     if (winEls.reset) {
-      var span = dataSpan();
       // "Reset" is meaningful whenever the view doesn't already cover all data.
-      var coversAll = !span || (windowStart() <= span.min && state.windowEnd >= span.max);
-      winEls.reset.disabled = coversAll;
+      winEls.reset.disabled = windowCoversAllData();
     }
   }
 
@@ -549,6 +628,47 @@
 
     return tr;
   }
+  // buildLoadMoreRow (R25) renders the "Load more" affordance as one more
+  // full-width row (one <td> spanning every column) appended after the
+  // visible feed rows — the same in-table-row convention buildEmptyRow uses
+  // for loading/empty states, so the feed never needs a footer outside the
+  // <table> for this. Disabled + relabeled while a fetch is already in
+  // flight (state.loadingMore) so a fast double-click can't be mistaken for
+  // two separate requests. When the most recent attempt failed
+  // (state.loadMoreError), the button stays in place — clicking it retries —
+  // alongside a brief inline message, so a transient fetch failure is
+  // visible instead of silently looking identical to "no more data".
+  function buildLoadMoreRow() {
+    var tr = document.createElement('tr');
+    tr.className = 'feed-load-more-row';
+    var td = document.createElement('td');
+    td.colSpan = FEED_COLUMN_COUNT;
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'feed-load-more-btn';
+    btn.textContent = state.loadingMore ? 'Loading more…' : 'Load more';
+    btn.disabled = state.loadingMore;
+    btn.addEventListener('click', loadMore);
+    td.appendChild(btn);
+    if (state.loadMoreError && !state.loadingMore) {
+      var err = document.createElement('span');
+      err.className = 'feed-load-more-error';
+      err.textContent = ' Could not load more — try again.';
+      td.appendChild(err);
+    }
+    tr.appendChild(td);
+    return tr;
+  }
+  // maybeAppendLoadMoreRow appends buildLoadMoreRow() whenever
+  // state.nextCursor is non-empty, regardless of how many rows (if any) are
+  // currently visible. Extracted so the guard lives at a single chokepoint —
+  // renderFeed calls it both after the zero-visible-window empty state and
+  // after the normal visible-rows loop, so a user zoomed into a window with
+  // no currently-visible Changesets can still trigger loadMore() to page in
+  // the next (older) batch, rather than being forced to reset zoom first.
+  function maybeAppendLoadMoreRow() {
+    if (state.nextCursor) { feedEls.list.appendChild(buildLoadMoreRow()); }
+  }
   function renderFeed() {
     if (!feedEls.list) { return; }
     while (feedEls.list.firstChild) { feedEls.list.removeChild(feedEls.list.firstChild); }
@@ -577,9 +697,11 @@
     }
     if (visible.length === 0) {
       feedEls.list.appendChild(buildEmptyRow('No changes in this window' + (activeFilterCount() > 0 ? ' or matching the current filters.' : '.'), true));
+      maybeAppendLoadMoreRow();
       return;
     }
     visible.forEach(function (cs) { feedEls.list.appendChild(buildFeedRow(cs)); });
+    maybeAppendLoadMoreRow();
   }
 
   // ---- facet dropdowns ----
@@ -748,8 +870,22 @@
   }
 
   // ---- backdrop load ----
-  function renderBackdrop(changesets) {
-    state.changesets = changesets;
+  // backdropGeneration (R25) guards against a loadMore() fetch that is still
+  // in flight when a fresh backdrop reload (loadBackdrop) fires — mirroring
+  // clickGeneration's exact guard for the analogous stale-async-response
+  // hazard around onFlagClick. Bumped on every loadBackdrop call; loadMore
+  // captures the generation it fired under and compares it against the
+  // current value before merging its (now possibly stale, differently
+  // filtered) page into state.
+  var backdropGeneration = 0;
+
+  // renderBackdrop (the fetchChangesetsPage onDone for a FRESH first page)
+  // always replaces state.changesets/state.nextCursor wholesale — pagination
+  // state from a prior filter/window never survives a reload. Contrast with
+  // loadMore's onDone below, which merges rather than replaces.
+  function renderBackdrop(page) {
+    state.changesets = page.changesets;
+    state.nextCursor = page.nextCursor;
     state.loaded = true;
     if (!state.hasFitWindow) { state.hasFitWindow = true; fitWindowToData(); }
     render();
@@ -758,10 +894,72 @@
   }
   function loadBackdrop() {
     state.loaded = false;
+    state.loadMoreError = false;
     renderFeed();
-    fetchBackdrop(renderBackdrop);
+    backdropGeneration++;
+    var gen = backdropGeneration;
+    fetchChangesetsPage('', function (page) {
+      if (gen !== backdropGeneration) { return; }
+      renderBackdrop(page);
+    });
   }
   function onFilterChanged() { loadBackdrop(); }
+
+  // loadMore (R25) fetches the next page using the cursor the last page
+  // returned, and merges it into state.changesets (never a replace — the
+  // Changesets already loaded and possibly already viewed must never
+  // disappear). Guarded against firing a second overlapping fetch (a fast
+  // double-click) and against firing with no further page available.
+  //
+  // windowCoversAllData() is evaluated INSIDE the callback, once the
+  // response actually arrives — never captured before the fetch fires.
+  // Nothing disables drag-zoom, wheel-zoom, pan, or the From/To inputs while
+  // a "Load more" fetch is in flight, so a decision captured at
+  // request-time can go stale before the response arrives and would
+  // silently yank a zoom/pan the user made in the meantime; evaluating it at
+  // use-time picks up any such change. It is evaluated against the
+  // PRE-merge changesets/span (before mergeChangesetPage runs below) rather
+  // than the post-merge one: the newly-fetched page is, by construction,
+  // older than everything already loaded, so a post-merge span's min would
+  // almost always fall outside a window that covered only the pre-merge
+  // data — checking post-merge would make the refit below effectively never
+  // fire, defeating its whole purpose (making the newly-loaded, older
+  // Changesets actually visible). So the question this answers is exactly:
+  // "as of right now — including anything the user did while this fetch was
+  // in flight — does the window still show everything it showed before this
+  // page arrived?" If yes, refit so the new page is visible too; if the user
+  // has since zoomed to a sub-range, leave it untouched. Also guarded (via
+  // backdropGeneration) against a fresh filter reload superseding this fetch
+  // before it resolves — see backdropGeneration's own doc comment above
+  // loadBackdrop.
+  //
+  // A fetch failure (page.error) is handled distinctly from a real
+  // end-of-data response: state.nextCursor is left untouched (never
+  // overwritten with the same '' a legitimate last-page response reports)
+  // and state.loadMoreError drives an inline message on the still-present
+  // Load more control, so a transient hiccup can never be mistaken for
+  // "there is nothing more" or silently swallowed.
+  function loadMore() {
+    if (state.loadingMore || !state.nextCursor) { return; }
+    state.loadingMore = true;
+    state.loadMoreError = false;
+    renderFeed();
+    var gen = backdropGeneration;
+    fetchChangesetsPage(state.nextCursor, function (page) {
+      state.loadingMore = false;
+      if (gen !== backdropGeneration) { return; }
+      if (page.error) {
+        state.loadMoreError = true;
+        renderFeed();
+        return;
+      }
+      var shouldRefitWindow = windowCoversAllData();
+      state.changesets = mergeChangesetPage(state.changesets, page.changesets);
+      state.nextCursor = page.nextCursor;
+      if (shouldRefitWindow) { fitWindowToData(); }
+      afterWindowChange();
+    });
+  }
 
   // ---- interactions ----
   function zoom(factor) { state.windowMs = clampWindow(state.windowMs / factor); afterWindowChange(); }
@@ -907,8 +1105,12 @@
   // (commit-link.property.test.js). `module` is never defined in a browser,
   // so this branch never runs client-side — the app still ships as a single
   // first-party <script src="/static/timeline.js"> (R18); no test-only code
-  // path is reachable in production.
+  // path is reachable in production. loadMore/state are exported for
+  // load-more.behavior.test.js's async-timing regression coverage; every
+  // DOM touch reachable from loadMore (render/syncWindowInputs/renderFeed)
+  // is itself guarded on the relevant element existing, so calling it here
+  // with no DOM present is safe.
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { commitURL: commitURL, repoShortName: repoShortName, facetChips: facetChips };
+    module.exports = { commitURL: commitURL, repoShortName: repoShortName, facetChips: facetChips, mergeChangesetPage: mergeChangesetPage, loadMore: loadMore, state: state };
   }
 })();
