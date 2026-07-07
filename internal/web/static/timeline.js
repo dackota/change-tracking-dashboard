@@ -966,6 +966,7 @@
   function loadBackdrop() {
     state.loaded = false;
     state.loadMoreError = false;
+    state.backdropError = false;
     renderFeed();
     backdropGeneration++;
     var gen = backdropGeneration;

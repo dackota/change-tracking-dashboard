@@ -162,6 +162,19 @@ check('a subsequent successful reload after a failure clears state.backdropError
   assert.equal(state.nextCursor, 'fresh-cursor', 'a successful reload must replace state.nextCursor with the fresh page\'s cursor');
 });
 
+// ---- loadBackdrop must reset its OWN error flag synchronously too, mirroring loadMore ----
+
+check('loadBackdrop() resets a stale state.backdropError synchronously — before its fetch resolves — exactly like loadMore() resets state.loadMoreError, so a prior failure\'s flag never lingers into a fresh reload\'s in-flight window', () => {
+  resetState();
+  state.backdropError = true; // simulate a prior failed load whose error flag was never cleared
+
+  const xhr = installControllableXHR();
+  loadBackdrop();
+
+  assert.ok(xhr.instance, 'loadBackdrop did not issue a request');
+  assert.equal(state.backdropError, false, 'loadBackdrop() must reset state.backdropError synchronously when invoked (before the async fetch resolves), the same way it already resets state.loadMoreError — otherwise a stale backdropError=true from a prior failed load persists into the new in-flight window, masked today only by renderFeed\'s !state.loaded early-return and renderBackdrop\'s unconditional overwrite on completion');
+});
+
 if (failures > 0) {
   console.error(`\n${failures}/${checks} checks failed`);
   process.exitCode = 1;
