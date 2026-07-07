@@ -142,12 +142,14 @@ func run(configPath, dbPath, listenAddr string) error {
 	changesetsHandler := web.NewChangesetsHandler(st)
 	changesetDetailHandler := web.NewChangesetDetailHandler(st)
 	chartDiffHandler := web.NewChartDiffHandler(chartDiffEngine, sources, st)
+	trackersHandler := web.NewTrackersHandler(cfgWatcher)
 	mux := http.NewServeMux()
 	mux.Handle("/", timelineHandler)
 	mux.Handle("/static/", staticHandler)
 	mux.Handle("/api/changesets", changesetsHandler)
 	mux.Handle("/api/changesets/detail", changesetDetailHandler)
 	mux.Handle("/api/changesets/detail/chart-diff", chartDiffHandler)
+	mux.Handle("GET /trackers", trackersHandler)
 
 	srv := &http.Server{
 		Addr:         listenAddr,

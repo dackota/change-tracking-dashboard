@@ -25,35 +25,7 @@ const timelineTemplate = `<!DOCTYPE html>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Change Tracking Dashboard</title>
   <style>
-    :root {
-      /* option-C palette tokens — the single system for the whole page:
-         sidebar, header, KPI tiles, facet controls, timeline track, feed,
-         detail view, and Chart diff (R17). */
-      --oc-canvas:#f1f5f9; --oc-panel:#fff; --oc-ink:#0f172a; --oc-muted:#64748b;
-      --oc-line:#e2e8f0; --oc-line-soft:#f1f5f9; --oc-accent:#2563eb;
-      --oc-sidebar:#0f172a; --oc-sidebar-ink:#cbd5e1;
-      --oc-danger:#dc3545; --oc-success:#198754;
-      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    }
-    * { box-sizing: border-box; }
-    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; background: var(--oc-canvas); color: var(--oc-ink); }
-
-    /* App shell: persistent sidebar + main content column */
-    .app { display: flex; min-height: 100vh; align-items: stretch; }
-    .sidebar { flex: 0 0 210px; background: var(--oc-sidebar); color: var(--oc-sidebar-ink); padding: 1.1rem 0.9rem; display: flex; flex-direction: column; gap: 0.3rem; }
-    .sidebar-brand { display: flex; align-items: center; gap: 0.55rem; padding: 0.2rem 0.4rem 1rem; font-weight: 650; color: #fff; font-size: 0.95rem; }
-    .sidebar-logo { width: 24px; height: 24px; border-radius: 7px; background: linear-gradient(135deg, #2563eb, #06b6d4); display: grid; place-items: center; font-size: 0.85rem; }
-    .sidebar-nav { display: flex; flex-direction: column; gap: 0.3rem; }
-    .nav-item { font-size: 0.84rem; color: var(--oc-sidebar-ink); padding: 0.5rem 0.6rem; border-radius: 8px; display: flex; align-items: center; gap: 0.55rem; }
-    .nav-item-active { background: rgba(37, 99, 235, 0.18); color: #fff; }
-
-    .main { flex: 1 1 auto; min-width: 0; padding: 1.4rem 1.8rem 4rem; }
-    .page-header { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 1.2rem; }
-    .page-header h1 { margin: 0; font-size: 1.25rem; font-weight: 700; letter-spacing: -0.01em; }
-    .page-subtitle { color: var(--oc-muted); font-size: 0.85rem; margin: 0; }
-    .page-header .spacer { flex: 1; }
-    .page-header .btn { font-size: 0.8rem; background: var(--oc-panel); border: 1px solid var(--oc-line); border-radius: 8px; padding: 0.4rem 0.75rem; cursor: pointer; color: var(--oc-ink); }
-
+` + shellStyles + `
     /* KPI tiles */
     .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.9rem; margin-bottom: 1.3rem; }
     .kpi-tile { background: var(--oc-panel); border: 1px solid var(--oc-line); border-radius: 12px; padding: 0.9rem 1rem; }
@@ -159,20 +131,9 @@ const timelineTemplate = `<!DOCTYPE html>
 </head>
 <body>
   <div class="app">
-    <aside class="sidebar">
-      <div class="sidebar-brand"><span class="sidebar-logo">◆</span> ChangeTrack</div>
-      <nav class="sidebar-nav" aria-label="Primary">
-        {{range .SidebarNav}}<div class="nav-item{{if .Active}} nav-item-active{{end}}" data-nav="{{.Key}}"{{if .Active}} aria-current="page"{{end}}>{{.Label}}</div>
-        {{end}}
-      </nav>
-    </aside>
+    {{template "sidebar" .}}
     <main class="main">
-      <div class="page-header">
-        <h1>Timeline</h1>
-        <p class="page-subtitle">Change activity across tracked repositories.</p>
-        <span class="spacer"></span>
-        <button type="button" id="header-reset-zoom" class="btn">Reset zoom</button>
-      </div>
+      {{template "header" .}}
 
       <section class="kpis" aria-label="Headline metrics">
         <div class="kpi-tile" data-kpi="changes" data-value="{{.KPI.Changes}}" data-changesets="{{.KPI.Changesets}}">
