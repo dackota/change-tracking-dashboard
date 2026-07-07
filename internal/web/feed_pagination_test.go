@@ -35,9 +35,8 @@ func TestTimelineJS_FetchChangesetsPage_OmitsCursorParamOnFirstPage(t *testing.T
 // TestTimelineJS_FetchChangesetsPage_ReportsChangesetsAndNextCursor verifies
 // the fetch's onDone callback is handed both the page's changesets and its
 // nextCursor — the wiring point that makes further pagination possible at
-// all — for both the success and failure (non-200/parse-error/network-error)
-// paths, where nextCursor must default to "" rather than being omitted or
-// left stale.
+// all — for the success path, where nextCursor must default to "" rather
+// than being omitted or left stale.
 func TestTimelineJS_FetchChangesetsPage_ReportsChangesetsAndNextCursor(t *testing.T) {
 	t.Parallel()
 
@@ -50,13 +49,34 @@ func TestTimelineJS_FetchChangesetsPage_ReportsChangesetsAndNextCursor(t *testin
 	if !strings.Contains(fn, "parsed.nextCursor") {
 		t.Errorf("fetchChangesetsPage does not read nextCursor off the parsed response:\n%s", fn)
 	}
+}
+
+// TestTimelineJS_FetchChangesetsPage_FailureReportsErrorDistinctFromEndOfData
+// verifies a fetch failure (non-200, malformed JSON, or a network error)
+// reports error: true alongside an empty page — deliberately distinct from a
+// genuinely successful response with an empty nextCursor (the server's real
+// end-of-data signal). Collapsing both to the same
+// `{ changesets: [], nextCursor: "" }` shape (the pre-fix behavior) made a
+// transient hiccup during "Load more" indistinguishable from having reached
+// the end of the data, silently and permanently removing the Load more
+// control with no error surfaced.
+func TestTimelineJS_FetchChangesetsPage_FailureReportsErrorDistinctFromEndOfData(t *testing.T) {
+	t.Parallel()
+
+	body := servedTimelineJS(t)
+	fn := extractFunctionBody(t, body, "fetchChangesetsPage")
 
 	for _, want := range []string{
-		"onDone({ changesets: [], nextCursor: '' })",
+		"onDone({ changesets: [], nextCursor: '', error: true })",
 	} {
-		if strings.Count(fn, want) < 1 {
-			t.Errorf("fetchChangesetsPage does not fail safe to %q on a non-200/parse/network error:\n%s", want, fn)
+		if strings.Count(fn, want) < 3 {
+			t.Errorf("fetchChangesetsPage does not report %q on all three failure paths (non-200, parse error, network error):\n%s", want, fn)
 		}
+	}
+	// The success path must never set error, so a caller can safely test
+	// `if (page.error)` without also checking nextCursor.
+	if !strings.Contains(fn, "onDone({ changesets: parsed.changesets || [], nextCursor: parsed.nextCursor || '' });") {
+		t.Errorf("fetchChangesetsPage's success path does not report a plain {changesets, nextCursor} page with no error flag:\n%s", fn)
 	}
 }
 
@@ -88,10 +108,13 @@ func TestTimelineJS_LoadBackdrop_ReplacesStateFromFreshFirstPage(t *testing.T) {
 }
 
 // TestTimelineJS_RenderFeed_RendersLoadMoreRowOnlyWhenNextCursorPresent
-// verifies R25's core affordance: a "Load more" row is appended after the
-// visible feed rows exactly when state.nextCursor is non-empty, and never
-// during the loading state or either empty/no-match state (those already
-// render their own single full-width row and return early).
+// verifies R25's core affordance: a "Load more" row is appended exactly when
+// state.nextCursor is non-empty — both after the visible feed rows (the
+// common case) AND after the zero-visible-window empty state (a user zoomed
+// into a sub-range with no currently-visible Changesets must still be able
+// to page in the next, older batch rather than being forced to reset zoom
+// first) — but never during the loading state or the "nothing loaded at
+// all" (total == 0) empty state, which return before either call site.
 func TestTimelineJS_RenderFeed_RendersLoadMoreRowOnlyWhenNextCursorPresent(t *testing.T) {
 	t.Parallel()
 
@@ -114,21 +137,45 @@ func TestTimelineJS_RenderFeed_RendersLoadMoreRowOnlyWhenNextCursorPresent(t *te
 		t.Errorf("buildLoadMoreRow's button is not wired to loadMore:\n%s", loadMoreRowFn)
 	}
 
-	renderFeedFn := extractFunctionBody(t, body, "renderFeed")
-	if !strings.Contains(renderFeedFn, "if (state.nextCursor) { feedEls.list.appendChild(buildLoadMoreRow()); }") {
-		t.Errorf("renderFeed does not append buildLoadMoreRow() guarded on state.nextCursor:\n%s", renderFeedFn)
+	if !strings.Contains(body, "function maybeAppendLoadMoreRow(") {
+		t.Fatalf("served timeline.js has no maybeAppendLoadMoreRow — expected a single chokepoint guarding the Load more row on state.nextCursor")
+	}
+	maybeAppendFn := extractFunctionBody(t, body, "maybeAppendLoadMoreRow")
+	if !strings.Contains(maybeAppendFn, "if (state.nextCursor) { feedEls.list.appendChild(buildLoadMoreRow()); }") {
+		t.Errorf("maybeAppendLoadMoreRow does not guard appending buildLoadMoreRow() on state.nextCursor:\n%s", maybeAppendFn)
 	}
 
-	// The Load more row must be appended strictly after the visible-rows
-	// loop (i.e. outside the loading/total==0/visible==0 early-return
-	// paths), so it can never render standing in for actual feed content.
+	renderFeedFn := extractFunctionBody(t, body, "renderFeed")
+
+	// maybeAppendLoadMoreRow() must be called from exactly two places: once
+	// after the zero-visible-window empty state (so a user zoomed into an
+	// empty sub-range can still page in more data), and once after the
+	// visible-rows loop (the common case) — never inside the loading or
+	// total==0 ("nothing loaded at all") early returns.
+	zeroVisibleIdx := strings.Index(renderFeedFn, "No changes in this window")
 	visibleLoopIdx := strings.Index(renderFeedFn, "visible.forEach(function (cs) { feedEls.list.appendChild(buildFeedRow(cs)); });")
-	loadMoreGuardIdx := strings.Index(renderFeedFn, "if (state.nextCursor) { feedEls.list.appendChild(buildLoadMoreRow()); }")
+	if zeroVisibleIdx == -1 {
+		t.Fatalf("could not locate the zero-visible-window empty state in renderFeed:\n%s", renderFeedFn)
+	}
 	if visibleLoopIdx == -1 {
 		t.Fatalf("could not locate the visible-rows render loop in renderFeed:\n%s", renderFeedFn)
 	}
-	if loadMoreGuardIdx <= visibleLoopIdx {
-		t.Errorf("the Load more row must be appended after the visible-rows loop, not before/inside it:\n%s", renderFeedFn)
+
+	firstCallIdx := strings.Index(renderFeedFn, "maybeAppendLoadMoreRow();")
+	if firstCallIdx == -1 {
+		t.Fatalf("renderFeed does not call maybeAppendLoadMoreRow() at all:\n%s", renderFeedFn)
+	}
+	secondCallRel := strings.Index(renderFeedFn[firstCallIdx+1:], "maybeAppendLoadMoreRow();")
+	if secondCallRel == -1 {
+		t.Fatalf("expected renderFeed to call maybeAppendLoadMoreRow() twice (zero-visible-window branch and after the visible-rows loop), found only once:\n%s", renderFeedFn)
+	}
+	secondCallIdx := secondCallRel + firstCallIdx + 1
+
+	if firstCallIdx <= zeroVisibleIdx || firstCallIdx >= visibleLoopIdx {
+		t.Errorf("expected the first maybeAppendLoadMoreRow() call to sit inside the zero-visible-window branch (after its empty-row message, before the visible-rows loop):\n%s", renderFeedFn)
+	}
+	if secondCallIdx <= visibleLoopIdx {
+		t.Errorf("expected the second maybeAppendLoadMoreRow() call to come after the visible-rows loop:\n%s", renderFeedFn)
 	}
 }
 
@@ -245,5 +292,103 @@ func TestTimelineJS_LoadMore_ExtendsWindowOnlyWhenNotManuallyZoomed(t *testing.T
 	}
 	if !strings.Contains(fn, "afterWindowChange();") {
 		t.Errorf("loadMore does not re-render (afterWindowChange) after merging the new page:\n%s", fn)
+	}
+}
+
+// TestTimelineJS_LoadMore_RecomputesWindowRefitDecisionAtUseTime is a
+// correctness-gate regression test: windowCoversAllData() must be evaluated
+// INSIDE the fetchChangesetsPage callback (i.e. once the response actually
+// arrives), never captured in a variable before the async fetch fires. A
+// decision captured at request-time can go stale — the user can
+// drag-zoom/wheel-zoom/pan/edit the From-To inputs while the "Load more"
+// fetch is in flight, since none of those are disabled during it — and a
+// stale `true` would silently discard a zoom/pan the user just made once the
+// response arrives. See load-more.behavior.test.js for the corresponding
+// async-timing behavioral proof (this repo has no DOM test harness, so that
+// file exercises the real callback timing; this test locks the static
+// source shape that makes it possible).
+func TestTimelineJS_LoadMore_RecomputesWindowRefitDecisionAtUseTime(t *testing.T) {
+	t.Parallel()
+
+	body := servedTimelineJS(t)
+	loadMoreFn := extractFunctionBody(t, body, "loadMore")
+
+	callSiteIdx := strings.Index(loadMoreFn, "fetchChangesetsPage(state.nextCursor,")
+	if callSiteIdx == -1 {
+		t.Fatalf("could not locate the fetchChangesetsPage call site in loadMore:\n%s", loadMoreFn)
+	}
+	// windowCoversAllData() must not appear before the call site (that would
+	// mean it's captured pre-fetch); it must appear inside the callback that
+	// follows.
+	if idx := strings.Index(loadMoreFn[:callSiteIdx], "windowCoversAllData()"); idx != -1 {
+		t.Errorf("windowCoversAllData() is evaluated BEFORE fetchChangesetsPage fires (request-time), not inside its callback (use-time) — this is the stale-snapshot race:\n%s", loadMoreFn)
+	}
+
+	pageCallback := extractCallbackAfter(t, loadMoreFn, "fetchChangesetsPage(state.nextCursor,")
+	refitIdx := strings.Index(pageCallback, "windowCoversAllData()")
+	mergeIdx := strings.Index(pageCallback, "mergeChangesetPage(")
+	fitIdx := strings.Index(pageCallback, "fitWindowToData();")
+	if refitIdx == -1 {
+		t.Fatalf("loadMore's onDone callback does not evaluate windowCoversAllData():\n%s", pageCallback)
+	}
+	if mergeIdx == -1 {
+		t.Fatalf("could not locate mergeChangesetPage( in loadMore's onDone callback:\n%s", pageCallback)
+	}
+	if fitIdx == -1 {
+		t.Fatalf("could not locate fitWindowToData(); in loadMore's onDone callback:\n%s", pageCallback)
+	}
+	// windowCoversAllData() must be evaluated against the PRE-merge span: the
+	// newly-fetched page is, by construction, older than everything already
+	// loaded, so checking the POST-merge span would almost always find the
+	// window no longer covers it — defeating the refit's purpose (making the
+	// newly-loaded, older Changesets actually visible). See loadMore's own
+	// doc comment for the full rationale.
+	if refitIdx > mergeIdx {
+		t.Errorf("windowCoversAllData() must be evaluated BEFORE mergeChangesetPage(...) reassigns state.changesets, or it measures the wrong (post-merge) span:\n%s", pageCallback)
+	}
+	if fitIdx < mergeIdx {
+		t.Errorf("fitWindowToData() must run AFTER the page is merged into state.changesets, or it fits against stale data:\n%s", pageCallback)
+	}
+}
+
+// TestTimelineJS_LoadMore_DistinguishesFetchFailureFromEndOfData verifies a
+// fetch failure (page.error) during "Load more" is handled distinctly from a
+// real end-of-data response: state.nextCursor must be left untouched
+// (never overwritten with the same empty string a legitimate last-page response
+// reports, which would permanently and silently remove the Load more
+// control on a transient hiccup) and state.loadMoreError must be set so the
+// UI can surface it.
+func TestTimelineJS_LoadMore_DistinguishesFetchFailureFromEndOfData(t *testing.T) {
+	t.Parallel()
+
+	body := servedTimelineJS(t)
+	loadMoreFn := extractFunctionBody(t, body, "loadMore")
+	pageCallback := extractCallbackAfter(t, loadMoreFn, "fetchChangesetsPage(state.nextCursor,")
+
+	errorGuardIdx := strings.Index(pageCallback, "if (page.error)")
+	if errorGuardIdx == -1 {
+		t.Fatalf("loadMore's onDone callback does not branch on page.error:\n%s", pageCallback)
+	}
+	errorBranch, ok := braceDelimitedSpan(pageCallback, errorGuardIdx)
+	if !ok {
+		t.Fatalf("could not find the page.error branch body:\n%s", pageCallback)
+	}
+	if !strings.Contains(errorBranch, "state.loadMoreError = true;") {
+		t.Errorf("loadMore's page.error branch does not set state.loadMoreError:\n%s", errorBranch)
+	}
+	if strings.Contains(errorBranch, "state.nextCursor") {
+		t.Errorf("loadMore's page.error branch must not touch state.nextCursor — overwriting it with the failure page's empty cursor would be indistinguishable from real end-of-data:\n%s", errorBranch)
+	}
+	if strings.Contains(errorBranch, "mergeChangesetPage(") {
+		t.Errorf("loadMore's page.error branch must not merge the (empty) failure page into state.changesets:\n%s", errorBranch)
+	}
+	if !strings.Contains(errorBranch, "return;") {
+		t.Errorf("loadMore's page.error branch does not return, and would fall through into the success-path merge/refit logic:\n%s", errorBranch)
+	}
+
+	// The nextCursor assignment must exist exactly once outside the error
+	// branch — on the success path only.
+	if strings.Count(pageCallback, "state.nextCursor = page.nextCursor;") != 1 {
+		t.Errorf("expected exactly one (success-path) state.nextCursor assignment in loadMore's onDone callback:\n%s", pageCallback)
 	}
 }
