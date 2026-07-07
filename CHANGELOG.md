@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.4.3...app-v0.5.0) (2026-07-07)
+
+
+### Features
+
+* add FieldExtractor interface + per-tracker engine selector ([#66](https://github.com/dackota/change-tracking-dashboard/issues/66)) ([4fb83ad](https://github.com/dackota/change-tracking-dashboard/commit/4fb83ad15dbd3c7a7d70c87c9ae9569996584afe))
+
 ## [0.4.3](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.4.2...app-v0.4.3) (2026-07-07)
 
 
