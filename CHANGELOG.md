@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.2](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.4.1...app-v0.4.2) (2026-07-07)
+
+
+### Bug Fixes
+
+* exclude reserved query-param names from FacetOptions() ([#58](https://github.com/dackota/change-tracking-dashboard/issues/58)) ([5543396](https://github.com/dackota/change-tracking-dashboard/commit/5543396b5f063bfaac5d22f42593829c2ea89a28))
+* extend poll-chip wrap override to the 860px sidebar-collapse breakpoint ([#57](https://github.com/dackota/change-tracking-dashboard/issues/57)) ([88a7099](https://github.com/dackota/change-tracking-dashboard/commit/88a70995dd2f09c7b00870b29a7749cccc76b433))
+* surface backdrop fetch failures instead of the empty state ([#60](https://github.com/dackota/change-tracking-dashboard/issues/60)) ([a548c6f](https://github.com/dackota/change-tracking-dashboard/commit/a548c6f700b956e6204b34db8656f18b2d42beb5))
+
 ## [0.4.1](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.4.0...app-v0.4.1) (2026-07-07)
 
 
