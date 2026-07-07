@@ -7,16 +7,23 @@ package filter
 
 import "sort"
 
-// FilterSpec is an immutable tri-state facet filter: for each facet name it
-// may carry a set of values to include, a set of values to exclude, or both.
-// The zero value matches everything (no includes to fail, no excludes to fire).
+// FilterSpec is an immutable filter over Changes: a tri-state facet filter
+// (for each facet name, a set of values to include, a set to exclude, or
+// both) plus an optional repo scope. Unlike a facet, a repo scope is a
+// single distinguished value, not an include/exclude set — R26 asks for "the
+// chosen tracked repository" (a single scoping choice), not per-value
+// tri-state semantics. The zero value matches everything: no includes to
+// fail, no excludes to fire, and no repo scope to violate.
 type FilterSpec struct {
 	includes map[string]map[string]struct{}
 	excludes map[string]map[string]struct{}
+	repo     string
 }
 
-// Matches reports whether facets satisfies the FilterSpec: every include
-// filter matches and no exclude filter matches.
+// Matches reports whether facets satisfies the FilterSpec's facet filter:
+// every include filter matches and no exclude filter matches. It does not
+// consider the repo scope — callers combine Matches with MatchesRepo (AND)
+// to get the full spec's verdict for a given (repo, facets) pair.
 func (s FilterSpec) Matches(facets map[string]string) bool {
 	for name, values := range s.includes {
 		if !facetValueIn(facets, name, values) {
@@ -29,6 +36,27 @@ func (s FilterSpec) Matches(facets map[string]string) bool {
 		}
 	}
 	return true
+}
+
+// Repo returns the repo this spec is scoped to, or "" when no repo scope is
+// set (the spec matches any repo).
+func (s FilterSpec) Repo() string {
+	return s.repo
+}
+
+// WithRepo returns a copy of s scoped to repo, leaving s itself unchanged.
+// Passing "" clears the scope (matches any repo) — the same as the zero
+// value's behavior.
+func (s FilterSpec) WithRepo(repo string) FilterSpec {
+	return FilterSpec{includes: s.includes, excludes: s.excludes, repo: repo}
+}
+
+// MatchesRepo reports whether repo satisfies this spec's repo scope: true
+// when no scope is set (Repo() == "" is a no-op) or repo equals the scoped
+// repo exactly (case-sensitive, no partial match). Combine with Matches via
+// AND — never OR — to get the full spec's verdict for a (repo, facets) pair.
+func (s FilterSpec) MatchesRepo(repo string) bool {
+	return s.repo == "" || s.repo == repo
 }
 
 // Includes returns the include side of the spec as facet name -> sorted

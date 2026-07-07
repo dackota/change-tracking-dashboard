@@ -93,6 +93,11 @@
   var pillEls = {};      // facet -> value -> pill element
   var badgeEls = {};     // facet -> badge element
 
+  // repoState is the single chosen repo scope (R26) — "" means "All
+  // repositories" (no scope). Unlike facetState, this is not tri-state: a
+  // repo is a single scoping choice, not a per-value include/exclude set.
+  var repoState = '';
+
   var feedEls = { list: null, title: null, count: null };
   var winEls = { from: null, to: null, reset: null, hint: null };
   var facetClearEl = null;
@@ -210,6 +215,11 @@
         pairs.push([facet, values[value] === 'exclude' ? '-' + value : value]);
       }
     }
+    // The repo scope (R26) composes with the facet params via AND on the
+    // server (R27): both reach /api/changesets as query params, and the
+    // server's FilterSpec ANDs them. An unselected repo ("") emits no pair
+    // at all — the no-op invariant.
+    if (repoState) { pairs.push(['repo', repoState]); }
     return pairs;
   }
   function buildQueryString(pairs) {
@@ -868,6 +878,14 @@
       svg.style.cursor = 'crosshair';
       root.appendChild(svg);
       attachInteractions();
+
+      var repoFilterEl = document.getElementById('repo-filter');
+      if (repoFilterEl) {
+        repoFilterEl.addEventListener('change', function () {
+          repoState = repoFilterEl.value;
+          onFilterChanged();
+        });
+      }
 
       var facetContainer = document.getElementById('facet-controls');
       if (facetContainer) { buildFacetDropdowns(facetContainer); }

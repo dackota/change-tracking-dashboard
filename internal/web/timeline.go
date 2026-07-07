@@ -58,12 +58,14 @@ const (
 )
 
 // timelineViewData is the data passed to the shell template: the shared
-// shell (sidebar nav + header, R6), the headline KPI tiles, and the known
-// facet set (rendered as one control per facet/value pair).
+// shell (sidebar nav + header, R6), the headline KPI tiles, the known facet
+// set (rendered as one control per facet/value pair), and the tracked
+// repositories (rendered as the repo filter dropdown's options, R26).
 type timelineViewData struct {
 	shellData
 	KPI           kpiView
 	FacetControls []facetControlView
+	RepoOptions   []string
 }
 
 // kpiView is the headline KPI tile row rendered from dashboardstats.Metrics
@@ -126,10 +128,11 @@ func buildFacetControls(opts map[string][]string) []facetControlView {
 	return controls
 }
 
-// ServeHTTP satisfies http.Handler. It fetches the known facet set to render
-// tri-state controls and a bounded slice of recent Changeset history to
-// compute the headline KPI tiles; all Changeset feed data itself comes from
-// the browser fetching /api/changesets.
+// ServeHTTP satisfies http.Handler. It fetches the known facet set and the
+// tracked-repository list to render tri-state controls and the repo filter
+// dropdown, plus a bounded slice of recent Changeset history to compute the
+// headline KPI tiles; all Changeset feed data itself comes from the browser
+// fetching /api/changesets.
 func (h *TimelineHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w.Header())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -143,17 +146,42 @@ func (h *TimelineHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		opts = nil
 	}
 
+	repoStats, err := h.st.RepositoryStats()
+	if err != nil {
+		// Same degrade-to-empty posture as FacetOptions above: an aggregate
+		// read failure shrinks the repo filter to just "All repositories"
+		// rather than failing the whole page.
+		log.Printf("web: repository stats: %v", err)
+		repoStats = nil
+	}
+
 	now := time.Now()
 	data := timelineViewData{
 		shellData:     buildShell(r.URL.Path, timelineTitle, timelineSubtitle, timelineHeaderActions, statusChip(h.pollStatus.Snapshot(), now)),
 		KPI:           buildKPIView(h.loadMetrics(), now),
 		FacetControls: buildFacetControls(opts),
+		RepoOptions:   buildRepoOptions(repoStats),
 	}
 	if err := h.tmpl.Execute(w, data); err != nil {
 		// The response may already be partly written, so we can't change the
 		// status code here — just record the failure so it's observable.
 		log.Printf("web: render timeline template: %v", err)
 	}
+}
+
+// buildRepoOptions maps store.RepositoryStats (already ordered by Repo
+// ascending, R4) into the repo filter dropdown's option values (R26) —
+// reusing that existing per-repo aggregate rather than adding a second
+// repo-listing query. A nil stats slice — the shape a degraded/failed store
+// read surfaces as at this seam — or an empty one yields an empty, non-nil
+// slice, so the dropdown renders with only its "All repositories" default
+// option rather than panicking on a nil range.
+func buildRepoOptions(stats []store.RepositoryStats) []string {
+	opts := make([]string, 0, len(stats))
+	for _, rs := range stats {
+		opts = append(opts, rs.Repo)
+	}
+	return opts
 }
 
 // kpiHistoryCap bounds the recent Changeset history read for KPI

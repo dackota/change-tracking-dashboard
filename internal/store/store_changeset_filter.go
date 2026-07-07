@@ -8,14 +8,16 @@ import (
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/filter"
 )
 
-// appendFilterClauses translates spec's includes and excludes into
-// parameterized SQL WHERE clauses (each appended with a leading "\nAND ")
-// and appends the bound values to params. Facet keys are concatenated into
-// the json_extract path (not bindable as a ? parameter), so each key is
-// validated against facetKeyPattern before use — the same boundary guard
-// QueryFilteredFeed relies on.
+// appendFilterClauses translates spec's repo scope, includes, and excludes
+// into parameterized SQL WHERE clauses (each appended with a leading
+// "\nAND ") and appends the bound values to params. Facet keys are
+// concatenated into the json_extract path (not bindable as a ? parameter),
+// so each key is validated against facetKeyPattern before use — the same
+// boundary guard QueryFilteredFeed relies on.
 //
-// Semantics mirror filter.FilterSpec.Matches exactly: every include facet
+// Semantics mirror filter.FilterSpec.MatchesRepo/Matches exactly, combined
+// with AND: an unset repo scope emits no clause (R26/R27's no-op
+// invariant); a set scope requires an exact repo match. Every include facet
 // must have a matching value (json_extract(...) = ?, OR'd across the
 // facet's value set), and no exclude facet may have a matching value. An
 // exclude clause explicitly allows the json_extract result to be NULL (facet
@@ -23,6 +25,11 @@ import (
 // stays visible; a naive "NOT IN" clause alone would filter it out because
 // SQL NULL comparisons are NULL, not true.
 func appendFilterClauses(sb *strings.Builder, params *[]any, spec filter.FilterSpec) error {
+	if repo := spec.Repo(); repo != "" {
+		sb.WriteString("\nAND repo = ?")
+		*params = append(*params, repo)
+	}
+
 	includes := spec.Includes()
 	excludes := spec.Excludes()
 

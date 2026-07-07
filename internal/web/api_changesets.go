@@ -1,9 +1,9 @@
 // Package web (this file): the GET /api/changesets JSON endpoint. It parses
-// the request (asOf, tri-state facet params, cursor, limit), delegates all
-// querying/grouping/filtering to store.QueryChangesets, and marshals the
-// result. No query/grouping/classification/filter logic lives here — that
-// stays server-side in store/changeset/filter, as it already does for the
-// HTML feed handler.
+// the request (asOf, tri-state facet params, repo scope, cursor, limit),
+// delegates all querying/grouping/filtering to store.QueryChangesets, and
+// marshals the result. No query/grouping/classification/filter logic lives
+// here — that stays server-side in store/changeset/filter, as it already
+// does for the HTML feed handler.
 package web
 
 import (
@@ -44,6 +44,7 @@ var reservedChangesetsParams = map[string]struct{}{
 	"asOf":   {},
 	"cursor": {},
 	"limit":  {},
+	"repo":   {},
 }
 
 // ChangesetsHandler serves GET /api/changesets as JSON.
@@ -111,6 +112,11 @@ func (h *ChangesetsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, genericBadRequestMsg, http.StatusBadRequest)
 		return
 	}
+	// The repo scope (R26) is a single distinguished value, not a tri-state
+	// facet — it is read directly from the reserved "repo" param and applied
+	// to spec via WithRepo, composing with the facet filter via AND (R27).
+	// An absent/empty repo param is a no-op: WithRepo("") matches any repo.
+	spec = spec.WithRepo(r.URL.Query().Get("repo"))
 
 	cursor := r.URL.Query().Get("cursor")
 
@@ -150,11 +156,12 @@ const genericBadRequestMsg = "bad request"
 
 // parseChangesetsFilter builds a filter.FilterSpec from the request's query
 // params, restricted to known facet names (from knownFacets) minus the
-// reserved params (asOf, cursor, limit). Reserved params are never treated
-// as facets even if a stored Change happens to carry a same-named facet.
-// An unknown, non-reserved param name (typo, unrelated param) is silently
-// ignored rather than rejected — matching the HTML feed handler's existing
-// whitelist convention.
+// reserved params (asOf, cursor, limit, repo). Reserved params are never
+// treated as facets even if a stored Change happens to carry a same-named
+// facet. An unknown, non-reserved param name (typo, unrelated param) is
+// silently ignored rather than rejected — matching the HTML feed handler's
+// existing whitelist convention. The repo scope itself is applied by the
+// caller via FilterSpec.WithRepo, not by this function.
 func parseChangesetsFilter(q url.Values, knownFacets map[string][]string) (filter.FilterSpec, error) {
 	allowed := make(map[string]struct{}, len(knownFacets))
 	params := make(map[string][]string, len(q))
@@ -173,7 +180,8 @@ func parseChangesetsFilter(q url.Values, knownFacets map[string][]string) (filte
 }
 
 // isReservedChangesetsParam reports whether name is a reserved query-param
-// name (asOf, cursor, limit) and therefore never eligible as a facet filter.
+// name (asOf, cursor, limit, repo) and therefore never eligible as a facet
+// filter.
 func isReservedChangesetsParam(name string) bool {
 	_, reserved := reservedChangesetsParams[name]
 	return reserved

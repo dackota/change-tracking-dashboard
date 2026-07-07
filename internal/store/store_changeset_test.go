@@ -284,6 +284,134 @@ func TestQueryChangesets_IncludeAndExcludeCombined(t *testing.T) {
 	}
 }
 
+// TestQueryChangesets_RepoScope_FiltersToOneRepo verifies that a FilterSpec
+// scoped via WithRepo (R26) returns only Changesets from that repo, even
+// when other repos have matching-or-later commits.
+func TestQueryChangesets_RepoScope_FiltersToOneRepo(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+
+	appsChange := domain.Change{
+		Repo: "apps-repo", FilePath: "values.yaml", Field: "f",
+		ChangeType: domain.ChangeTypeModified, OldValue: ptr("a"), NewValue: ptr("b"),
+		CommitSha: "commit-apps", Author: "alice", CommittedAt: csBase,
+	}
+	infraChange := domain.Change{
+		Repo: "infra-repo", FilePath: "values.yaml", Field: "f",
+		ChangeType: domain.ChangeTypeModified, OldValue: ptr("a"), NewValue: ptr("b"),
+		CommitSha: "commit-infra", Author: "bob", CommittedAt: csBase.Add(time.Hour),
+	}
+	seedChanges(t, s, []domain.Change{appsChange, infraChange})
+
+	spec := filter.FilterSpec{}.WithRepo("apps-repo")
+
+	page, err := s.QueryChangesets(csBase.Add(2*time.Hour), spec, "", 100)
+	if err != nil {
+		t.Fatalf("QueryChangesets: %v", err)
+	}
+
+	if len(page.Changesets) != 1 {
+		t.Fatalf("got %d Changesets, want 1 (repo scope = apps-repo)", len(page.Changesets))
+	}
+	if page.Changesets[0].CommitSha != "commit-apps" {
+		t.Errorf("Changesets[0].CommitSha = %q, want commit-apps", page.Changesets[0].CommitSha)
+	}
+	if page.Changesets[0].Repo != "apps-repo" {
+		t.Errorf("Changesets[0].Repo = %q, want apps-repo", page.Changesets[0].Repo)
+	}
+}
+
+// TestQueryChangesets_RepoScope_ComposesWithFacetFilterAND verifies R27: a
+// repo scope composes with an existing facet filter via AND, not OR — a
+// Changeset must satisfy both to be returned.
+func TestQueryChangesets_RepoScope_ComposesWithFacetFilterAND(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+
+	// Satisfies both repo scope and facet filter.
+	appsDev := domain.Change{
+		Repo: "apps-repo", FilePath: "values.yaml", Field: "f",
+		ChangeType: domain.ChangeTypeModified, OldValue: ptr("a"), NewValue: ptr("b"),
+		Facets:      map[string]string{"env": "dev"},
+		CommitSha:   "commit-apps-dev",
+		Author:      "alice",
+		CommittedAt: csBase,
+	}
+	// Right repo, wrong facet value — must not appear (satisfies repo scope
+	// only, would leak through an OR-composed filter).
+	appsProd := domain.Change{
+		Repo: "apps-repo", FilePath: "values.yaml", Field: "f",
+		ChangeType: domain.ChangeTypeModified, OldValue: ptr("a"), NewValue: ptr("b"),
+		Facets:      map[string]string{"env": "prod"},
+		CommitSha:   "commit-apps-prod",
+		Author:      "bob",
+		CommittedAt: csBase.Add(time.Hour),
+	}
+	// Right facet value, wrong repo — must not appear (satisfies facet
+	// filter only, would leak through an OR-composed filter).
+	infraDev := domain.Change{
+		Repo: "infra-repo", FilePath: "values.yaml", Field: "f",
+		ChangeType: domain.ChangeTypeModified, OldValue: ptr("a"), NewValue: ptr("b"),
+		Facets:      map[string]string{"env": "dev"},
+		CommitSha:   "commit-infra-dev",
+		Author:      "carol",
+		CommittedAt: csBase.Add(2 * time.Hour),
+	}
+	seedChanges(t, s, []domain.Change{appsDev, appsProd, infraDev})
+
+	spec, err := filter.Parse(map[string][]string{"env": {"dev"}}, map[string]struct{}{"env": {}})
+	if err != nil {
+		t.Fatalf("filter.Parse: %v", err)
+	}
+	spec = spec.WithRepo("apps-repo")
+
+	page, err := s.QueryChangesets(csBase.Add(3*time.Hour), spec, "", 100)
+	if err != nil {
+		t.Fatalf("QueryChangesets: %v", err)
+	}
+
+	if len(page.Changesets) != 1 {
+		t.Fatalf("got %d Changesets, want 1 (repo=apps-repo AND env=dev)", len(page.Changesets))
+	}
+	if page.Changesets[0].CommitSha != "commit-apps-dev" {
+		t.Errorf("Changesets[0].CommitSha = %q, want commit-apps-dev", page.Changesets[0].CommitSha)
+	}
+}
+
+// TestQueryChangesets_RepoScope_EmptyIsNoOp verifies that an unset repo
+// scope (the zero value, as every existing FilterSpec{} call site already
+// passes) behaves identically to no repo filter at all — every repo's
+// Changesets are returned.
+func TestQueryChangesets_RepoScope_EmptyIsNoOp(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+
+	appsChange := domain.Change{
+		Repo: "apps-repo", FilePath: "values.yaml", Field: "f",
+		ChangeType: domain.ChangeTypeModified, OldValue: ptr("a"), NewValue: ptr("b"),
+		CommitSha: "commit-apps", Author: "alice", CommittedAt: csBase,
+	}
+	infraChange := domain.Change{
+		Repo: "infra-repo", FilePath: "values.yaml", Field: "f",
+		ChangeType: domain.ChangeTypeModified, OldValue: ptr("a"), NewValue: ptr("b"),
+		CommitSha: "commit-infra", Author: "bob", CommittedAt: csBase.Add(time.Hour),
+	}
+	seedChanges(t, s, []domain.Change{appsChange, infraChange})
+
+	spec := filter.FilterSpec{}.WithRepo("")
+
+	page, err := s.QueryChangesets(csBase.Add(2*time.Hour), spec, "", 100)
+	if err != nil {
+		t.Fatalf("QueryChangesets: %v", err)
+	}
+	if len(page.Changesets) != 2 {
+		t.Fatalf("got %d Changesets, want 2 (empty repo scope is a no-op)", len(page.Changesets))
+	}
+}
+
 // TestQueryChangesets_MostRecentFirstOrdering verifies that Changesets are
 // ordered newest-commit-first, regardless of insertion order — the likeliest
 // incident culprits surface at the top of the page.
