@@ -52,6 +52,7 @@ import (
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/chartdiff"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/gitsource"
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/pollstatus"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/store"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/web"
 )
@@ -190,7 +191,7 @@ func newRegressionServer(t *testing.T) (*httptest.Server, string) {
 	}}
 
 	mux := http.NewServeMux()
-	mux.Handle("/", web.NewTimelineHandler(st))
+	mux.Handle("/", web.NewTimelineHandler(st, pollstatus.New()))
 	mux.Handle("/static/", web.NewStaticHandler())
 	mux.Handle("/api/changesets", web.NewChangesetsHandler(st))
 	mux.Handle("/api/changesets/detail", web.NewChangesetDetailHandler(st))

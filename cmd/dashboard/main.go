@@ -104,9 +104,11 @@ func run(configPath, dbPath, listenAddr string) error {
 
 	// --- Poll status registry ---
 	// Records, per tracker, the last attempt/success time and last error —
-	// in-process only, no persistence; it rebuilds naturally on restart. A
-	// downstream slice wires pollStatus.Snapshot() into the web layer
-	// (header status chip, Trackers-view columns, /healthz).
+	// in-process only, no persistence; it rebuilds naturally on restart. Its
+	// Snapshot() is wired into every page handler's shared header (the
+	// aggregate poll-status chip) and into the Trackers view's per-tracker
+	// status columns; /healthz is a dependency-free liveness check and does
+	// not consume it.
 	pollStatus := pollstatus.New()
 
 	// --- Per-tracker scheduler ---
@@ -145,12 +147,15 @@ func run(configPath, dbPath, listenAddr string) error {
 	}
 
 	// --- HTTP ---
-	timelineHandler := web.NewTimelineHandler(st)
+	timelineHandler := web.NewTimelineHandler(st, pollStatus)
 	staticHandler := web.NewStaticHandler()
 	changesetsHandler := web.NewChangesetsHandler(st)
 	changesetDetailHandler := web.NewChangesetDetailHandler(st)
 	chartDiffHandler := web.NewChartDiffHandler(chartDiffEngine, sources, st)
-	trackersHandler := web.NewTrackersHandler(cfgWatcher)
+	trackersHandler := web.NewTrackersHandler(cfgWatcher, pollStatus)
+	repositoriesHandler := web.NewRepositoriesHandler(st, pollStatus)
+	changesHandler := web.NewChangesHandler(pollStatus)
+	healthzHandler := web.NewHealthzHandler()
 	mux := http.NewServeMux()
 	mux.Handle("/", timelineHandler)
 	mux.Handle("/static/", staticHandler)
@@ -158,6 +163,9 @@ func run(configPath, dbPath, listenAddr string) error {
 	mux.Handle("/api/changesets/detail", changesetDetailHandler)
 	mux.Handle("/api/changesets/detail/chart-diff", chartDiffHandler)
 	mux.Handle("GET /trackers", trackersHandler)
+	mux.Handle("GET /repositories", repositoriesHandler)
+	mux.Handle("GET /changes", changesHandler)
+	mux.Handle("GET /healthz", healthzHandler)
 
 	srv := &http.Server{
 		Addr:         listenAddr,

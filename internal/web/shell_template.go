@@ -32,6 +32,13 @@ const shellStyles = `
     .page-subtitle { color: var(--oc-muted); font-size: 0.85rem; margin: 0; }
     .page-header .spacer { flex: 1; }
     .page-header .btn { font-size: 0.8rem; background: var(--oc-panel); border: 1px solid var(--oc-line); border-radius: 8px; padding: 0.4rem 0.75rem; cursor: pointer; color: var(--oc-ink); }
+
+    /* Aggregate poll-status chip (R11), rendered in every page's header. */
+    .poll-chip { display: flex; align-items: center; gap: 0.45rem; font-size: 0.78rem; padding: 0.35rem 0.7rem; border-radius: 999px; background: var(--oc-line-soft); color: var(--oc-muted); border: 1px solid var(--oc-line); white-space: nowrap; }
+    .poll-chip-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--oc-muted); flex: 0 0 auto; }
+    .poll-chip-ok .poll-chip-dot { background: var(--oc-success); }
+    .poll-chip-error { background: rgba(220, 53, 69, 0.08); border-color: rgba(220, 53, 69, 0.35); color: var(--oc-danger); }
+    .poll-chip-error .poll-chip-dot { background: var(--oc-danger); }
 `
 
 // sidebarTemplate defines the "sidebar" named template shared by every page
@@ -49,12 +56,21 @@ const sidebarTemplate = `{{define "sidebar"}}<aside class="sidebar">
     </aside>{{end}}`
 
 // headerTemplate defines the "header" named template shared by every page
-// (R6): title, subtitle, and any page-specific header actions (pre-rendered
-// trusted HTML, e.g. the timeline's Reset zoom button).
+// (R6): title, subtitle, the aggregate poll-status chip (R11), and any
+// page-specific header actions (pre-rendered trusted HTML, e.g. the
+// timeline's Reset zoom button). The chip's Status field only ever takes one
+// of the fixed values statusUnknown/statusOK/statusError (never
+// request/stored data), so interpolating it straight into the class
+// attribute carries no injection risk; LastPollText/NextPollText/ErrorText
+// go through html/template's default auto-escaping like any other field.
 const headerTemplate = `{{define "header"}}<div class="page-header">
         <h1>{{.Header.Title}}</h1>
         <p class="page-subtitle">{{.Header.Subtitle}}</p>
         <span class="spacer"></span>
+        <div class="poll-chip poll-chip-{{.Header.PollHealth.Status}}" data-poll-status="{{.Header.PollHealth.Status}}">
+          <span class="poll-chip-dot"></span>
+          <span class="poll-chip-text">{{.Header.PollHealth.LastPollText}} · {{.Header.PollHealth.NextPollText}}{{if .Header.PollHealth.ErrorText}} · {{.Header.PollHealth.ErrorText}}{{end}}</span>
+        </div>
         {{.Header.Actions}}
       </div>{{end}}`
 

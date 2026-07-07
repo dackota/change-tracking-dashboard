@@ -1,12 +1,16 @@
 package web_test
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/config"
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/pollstatus"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/web"
 )
 
@@ -45,7 +49,7 @@ func TestTrackersHandler_PopulatedSnapshot_RendersOneRowPerTracker(t *testing.T)
 		},
 	}
 
-	h := web.NewTrackersHandler(fakeConfigSnapshot{cfg: cfg})
+	h := web.NewTrackersHandler(fakeConfigSnapshot{cfg: cfg}, pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/trackers", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -74,7 +78,7 @@ func TestTrackersHandler_PopulatedSnapshot_RendersOneRowPerTracker(t *testing.T)
 func TestTrackersHandler_EmptySnapshot_RendersEmptyStateNot500(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewTrackersHandler(fakeConfigSnapshot{cfg: &config.Config{}})
+	h := web.NewTrackersHandler(fakeConfigSnapshot{cfg: &config.Config{}}, pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/trackers", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -99,7 +103,7 @@ func TestTrackersHandler_EmptySnapshot_RendersEmptyStateNot500(t *testing.T) {
 func TestTrackersHandler_DegradedConfigRead_RendersEmptyStateNot500(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewTrackersHandler(fakeConfigSnapshot{cfg: nil})
+	h := web.NewTrackersHandler(fakeConfigSnapshot{cfg: nil}, pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/trackers", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -113,13 +117,13 @@ func TestTrackersHandler_DegradedConfigRead_RendersEmptyStateNot500(t *testing.T
 }
 
 // TestTrackersHandler_SidebarNav_TrackersActiveOthersUnaffected verifies R1
-// and R6: on GET /trackers, the Trackers nav entry is the active link,
-// Timeline is a link but not active, and Changes/Repositories still render
-// as inert placeholders — the same shared shell every route builds.
+// and R6: on GET /trackers, the Trackers nav entry is the active link, and
+// Timeline, Changes, and Repositories are all links but not active — the
+// same shared shell every route builds.
 func TestTrackersHandler_SidebarNav_TrackersActiveOthersUnaffected(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewTrackersHandler(fakeConfigSnapshot{cfg: &config.Config{}})
+	h := web.NewTrackersHandler(fakeConfigSnapshot{cfg: &config.Config{}}, pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/trackers", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -135,11 +139,11 @@ func TestTrackersHandler_SidebarNav_TrackersActiveOthersUnaffected(t *testing.T)
 	if !strings.Contains(body, `<a class="nav-item" data-nav="timeline" href="/">Timeline</a>`) {
 		t.Errorf("Timeline nav entry not rendered as an (inactive) link; got:\n%s", body)
 	}
-	if !strings.Contains(body, `<div class="nav-item" data-nav="changes">Changes</div>`) {
-		t.Errorf("Changes nav entry not rendered as an inert placeholder; got:\n%s", body)
+	if !strings.Contains(body, `<a class="nav-item" data-nav="repositories" href="/repositories">Repositories</a>`) {
+		t.Errorf("Repositories nav entry not rendered as an (inactive) link; got:\n%s", body)
 	}
-	if !strings.Contains(body, `<div class="nav-item" data-nav="repositories">Repositories</div>`) {
-		t.Errorf("Repositories nav entry not rendered as an inert placeholder; got:\n%s", body)
+	if !strings.Contains(body, `<a class="nav-item" data-nav="changes" href="/changes">Changes</a>`) {
+		t.Errorf("Changes nav entry not rendered as an (inactive) link; got:\n%s", body)
 	}
 }
 
@@ -149,7 +153,7 @@ func TestTrackersHandler_SidebarNav_TrackersActiveOthersUnaffected(t *testing.T)
 func TestTrackersHandler_Header_ShowsTitleAndSubtitle(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewTrackersHandler(fakeConfigSnapshot{cfg: &config.Config{}})
+	h := web.NewTrackersHandler(fakeConfigSnapshot{cfg: &config.Config{}}, pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/trackers", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -168,7 +172,7 @@ func TestTrackersHandler_Header_ShowsTitleAndSubtitle(t *testing.T) {
 func TestTrackersHandler_SecurityHeadersPresent(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewTrackersHandler(fakeConfigSnapshot{cfg: &config.Config{}})
+	h := web.NewTrackersHandler(fakeConfigSnapshot{cfg: &config.Config{}}, pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/trackers", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -201,12 +205,96 @@ func TestTrackersHandler_RepoValueIsHTMLEscaped(t *testing.T) {
 		TrackerConfigs: []config.ResolvedTracker{{Repo: maliciousRepo, PollIntervalSeconds: 1}},
 	}
 
-	h := web.NewTrackersHandler(fakeConfigSnapshot{cfg: cfg})
+	h := web.NewTrackersHandler(fakeConfigSnapshot{cfg: cfg}, pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/trackers", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 
 	if strings.Contains(rr.Body.String(), "<script>alert(1)</script>") {
 		t.Errorf("repo value rendered unescaped — raw <script> tag present in body:\n%s", rr.Body.String())
+	}
+}
+
+// TestTrackersHandler_HeaderPollChip_RendersAggregateErrorStatus verifies
+// R11/R6: the Trackers page's header (built via the same buildShell every
+// route uses) renders the aggregate poll-status chip, flipping to the error
+// style when the poll-status registry has a failing tracker — without
+// leaking that tracker's raw error text into the header chip itself.
+func TestTrackersHandler_HeaderPollChip_RendersAggregateErrorStatus(t *testing.T) {
+	t.Parallel()
+
+	reg := pollstatus.New()
+	tr := domain.Tracker{Repo: "repo-failing", FileGlob: "values.yaml", Field: "image.tag", PollIntervalSeconds: 60}
+	reg.Record(tr, time.Now(), errors.New("clone failed: connection refused"))
+
+	cfg := &config.Config{TrackerConfigs: []config.ResolvedTracker{{Repo: "repo-failing", PollIntervalSeconds: 60}}}
+	h := web.NewTrackersHandler(fakeConfigSnapshot{cfg: cfg}, reg)
+	req := httptest.NewRequest(http.MethodGet, "/trackers", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	body := rr.Body.String()
+	if !strings.Contains(body, `data-poll-status="error"`) {
+		t.Errorf("header missing error-state poll chip; got:\n%s", body)
+	}
+	if !strings.Contains(body, "1 tracker failing") {
+		t.Errorf("header chip missing error summary text; got:\n%s", body)
+	}
+	if strings.Contains(body, "connection refused") && strings.Count(body, "connection refused") != 1 {
+		// The raw error text is expected exactly once, in the per-tracker
+		// LastError column (R12) — never duplicated into the header chip.
+		t.Errorf("raw poll error text appeared more than once (leaked into header chip); got:\n%s", body)
+	}
+}
+
+// TestTrackersHandler_PerTrackerStatusColumns_RenderInTable verifies R12:
+// the Trackers table gains last-success/last-error/next-run columns sourced
+// from the poll-status registry.
+func TestTrackersHandler_PerTrackerStatusColumns_RenderInTable(t *testing.T) {
+	t.Parallel()
+
+	reg := pollstatus.New()
+	tr := domain.Tracker{Repo: "repo-healthy", FileGlob: "Chart.yaml", Field: "version", PollIntervalSeconds: 60}
+	reg.Record(tr, time.Now(), nil)
+
+	cfg := &config.Config{TrackerConfigs: []config.ResolvedTracker{{Repo: "repo-healthy", PollIntervalSeconds: 60}}}
+	h := web.NewTrackersHandler(fakeConfigSnapshot{cfg: cfg}, reg)
+	req := httptest.NewRequest(http.MethodGet, "/trackers", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	body := rr.Body.String()
+	for _, want := range []string{
+		`class="trackers-last-success"`,
+		`class="trackers-last-error"`,
+		`class="trackers-next-run"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q; got:\n%s", want, body)
+		}
+	}
+}
+
+// TestTrackersHandler_PollErrorIsHTMLEscaped verifies the security
+// carry-forward: pollstatus.TrackerStatus.LastError is stored verbatim (a
+// raw Go error string), so the Trackers view's last-error column must render
+// it through html/template's default auto-escaping — never as trusted
+// markup — even though the malicious text here originates from a poll
+// failure, not end-user input.
+func TestTrackersHandler_PollErrorIsHTMLEscaped(t *testing.T) {
+	t.Parallel()
+
+	reg := pollstatus.New()
+	tr := domain.Tracker{Repo: "repo-a", FileGlob: "Chart.yaml", Field: "version", PollIntervalSeconds: 60}
+	reg.Record(tr, time.Now(), errors.New(`"><script>alert(1)</script>`))
+
+	cfg := &config.Config{TrackerConfigs: []config.ResolvedTracker{{Repo: "repo-a", PollIntervalSeconds: 60}}}
+	h := web.NewTrackersHandler(fakeConfigSnapshot{cfg: cfg}, reg)
+	req := httptest.NewRequest(http.MethodGet, "/trackers", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if strings.Contains(rr.Body.String(), "<script>alert(1)</script>") {
+		t.Errorf("poll error text rendered unescaped — raw <script> tag present in body:\n%s", rr.Body.String())
 	}
 }

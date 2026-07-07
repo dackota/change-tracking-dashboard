@@ -2,6 +2,28 @@ package web
 
 import "testing"
 
+// TestBuildShell_CarriesPollHealthIntoHeader verifies R6/R11: buildShell
+// threads the caller-supplied poll-health chip view straight into the
+// shared header, so every page's header (built via buildShell) renders the
+// same aggregate poll-status chip.
+func TestBuildShell_CarriesPollHealthIntoHeader(t *testing.T) {
+	t.Parallel()
+
+	chip := statusChipView{
+		Status:       statusError,
+		LastPollText: "Last poll: 5 minutes ago",
+		NextPollText: "Next poll: in 10 minutes",
+		ErrorCount:   1,
+		ErrorText:    "1 tracker failing",
+	}
+
+	got := buildShell("/", "Title", "Subtitle", "", chip)
+
+	if got.Header.PollHealth != chip {
+		t.Errorf("Header.PollHealth = %+v, want %+v", got.Header.PollHealth, chip)
+	}
+}
+
 // TestBuildSidebarNav_MarksOnlyTheCurrentRegisteredRouteActive verifies R1:
 // buildSidebarNav returns one entry per navRegistry slot, with a registered
 // route's Href set and Active true only when it equals currentPath — never
@@ -16,7 +38,9 @@ func TestBuildSidebarNav_MarksOnlyTheCurrentRegisteredRouteActive(t *testing.T) 
 	}{
 		{"root path activates timeline", "/", "timeline"},
 		{"trackers path activates trackers", "/trackers", "trackers"},
-		{"unregistered path activates nothing", "/changes", ""},
+		{"repositories path activates repositories", "/repositories", "repositories"},
+		{"changes path activates changes", "/changes", "changes"},
+		{"unregistered path activates nothing", "/somewhere-else", ""},
 	}
 
 	for _, tc := range cases {
@@ -37,10 +61,9 @@ func TestBuildSidebarNav_MarksOnlyTheCurrentRegisteredRouteActive(t *testing.T) 
 	}
 }
 
-// TestBuildSidebarNav_OnlyRegisteredRoutesCarryAnHref verifies R1: a nav slot
-// with no registered path (Changes, Repositories in this slice) renders with
-// an empty Href — so the template can never emit a dead link for it — while
-// Timeline and Trackers carry their real path.
+// TestBuildSidebarNav_OnlyRegisteredRoutesCarryAnHref verifies R1: every nav
+// slot (Timeline, Changes, Repositories, Trackers) carries its registered
+// path as of this slice.
 func TestBuildSidebarNav_OnlyRegisteredRoutesCarryAnHref(t *testing.T) {
 	t.Parallel()
 
@@ -48,8 +71,8 @@ func TestBuildSidebarNav_OnlyRegisteredRoutesCarryAnHref(t *testing.T) {
 
 	want := map[string]string{
 		"timeline":     "/",
-		"changes":      "",
-		"repositories": "",
+		"changes":      "/changes",
+		"repositories": "/repositories",
 		"trackers":     "/trackers",
 	}
 

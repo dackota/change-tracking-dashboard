@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/pollstatus"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/web"
 )
 
@@ -25,7 +26,7 @@ func TestTimelineHandler_KPIStoreError_RendersZeroedMetrics(t *testing.T) {
 		t.Fatalf("close store: %v", err)
 	}
 
-	h := web.NewTimelineHandler(st)
+	h := web.NewTimelineHandler(st, pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -63,7 +64,7 @@ func TestTimelineHandler_KPIStoreError_RendersZeroedMetrics(t *testing.T) {
 func TestTimelineHandler_EmptyStore_KPITilesZeroedWithSensibleLastChange(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewTimelineHandler(newTestStore(t))
+	h := web.NewTimelineHandler(newTestStore(t), pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -104,7 +105,7 @@ func TestTimelineHandler_KPITiles_ReflectSeededChangesetMetrics(t *testing.T) {
 	// Commit 2 in repo-b: one Change (Chart.yaml).
 	seedChange(t, st, changeSpec{Repo: "repo-b", FilePath: "Chart.yaml", CommitSha: "c2"})
 
-	h := web.NewTimelineHandler(st)
+	h := web.NewTimelineHandler(st, pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -137,7 +138,7 @@ func TestTimelineHandler_LastChangeKPI_ShowsRelativeAndAbsoluteTimestamp(t *test
 	seedChange(t, st, changeSpec{Repo: "repo-a", FilePath: "values.yaml", CommitSha: "recent", Age: recentAge})
 	seedChange(t, st, changeSpec{Repo: "repo-a", FilePath: "values.yaml", CommitSha: "older", Age: 30 * 24 * time.Hour})
 
-	h := web.NewTimelineHandler(st)
+	h := web.NewTimelineHandler(st, pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -158,16 +159,13 @@ func TestTimelineHandler_LastChangeKPI_ShowsRelativeAndAbsoluteTimestamp(t *test
 
 // TestTimelineHandler_SidebarNav_RegisteredRoutesAreLinksAndCurrentRouteIsActive
 // verifies R1 (superseding this test's earlier "every nav entry is an inert
-// placeholder" contract now that Timeline and Trackers are real routes):
-// Timeline and Trackers render as real <a> links (their routes are
-// registered), Timeline is marked active on GET /, Trackers is a link but
-// not active, and Changes/Repositories — not yet routes — render as plain,
-// non-interactive elements with no href or onclick, so they can never
-// produce a dead link ahead of their own slice landing.
+// placeholder" contract now that Timeline, Changes, Repositories, and
+// Trackers are all real routes): every nav entry renders as a real <a> link
+// (all routes are registered), and only Timeline is marked active on GET /.
 func TestTimelineHandler_SidebarNav_RegisteredRoutesAreLinksAndCurrentRouteIsActive(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewTimelineHandler(newTestStore(t))
+	h := web.NewTimelineHandler(newTestStore(t), pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -186,14 +184,14 @@ func TestTimelineHandler_SidebarNav_RegisteredRoutesAreLinksAndCurrentRouteIsAct
 	if !strings.Contains(body, `<a class="nav-item nav-item-active" data-nav="timeline" href="/" aria-current="page">Timeline</a>`) {
 		t.Errorf("Timeline nav entry not rendered as an active link; got:\n%s", body)
 	}
+	if !strings.Contains(body, `<a class="nav-item" data-nav="repositories" href="/repositories">Repositories</a>`) {
+		t.Errorf("Repositories nav entry not rendered as an (inactive) link; got:\n%s", body)
+	}
 	if !strings.Contains(body, `<a class="nav-item" data-nav="trackers" href="/trackers">Trackers</a>`) {
 		t.Errorf("Trackers nav entry not rendered as an (inactive) link; got:\n%s", body)
 	}
-	if !strings.Contains(body, `<div class="nav-item" data-nav="changes">Changes</div>`) {
-		t.Errorf("Changes nav entry not rendered as an inert placeholder; got:\n%s", body)
-	}
-	if !strings.Contains(body, `<div class="nav-item" data-nav="repositories">Repositories</div>`) {
-		t.Errorf("Repositories nav entry not rendered as an inert placeholder; got:\n%s", body)
+	if !strings.Contains(body, `<a class="nav-item" data-nav="changes" href="/changes">Changes</a>`) {
+		t.Errorf("Changes nav entry not rendered as an (inactive) link; got:\n%s", body)
 	}
 
 	if strings.Contains(body, `data-nav="changes" aria-current`) ||
@@ -209,7 +207,7 @@ func TestTimelineHandler_SidebarNav_RegisteredRoutesAreLinksAndCurrentRouteIsAct
 func TestTimelineHandler_Header_ShowsTitleSubtitleAndResetZoomControl(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewTimelineHandler(newTestStore(t))
+	h := web.NewTimelineHandler(newTestStore(t), pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -246,7 +244,7 @@ func TestTimelineHandler_Header_ShowsTitleSubtitleAndResetZoomControl(t *testing
 func TestTimelineHandler_FeedContainer_IsTableSkeletonPreservingDataHooks(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewTimelineHandler(newTestStore(t))
+	h := web.NewTimelineHandler(newTestStore(t), pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -310,7 +308,7 @@ func TestTimelineHandler_ValueChangesTile_IsDistinctFromChartChangesTile(t *test
 	seedChange(t, st, changeSpec{Repo: "repo-a", FilePath: "values.yaml", CommitSha: "c1"})
 	seedChange(t, st, changeSpec{Repo: "repo-b", FilePath: "Chart.yaml", CommitSha: "c2"})
 
-	h := web.NewTimelineHandler(st)
+	h := web.NewTimelineHandler(st, pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -346,7 +344,7 @@ func TestTimelineHandler_ValueChangesTile_IsDistinctFromChartChangesTile(t *test
 func TestTimelineHandler_KPITiles_EachExposeADefinitionInCanonicalTerms(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewTimelineHandler(newTestStore(t))
+	h := web.NewTimelineHandler(newTestStore(t), pollstatus.New())
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)

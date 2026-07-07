@@ -29,17 +29,19 @@ import (
 
 // TimelineHandler serves the timeline shell page at GET /.
 type TimelineHandler struct {
-	tmpl *template.Template
-	st   *store.Store
+	tmpl       *template.Template
+	st         *store.Store
+	pollStatus PollHealthSnapshot
 }
 
 // NewTimelineHandler creates a TimelineHandler backed by st (used to fetch
-// the known facet set for rendering tri-state controls) and pre-parses the
-// shell template. Panics if the embedded template is invalid (programming
-// error).
-func NewTimelineHandler(st *store.Store) *TimelineHandler {
+// the known facet set for rendering tri-state controls) and pollStatus (used
+// to render the shared header's aggregate poll-status chip, R11), and
+// pre-parses the shell template. Panics if the embedded template is invalid
+// (programming error).
+func NewTimelineHandler(st *store.Store, pollStatus PollHealthSnapshot) *TimelineHandler {
 	tmpl := template.Must(template.New("timeline").Parse(shellTemplates + timelineTemplate))
-	return &TimelineHandler{tmpl: tmpl, st: st}
+	return &TimelineHandler{tmpl: tmpl, st: st, pollStatus: pollStatus}
 }
 
 // timelineHeaderActions is the timeline page's header action button (Reset
@@ -141,9 +143,10 @@ func (h *TimelineHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		opts = nil
 	}
 
+	now := time.Now()
 	data := timelineViewData{
-		shellData:     buildShell(r.URL.Path, timelineTitle, timelineSubtitle, timelineHeaderActions),
-		KPI:           buildKPIView(h.loadMetrics(), time.Now()),
+		shellData:     buildShell(r.URL.Path, timelineTitle, timelineSubtitle, timelineHeaderActions, statusChip(h.pollStatus.Snapshot(), now)),
+		KPI:           buildKPIView(h.loadMetrics(), now),
 		FacetControls: buildFacetControls(opts),
 	}
 	if err := h.tmpl.Execute(w, data); err != nil {
