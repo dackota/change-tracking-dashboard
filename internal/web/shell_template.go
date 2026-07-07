@@ -48,20 +48,26 @@ const shellStyles = `
     /* Responsive shell (R15-R18): below ~860px the persistent sidebar column
        no longer fits alongside real content, so it collapses into a
        full-width horizontal top bar and the app stacks vertically instead.
-       Below ~600px the header row (title/subtitle/poll-chip/actions) also
-       wraps rather than overflowing, and the main column's side padding
-       shrinks to give narrow viewports more usable width. */
+       The poll-chip's wrap override lives in this same breakpoint (not the
+       600px one below) because the chip is nowrap by default and its text
+       — worst case the error state's "· N tracker(s) failing" suffix — is
+       long enough to overflow horizontally in the ~620-720px tablet band
+       even though the sidebar has already collapsed and nothing else in the
+       layout overflows there. Below ~600px the header row
+       (title/subtitle/poll-chip/actions) also wraps rather than overflowing,
+       and the main column's side padding shrinks to give narrow viewports
+       more usable width. */
     @media (max-width: 860px) {
       .app { flex-direction: column; }
       .sidebar { flex: 0 0 auto; width: 100%; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 0.6rem 0.9rem; gap: 0.5rem 0.9rem; }
       .sidebar-brand { padding: 0; margin-right: auto; }
       .sidebar-nav { flex-direction: row; flex-wrap: wrap; gap: 0.3rem 0.5rem; }
+      .poll-chip { white-space: normal; }
     }
     @media (max-width: 600px) {
       body { overflow-x: hidden; }
       .main { padding: 1rem 1rem 3rem; }
       .page-header { flex-wrap: wrap; }
-      .poll-chip { white-space: normal; }
     }
 `
 
