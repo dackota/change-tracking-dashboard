@@ -23,7 +23,7 @@ const trackersTemplate = `<!DOCTYPE html>
     .trackers-table thead th { text-align: left; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--oc-muted); font-weight: 600; padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--oc-line); }
     .trackers-table tbody td { padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--oc-line-soft); font-size: 0.85rem; vertical-align: top; }
     .trackers-table tbody tr:last-child td { border-bottom: none; }
-    .trackers-repo { font-weight: 600; }
+    .trackers-repo { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
     .trackers-empty-row td { text-align: center; color: var(--oc-muted); font-size: 0.9rem; padding: 1.5rem 1rem; }
     .trackers-last-error { color: var(--oc-danger); word-break: break-word; max-width: 260px; }
   </style>
@@ -33,13 +33,13 @@ const trackersTemplate = `<!DOCTYPE html>
     {{template "sidebar" .}}
     <main class="main">
       {{template "header" .}}
-      <table class="trackers-table">
+      <div class="table-scroll"><table class="trackers-table">
         <thead>
           <tr><th>Repository</th><th>File globs</th><th>Tracked fields</th><th>Poll cadence</th><th>Backfill window</th><th>Last success</th><th>Last error</th><th>Next run</th></tr>
         </thead>
         <tbody id="trackers-list">
           {{if .Trackers}}{{range .Trackers}}<tr class="trackers-row" data-tracker-repo="{{.Repo}}">
-            <td class="trackers-repo">{{.Repo}}</td>
+            <td class="trackers-repo" title="{{.Repo}}">{{.Repo}}</td>
             <td>{{range .FileGlobs}}<div class="trackers-glob">{{.}}</div>{{end}}</td>
             <td>{{range .TrackedFields}}<div class="trackers-field">{{.}}</div>{{end}}</td>
             <td class="trackers-cadence">{{.PollCadence}}</td>
@@ -51,7 +51,7 @@ const trackersTemplate = `<!DOCTYPE html>
           {{end}}{{else}}<tr class="trackers-empty-row"><td colspan="8">No trackers configured.</td></tr>
           {{end}}
         </tbody>
-      </table>
+      </table></div>
     </main>
   </div>
 </body>

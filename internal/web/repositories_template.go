@@ -19,7 +19,7 @@ const repositoriesTemplate = `<!DOCTYPE html>
     .repositories-table thead th { text-align: left; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--oc-muted); font-weight: 600; padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--oc-line); }
     .repositories-table tbody td { padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--oc-line-soft); font-size: 0.85rem; vertical-align: top; }
     .repositories-table tbody tr:last-child td { border-bottom: none; }
-    .repositories-repo { font-weight: 600; }
+    .repositories-repo { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
     .repositories-empty-row td { text-align: center; color: var(--oc-muted); font-size: 0.9rem; padding: 1.5rem 1rem; }
   </style>
 </head>
@@ -28,13 +28,13 @@ const repositoriesTemplate = `<!DOCTYPE html>
     {{template "sidebar" .}}
     <main class="main">
       {{template "header" .}}
-      <table class="repositories-table">
+      <div class="table-scroll"><table class="repositories-table">
         <thead>
           <tr><th>Repository</th><th>Changes</th><th>Chart changes</th><th>Last change</th></tr>
         </thead>
         <tbody id="repositories-list">
           {{if .Repositories}}{{range .Repositories}}<tr class="repositories-row" data-repository-repo="{{.Repo}}">
-            <td class="repositories-repo">{{.Repo}}</td>
+            <td class="repositories-repo" title="{{.Repo}}">{{.Repo}}</td>
             <td class="repositories-change-count">{{.ChangeCount}}</td>
             <td class="repositories-chart-changes">{{.ChartChanges}}</td>
             <td class="repositories-last-change" title="{{.LastChangeAbsolute}}">{{.LastChangeRelative}}</td>
@@ -42,7 +42,7 @@ const repositoriesTemplate = `<!DOCTYPE html>
           {{end}}{{else}}<tr class="repositories-empty-row"><td colspan="4">No repositories tracked yet.</td></tr>
           {{end}}
         </tbody>
-      </table>
+      </table></div>
     </main>
   </div>
 </body>

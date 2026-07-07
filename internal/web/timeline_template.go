@@ -41,6 +41,14 @@ const timelineTemplate = `<!DOCTYPE html>
     .kpi-label { font-size: 0.72rem; color: var(--oc-muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
     .kpi-value { display: block; font-size: 1.7rem; font-weight: 750; margin-top: 0.15rem; letter-spacing: -0.02em; }
     .kpi-sub { font-size: 0.74rem; color: var(--oc-muted); margin-top: 0.1rem; }
+    /* KPI reflow (R16): 5 -> 2 -> 1 columns as the viewport narrows, so no
+       tile ever clips at mobile/tablet widths. */
+    @media (max-width: 860px) {
+      .kpis { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 600px) {
+      .kpis { grid-template-columns: 1fr; }
+    }
 
     /* Facet dropdowns */
     .facet-bar { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 1rem; }
@@ -146,12 +154,12 @@ const timelineTemplate = `<!DOCTYPE html>
           <h2 id="feed-title">Changes</h2>
           <span id="feed-count" class="feed-count"></span>
         </div>
-        <table class="feed-table">
+        <div class="table-scroll"><table class="feed-table">
           <thead>
             <tr><th>When</th><th>Repository</th><th>Commit</th><th>Author</th><th>Changes</th></tr>
           </thead>
           <tbody id="feed-list"></tbody>
-        </table>
+        </table></div>
       </div>
       <script src="/static/timeline.js"></script>
     </main>
