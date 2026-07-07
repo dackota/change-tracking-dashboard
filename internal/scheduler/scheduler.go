@@ -12,7 +12,6 @@
 package scheduler
 
 import (
-	"log"
 	"time"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
@@ -99,14 +98,20 @@ func (s *Scheduler) Tick(trackers []domain.Tracker) {
 			continue
 		}
 
-		err := s.poll(t)
-		if err != nil {
-			log.Printf("scheduler: poll error for tracker %q/%q/%q: %v",
-				t.Repo, t.FileGlob, t.Field, err)
-		}
 		// Report every outcome — success or failure — to the status
 		// recorder. Errors used to be logged and then dropped; they are now
 		// fed into pollstatus so LastError/LastSuccessAt reflect reality.
+		//
+		// PollFunc's signature (func(domain.Tracker) error) carries no
+		// context: the poll cycle's own trace/span is created inside
+		// PollFunc's implementation (poller.Poll), not visible here. A
+		// scheduler-side error log would therefore have no trace_id/span_id
+		// to correlate with — and would duplicate the identical error
+		// poller.Poll already logs at ERROR level, correlated to its own
+		// poll-cycle span (criterion 4). So the error is reported to the
+		// status recorder (below) and left for the poller to log; it is
+		// deliberately not logged a second time here.
+		err := s.poll(t)
 		s.status.Record(t, now, err)
 
 		s.state[key] = trackerState{lastPolledAt: now}

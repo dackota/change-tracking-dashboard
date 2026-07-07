@@ -11,9 +11,9 @@
 package gitsource
 
 import (
+	"context"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path"
 	"path/filepath"
@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/domain"
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/telemetry"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -179,13 +180,21 @@ func isGitRepo(path string) bool {
 // (used to bound the backfill window on first run). Pass a zero time.Time for
 // notBefore to apply no lower time bound.
 //
+// ctx is used only for log correlation: the commit-cap warning below is
+// logged via telemetry.LoggerFromContext(ctx) so it carries the trace_id/
+// span_id of the poll cycle that's walking commits (poller.go stores its
+// poll-scoped logger on ctx via telemetry.ContextWithLogger before calling
+// down into this package). Passing context.Background() (as every
+// pre-existing caller in this package's tests does) simply yields the
+// uncorrelated package-default logger — never a crash or nil.
+//
 // The returned slice contains one CommitSnapshot per qualifying commit. The
 // Content field holds the raw file bytes at that commit; if the file was
 // deleted, Content is nil.
 //
 // This skeleton handles a single explicit file path. Glob expansion across many
 // files (fan-out from a Tracker.FileGlob) is a seam left for the poller layer.
-func (s *Source) WalkCommits(filePath, sinceCommitSha string, notBefore time.Time) ([]domain.CommitSnapshot, error) {
+func (s *Source) WalkCommits(ctx context.Context, filePath, sinceCommitSha string, notBefore time.Time) ([]domain.CommitSnapshot, error) {
 	head, err := s.repo.Head()
 	if err != nil {
 		return nil, fmt.Errorf("gitsource: get HEAD: %w", err)
@@ -244,7 +253,7 @@ func (s *Source) WalkCommits(filePath, sinceCommitSha string, notBefore time.Tim
 		})
 
 		if len(raw) >= maxCommitsPerWalk {
-			log.Printf("gitsource: walk for %q hit the %d-commit cap; older history truncated", filePath, maxCommitsPerWalk)
+			warnCommitCapHit(ctx, filePath)
 			break
 		}
 	}
@@ -255,6 +264,16 @@ func (s *Source) WalkCommits(filePath, sinceCommitSha string, notBefore time.Tim
 	}
 
 	return raw, nil
+}
+
+// warnCommitCapHit logs the commit-cap truncation warning, correlated to
+// ctx's active trace when WalkCommits was called with one (see WalkCommits'
+// doc comment on ctx). Split out from WalkCommits as its own named seam so
+// the log/trace-correlation behavior can be asserted directly, without
+// needing to actually walk maxCommitsPerWalk real commits in a test.
+func warnCommitCapHit(ctx context.Context, filePath string) {
+	telemetry.LoggerFromContext(ctx).Warn("gitsource: walk hit the commit cap; older history truncated",
+		"filePath", filePath, "cap", maxCommitsPerWalk)
 }
 
 // MatchingFiles enumerates every blob path in the repository's HEAD tree and

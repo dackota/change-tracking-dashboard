@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"time"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/chartrender"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/gitsource"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/manifestdiff"
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/telemetry"
 )
 
 // materializeAndRender materializes sha's tenant subtree into a fresh,
@@ -34,7 +34,8 @@ import (
 func (e *Engine) materializeAndRender(ctx context.Context, repo ChartRepo, req Request, sha string, bounds gitsource.MaterializeBounds, side string) (manifests []manifestdiff.Manifest, outcome Outcome, ok bool) {
 	destDir, cleanup, err := newExclusiveTempDir()
 	if err != nil {
-		log.Printf("chartdiff: create temp materialize dir (%s side) repo=%q tenant=%q sha=%q: %v", side, req.RepoName, req.TenantPath, sha, err)
+		telemetry.LoggerFromContext(ctx).Error("chartdiff: create temp materialize dir",
+			"side", side, "repo", req.RepoName, "tenant", req.TenantPath, "sha", sha, "error", err)
 		return nil, Outcome{Kind: CouldNotRender}, false
 	}
 
@@ -65,14 +66,16 @@ func (e *Engine) materializeAndRender(ctx context.Context, repo ChartRepo, req R
 		// call actually finishes touching destDir (see materializeBounded's
 		// doc) — this function must not clean up again.
 		handedOff = true
-		log.Printf("chartdiff: materialize (%s side) repo=%q tenant=%q sha=%q exceeded timeout %v", side, req.RepoName, req.TenantPath, sha, e.cfg.MaterializeTimeout)
+		telemetry.LoggerFromContext(ctx).Error("chartdiff: materialize exceeded timeout",
+			"side", side, "repo", req.RepoName, "tenant", req.TenantPath, "sha", sha, "timeout", e.cfg.MaterializeTimeout)
 		return nil, Outcome{Kind: ExceededLimits}, false
 	}
 	if materializeErr != nil {
 		if errors.Is(materializeErr, gitsource.ErrMaterializeBoundsExceeded) {
 			return nil, Outcome{Kind: ExceededLimits}, false
 		}
-		log.Printf("chartdiff: materialize (%s side) repo=%q tenant=%q sha=%q: %v", side, req.RepoName, req.TenantPath, sha, materializeErr)
+		telemetry.LoggerFromContext(ctx).Error("chartdiff: materialize failed",
+			"side", side, "repo", req.RepoName, "tenant", req.TenantPath, "sha", sha, "error", materializeErr)
 		return nil, Outcome{Kind: CouldNotRender}, false
 	}
 
@@ -82,7 +85,8 @@ func (e *Engine) materializeAndRender(ctx context.Context, repo ChartRepo, req R
 	handedOff = true
 	result, err, timedOut := e.renderBounded(ctx, destDir, cleanup)
 	if timedOut {
-		log.Printf("chartdiff: render (%s side) repo=%q tenant=%q sha=%q exceeded timeout %v", side, req.RepoName, req.TenantPath, sha, e.cfg.RenderTimeout)
+		telemetry.LoggerFromContext(ctx).Error("chartdiff: render exceeded timeout",
+			"side", side, "repo", req.RepoName, "tenant", req.TenantPath, "sha", sha, "timeout", e.cfg.RenderTimeout)
 		return nil, Outcome{Kind: ExceededLimits}, false
 	}
 	if err != nil {
@@ -95,7 +99,8 @@ func (e *Engine) materializeAndRender(ctx context.Context, repo ChartRepo, req R
 				return nil, Outcome{Kind: CouldNotRender}, false
 			}
 		}
-		log.Printf("chartdiff: render (%s side) repo=%q tenant=%q sha=%q: %v", side, req.RepoName, req.TenantPath, sha, err)
+		telemetry.LoggerFromContext(ctx).Error("chartdiff: render failed",
+			"side", side, "repo", req.RepoName, "tenant", req.TenantPath, "sha", sha, "error", err)
 		return nil, Outcome{Kind: CouldNotRender}, false
 	}
 
@@ -182,11 +187,21 @@ func (e *Engine) materializeBounded(ctx context.Context, repo ChartRepo, sha, su
 		// down the whole dashboard process.
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("chartdiff: materialize panicked (dest dir %q): %v", destDir, r)
+				telemetry.LoggerFromContext(ctx).Error("chartdiff: materialize panicked", "destDir", destDir, "panic", r)
 				done <- fmt.Errorf("chartdiff: materialize panicked: %v", r)
 			}
 		}()
-		done <- repo.MaterializeSubtreeBounded(sha, subtreePath, destDir, bounds)
+		// The real downstream git call, wrapped in its own child span
+		// (criterion 5): a "subtree not found" or any other materialize
+		// failure is recorded as a span exception with Error status here, at
+		// the actual call site — not just logged — regardless of whether the
+		// caller above has already given up on timeout. ctx is used only to
+		// start the span (it may already be cancelled on the
+		// abandoned-goroutine path); it does not gate this call, exactly
+		// like every other use of ctx in this function.
+		done <- telemetry.WithSpan(ctx, e.tracer, "gitsource.materialize_subtree", func(context.Context) error {
+			return repo.MaterializeSubtreeBounded(sha, subtreePath, destDir, bounds)
+		})
 	}()
 
 	timer := time.NewTimer(e.cfg.MaterializeTimeout)
@@ -273,11 +288,24 @@ func (e *Engine) renderBounded(ctx context.Context, chartDir string, cleanup fun
 		// down the whole dashboard process.
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("chartdiff: render panicked (chart dir %q): %v", chartDir, r)
+				telemetry.LoggerFromContext(ctx).Error("chartdiff: render panicked", "chartDir", chartDir, "panic", r)
 				done <- renderResult{err: fmt.Errorf("chartdiff: render panicked: %v", r)}
 			}
 		}()
-		res, renderErr := e.renderer.Render(chartDir, nil)
+		// The render call, wrapped in its own child span (criterion 2/5's
+		// spirit — this is the third real downstream call in Diff's call
+		// graph, alongside the two git calls): a malformed-chart or
+		// dependency-not-vendored failure is recorded as a span exception
+		// with Error status right here, at the actual call site. ctx is used
+		// only to start the span (it may already be cancelled on the
+		// abandoned-goroutine path); it does not gate this call, exactly
+		// like every other use of ctx in this function.
+		var res *chartrender.Result
+		renderErr := telemetry.WithSpan(ctx, e.tracer, "chartrender.render", func(context.Context) error {
+			var err error
+			res, err = e.renderer.Render(chartDir, nil)
+			return err
+		})
 		done <- renderResult{result: res, err: renderErr}
 	}()
 

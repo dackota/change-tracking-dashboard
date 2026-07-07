@@ -8,10 +8,12 @@
 package web
 
 import (
-	"log"
+	"context"
 	"net/http"
 
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/changeset"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/store"
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/telemetry"
 )
 
 // ChangesetDetailHandler serves GET /api/changesets/detail as rendered HTML.
@@ -37,9 +39,17 @@ func (h *ChangesetDetailHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	cs, found, err := h.st.GetChangeset(repo, commitSha)
+	logger := telemetry.LoggerFromContext(r.Context())
+
+	var cs changeset.Changeset
+	var found bool
+	err := telemetry.WithSpan(r.Context(), tracer, "store.get_changeset", func(context.Context) error {
+		var err error
+		cs, found, err = h.st.GetChangeset(repo, commitSha)
+		return err
+	})
 	if err != nil {
-		log.Printf("web: get changeset detail: %v", err)
+		logger.Error("web: get changeset detail", "error", err)
 		http.Error(w, genericServerErrorMsg, http.StatusInternalServerError)
 		return
 	}
@@ -49,6 +59,6 @@ func (h *ChangesetDetailHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err := renderChangesetDetail(w, cs); err != nil {
-		log.Printf("web: render changeset detail: %v", err)
+		logger.Error("web: render changeset detail", "error", err)
 	}
 }

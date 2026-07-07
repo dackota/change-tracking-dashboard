@@ -11,11 +11,13 @@
 package config
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
-	"log"
 	"sync"
 	"time"
+
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/telemetry"
 )
 
 // watchInterval is the period between background file-hash checks.
@@ -26,9 +28,9 @@ const watchInterval = 10 * time.Second
 // Watcher holds the current validated Config and watches the config file for
 // changes. Call Current() to get a thread-safe snapshot of the live config.
 type Watcher struct {
-	path    string
-	mu      sync.RWMutex
-	current *Config
+	path     string
+	mu       sync.RWMutex
+	current  *Config
 	lastHash [sha256.Size]byte
 }
 
@@ -74,13 +76,13 @@ func (w *Watcher) Current() *Config {
 func (w *Watcher) Reload() error {
 	h, err := fileHash(w.path)
 	if err != nil {
-		log.Printf("config: reload hash error: %v", err)
+		telemetry.LoggerFromContext(context.Background()).Error("config: reload hash error", "error", err)
 		return fmt.Errorf("config: reload hash: %w", err)
 	}
 
 	cfg, err := parseFile(w.path)
 	if err != nil {
-		log.Printf("config: reload validation error (keeping last-good config): %v", err)
+		telemetry.LoggerFromContext(context.Background()).Error("config: reload validation error, keeping last-good config", "error", err)
 		return err
 	}
 
@@ -101,7 +103,7 @@ func (w *Watcher) pollLoop() {
 	for range ticker.C {
 		h, err := fileHash(w.path)
 		if err != nil {
-			log.Printf("config: watch hash error: %v", err)
+			telemetry.LoggerFromContext(context.Background()).Error("config: watch hash error", "error", err)
 			continue
 		}
 
@@ -117,7 +119,7 @@ func (w *Watcher) pollLoop() {
 			// Error already logged by Reload; keep looping.
 			continue
 		}
-		log.Printf("config: reloaded from %s", w.path)
+		telemetry.LoggerFromContext(context.Background()).Info("config: reloaded", "path", w.path)
 	}
 }
 

@@ -63,6 +63,18 @@ type ResolvedTracker struct {
 	BackfillDays        int
 }
 
+// Observability holds telemetry configuration for the OTel SDK. It is
+// optional: an absent section (every ConfigMap written before this slice)
+// parses to a zero-value Observability, and OTLPEndpoint == "" is Init's
+// safe-degrade input (no backend assumed to exist). The standard
+// OTEL_EXPORTER_OTLP_ENDPOINT environment variable, when set, always takes
+// precedence over this value — see telemetry.ResolveOTLPEndpoint.
+type Observability struct {
+	// OTLPEndpoint is the OTLP endpoint ("host:port", optionally with a
+	// scheme) the OTel SDK exports traces/metrics to.
+	OTLPEndpoint string `yaml:"otlp_endpoint"`
+}
+
 // Config is the fully-parsed, fully-validated snapshot that consumers receive
 // from Watcher.Current().
 type Config struct {
@@ -75,6 +87,9 @@ type Config struct {
 	// Trackers is the flattened []domain.Tracker for the poller —
 	// one entry per (repo × file-glob × field).
 	Trackers []domain.Tracker
+	// Observability carries telemetry config (currently just the OTLP
+	// endpoint). Zero value is a valid, safe-degrade configuration.
+	Observability Observability
 }
 
 // clone returns a deep copy of the Config: every slice (including the nested
@@ -85,7 +100,7 @@ func (c *Config) clone() *Config {
 	if c == nil {
 		return nil
 	}
-	cp := &Config{Defaults: c.Defaults}
+	cp := &Config{Defaults: c.Defaults, Observability: c.Observability}
 
 	if c.Trackers != nil {
 		cp.Trackers = make([]domain.Tracker, len(c.Trackers))

@@ -12,12 +12,12 @@ package web
 import (
 	"fmt"
 	"html/template"
-	"log"
 	"net/http"
 	"time"
 
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/config"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/pollstatus"
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/telemetry"
 )
 
 // maxPollErrorDisplayLen bounds how much of a tracker's raw poll-error text
@@ -226,6 +226,6 @@ func (h *TrackersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := h.tmpl.Execute(w, data); err != nil {
 		// The response may already be partly written, so we can't change the
 		// status code here — just record the failure so it's observable.
-		log.Printf("web: render trackers template: %v", err)
+		telemetry.LoggerFromContext(r.Context()).Error("web: render trackers template", "error", err)
 	}
 }

@@ -1,6 +1,7 @@
 package gitsource_test
 
 import (
+	"context"
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
@@ -132,7 +133,7 @@ func TestWalkCommits_NotBefore_ExcludesOldCommits(t *testing.T) {
 	// notBefore = Jan 5 2024 — should include sha2 (Jan 10) and sha3 (Jan 20),
 	// but exclude sha1 (Jan 1).
 	notBefore := time.Date(2024, 1, 5, 0, 0, 0, 0, time.UTC)
-	snapshots, err := src.WalkCommits("Chart.yaml", "", notBefore)
+	snapshots, err := src.WalkCommits(context.Background(), "Chart.yaml", "", notBefore)
 	if err != nil {
 		t.Fatalf("WalkCommits: %v", err)
 	}
@@ -160,7 +161,7 @@ func TestWalkCommits_NotBefore_ZeroMeansUnbounded(t *testing.T) {
 		t.Fatalf("gitsource.Open: %v", err)
 	}
 
-	snapshots, err := src.WalkCommits("Chart.yaml", "", time.Time{})
+	snapshots, err := src.WalkCommits(context.Background(), "Chart.yaml", "", time.Time{})
 	if err != nil {
 		t.Fatalf("WalkCommits: %v", err)
 	}
@@ -186,7 +187,7 @@ func TestWalkCommits_AllCommits(t *testing.T) {
 		t.Fatalf("gitsource.Open: %v", err)
 	}
 
-	snapshots, err := src.WalkCommits("Chart.yaml", "", time.Time{})
+	snapshots, err := src.WalkCommits(context.Background(), "Chart.yaml", "", time.Time{})
 	if err != nil {
 		t.Fatalf("WalkCommits: %v", err)
 	}
@@ -231,7 +232,7 @@ func TestWalkCommits_SinceHighWaterMark(t *testing.T) {
 	}
 
 	// Walk since sha1 — should only return sha2.
-	snapshots, err := src.WalkCommits("Chart.yaml", sha1, time.Time{})
+	snapshots, err := src.WalkCommits(context.Background(), "Chart.yaml", sha1, time.Time{})
 	if err != nil {
 		t.Fatalf("WalkCommits (since sha1): %v", err)
 	}
@@ -254,7 +255,7 @@ func TestWalkCommits_FilePath(t *testing.T) {
 		t.Fatalf("gitsource.Open: %v", err)
 	}
 
-	snapshots, err := src.WalkCommits("Chart.yaml", "", time.Time{})
+	snapshots, err := src.WalkCommits(context.Background(), "Chart.yaml", "", time.Time{})
 	if err != nil {
 		t.Fatalf("WalkCommits: %v", err)
 	}
@@ -281,7 +282,7 @@ func TestOpenOrClone_LocalPath_StillWorks(t *testing.T) {
 		t.Fatalf("OpenOrClone (local): %v", err)
 	}
 
-	snapshots, err := src.WalkCommits("Chart.yaml", "", time.Time{})
+	snapshots, err := src.WalkCommits(context.Background(), "Chart.yaml", "", time.Time{})
 	if err != nil {
 		t.Fatalf("WalkCommits: %v", err)
 	}
@@ -350,7 +351,7 @@ func TestOpenOrClone_IdempotentOpen(t *testing.T) {
 		t.Fatalf("OpenOrClone (second / idempotent): %v", err)
 	}
 
-	snapshots, err := src2.WalkCommits("Chart.yaml", "", time.Time{})
+	snapshots, err := src2.WalkCommits(context.Background(), "Chart.yaml", "", time.Time{})
 	if err != nil {
 		t.Fatalf("WalkCommits after idempotent open: %v", err)
 	}
@@ -412,7 +413,7 @@ func TestFetch_NewCommitIsVisible(t *testing.T) {
 	}
 
 	// Confirm the clone sees the two initial commits.
-	snapshots, err := src.WalkCommits("Chart.yaml", "", time.Time{})
+	snapshots, err := src.WalkCommits(context.Background(), "Chart.yaml", "", time.Time{})
 	if err != nil {
 		t.Fatalf("WalkCommits before fetch: %v", err)
 	}
@@ -429,7 +430,7 @@ func TestFetch_NewCommitIsVisible(t *testing.T) {
 	}
 
 	// Assert: WalkCommits now returns all three commits including the new one.
-	snapshots, err = src.WalkCommits("Chart.yaml", "", time.Time{})
+	snapshots, err = src.WalkCommits(context.Background(), "Chart.yaml", "", time.Time{})
 	if err != nil {
 		t.Fatalf("WalkCommits after fetch: %v", err)
 	}

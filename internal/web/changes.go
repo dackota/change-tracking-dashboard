@@ -12,9 +12,10 @@ package web
 
 import (
 	"html/template"
-	"log"
 	"net/http"
 	"time"
+
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/telemetry"
 )
 
 // changesTitle and changesSubtitle are the fixed title/subtitle rendered in
@@ -49,6 +50,6 @@ func (h *ChangesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := h.tmpl.Execute(w, data); err != nil {
 		// The response may already be partly written, so we can't change the
 		// status code here — just record the failure so it's observable.
-		log.Printf("web: render changes template: %v", err)
+		telemetry.LoggerFromContext(r.Context()).Error("web: render changes template", "error", err)
 	}
 }

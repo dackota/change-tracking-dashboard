@@ -66,7 +66,7 @@ func TestExtractKeyed(t *testing.T) {
 			name:    "subchart versions with alias keying",
 			content: chartWithDeps,
 			// alias takes precedence over name when present
-			expr:    `.dependencies | map({(if .alias then .alias else .name end): .version}) | add`,
+			expr: `.dependencies | map({(if .alias then .alias else .name end): .version}) | add`,
 			wantMap: map[string]string{
 				"aidp-gateway":  "0.38.0",
 				"kanpai-engine": "1.2.0",
@@ -152,27 +152,27 @@ dependencies:
 		wantErrKind string // "none" | "compile" | "eval"
 	}{
 		{
-			name:    "scalar top-level field present",
-			content: chartYAML,
-			expr:    ".version",
+			name:      "scalar top-level field present",
+			content:   chartYAML,
+			expr:      ".version",
 			wantField: domain.TrackedField{Value: "1.2.3", Present: true},
 		},
 		{
-			name:    "scalar nested field present",
-			content: chartYAML,
-			expr:    ".dependencies[] | select(.name == \"aidp-gateway\") | .version",
+			name:      "scalar nested field present",
+			content:   chartYAML,
+			expr:      ".dependencies[] | select(.name == \"aidp-gateway\") | .version",
 			wantField: domain.TrackedField{Value: "0.4.5", Present: true},
 		},
 		{
-			name:    "expression matches nothing returns absent",
-			content: chartYAML,
-			expr:    ".nonexistent",
+			name:      "expression matches nothing returns absent",
+			content:   chartYAML,
+			expr:      ".nonexistent",
 			wantField: domain.TrackedField{Present: false},
 		},
 		{
-			name:    "expression yields null returns absent",
-			content: chartYAML,
-			expr:    ".dependencies[] | select(.name == \"does-not-exist\") | .version",
+			name:      "expression yields null returns absent",
+			content:   chartYAML,
+			expr:      ".dependencies[] | select(.name == \"does-not-exist\") | .version",
 			wantField: domain.TrackedField{Present: false},
 		},
 		{
@@ -182,9 +182,9 @@ dependencies:
 			wantErrKind: "compile",
 		},
 		{
-			name:    "nil content returns absent",
-			content: nil,
-			expr:    ".version",
+			name:      "nil content returns absent",
+			content:   nil,
+			expr:      ".version",
 			wantField: domain.TrackedField{Present: false},
 		},
 	}

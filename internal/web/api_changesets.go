@@ -7,10 +7,10 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -19,6 +19,7 @@ import (
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/changeset"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/filter"
 	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/store"
+	"github.com/Panasonic-Global-Applied-AI/change-tracking-dashboard/internal/telemetry"
 )
 
 // genericServerErrorMsg is the only text sent to the client on an internal
@@ -89,9 +90,11 @@ func (h *ChangesetsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w.Header())
 	w.Header().Set("Content-Type", "application/json")
 
+	logger := telemetry.LoggerFromContext(r.Context())
+
 	asOf, err := parseAsOf(r.URL.Query().Get("asOf"))
 	if err != nil {
-		log.Printf("web: parse asOf: %v", err)
+		logger.Error("web: parse asOf", "error", err)
 		http.Error(w, genericBadRequestMsg, http.StatusBadRequest)
 		return
 	}
@@ -101,14 +104,14 @@ func (h *ChangesetsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// the HTML feed handler's boundary guard.
 	facetOpts, err := h.st.FacetOptions()
 	if err != nil {
-		log.Printf("web: facet options: %v", err)
+		logger.Error("web: facet options", "error", err)
 		http.Error(w, genericServerErrorMsg, http.StatusInternalServerError)
 		return
 	}
 
 	spec, err := parseChangesetsFilter(r.URL.Query(), facetOpts)
 	if err != nil {
-		log.Printf("web: parse facet filter: %v", err)
+		logger.Error("web: parse facet filter", "error", err)
 		http.Error(w, genericBadRequestMsg, http.StatusBadRequest)
 		return
 	}
@@ -122,18 +125,23 @@ func (h *ChangesetsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	limit, err := parseLimit(r.URL.Query().Get("limit"))
 	if err != nil {
-		log.Printf("web: parse limit: %v", err)
+		logger.Error("web: parse limit", "error", err)
 		http.Error(w, genericBadRequestMsg, http.StatusBadRequest)
 		return
 	}
 
-	page, err := h.st.QueryChangesets(asOf, spec, cursor, limit)
+	var page store.ChangesetPage
+	err = telemetry.WithSpan(r.Context(), tracer, "store.query_changesets", func(context.Context) error {
+		var err error
+		page, err = h.st.QueryChangesets(asOf, spec, cursor, limit)
+		return err
+	})
 	if err != nil {
 		// Log the detail server-side; return a generic message so internal
 		// details (SQLite errors, cursor bytes) don't leak to the client. An
 		// invalid cursor is caller input (400); anything else is treated as
 		// a store failure (500).
-		log.Printf("web: query changesets: %v", err)
+		logger.Error("web: query changesets", "error", err)
 		if errors.Is(err, store.ErrInvalidCursor) {
 			http.Error(w, genericBadRequestMsg, http.StatusBadRequest)
 			return
@@ -146,7 +154,7 @@ func (h *ChangesetsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Changesets: toChangesetsJSON(page.Changesets),
 		NextCursor: page.NextCursor,
 	}
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(r, w, http.StatusOK, resp)
 }
 
 // genericBadRequestMsg is the only text sent to the client for a malformed
@@ -257,10 +265,10 @@ func toChangesetJSON(cs changeset.Changeset) changesetJSON {
 }
 
 // writeJSON marshals v and writes it with the given status code.
-func writeJSON(w http.ResponseWriter, status int, v any) {
+func writeJSON(r *http.Request, w http.ResponseWriter, status int, v any) {
 	body, err := json.Marshal(v)
 	if err != nil {
-		log.Printf("web: marshal changesets response: %v", err)
+		telemetry.LoggerFromContext(r.Context()).Error("web: marshal changesets response", "error", err)
 		http.Error(w, genericServerErrorMsg, http.StatusInternalServerError)
 		return
 	}
