@@ -781,9 +781,11 @@ func TestLoad_EngineUnset_DefaultsToEmptyString(t *testing.T) {
 	}
 }
 
-// TestLoad_InvalidEngine_ReturnsError verifies an unrecognized engine value —
-// including "hcl", reserved for a future task — is rejected at config load
-// with a clear, actionable error naming the tracker and the bad value.
+// TestLoad_InvalidEngine_ReturnsError verifies an unrecognized engine value
+// is rejected at config load with a clear, actionable error naming the
+// tracker and the bad value. "hcl" is no longer an example of this — it is
+// now an implemented engine (see internal/hclextract) — so a value outside
+// the supported set ("jq", "hcl", or omitted) is used instead.
 func TestLoad_InvalidEngine_ReturnsError(t *testing.T) {
 	const yaml = `
 defaults:
@@ -791,7 +793,7 @@ defaults:
   backfillDays: 90
 trackers:
   - repo: /repo/bogus-engine
-    engine: hcl
+    engine: cobol
     facetRegex: ''
     files:
       - glob: 'Chart.yaml'
@@ -803,18 +805,18 @@ trackers:
 
 	_, err := config.Load(path)
 	if err == nil {
-		t.Fatal("Load should have rejected engine: hcl, got nil")
+		t.Fatal("Load should have rejected engine: cobol, got nil")
 	}
 	errStr := err.Error()
-	for _, want := range []string{"hcl", "/repo/bogus-engine"} {
+	for _, want := range []string{"cobol", "/repo/bogus-engine"} {
 		if !contains(errStr, want) {
 			t.Errorf("error %q does not mention %q", errStr, want)
 		}
 	}
 }
 
-// TestLoad_UnknownEngineValue_ReturnsError double-checks a plain typo (not
-// the reserved "hcl" name) is rejected the same way.
+// TestLoad_UnknownEngineValue_ReturnsError double-checks a plain typo is
+// rejected the same way.
 func TestLoad_UnknownEngineValue_ReturnsError(t *testing.T) {
 	const yaml = `
 defaults:

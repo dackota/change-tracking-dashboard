@@ -168,6 +168,7 @@ func run(configPath, dbPath, listenAddr string, logger *slog.Logger) error {
 			poller.WithTracerProvider(sdk.TracerProvider),
 			poller.WithMeterProvider(sdk.MeterProvider),
 			poller.WithLogger(logger),
+			poller.WithExtractFailureRecorder(pollStatus),
 		)
 		return p.Poll(t)
 	}

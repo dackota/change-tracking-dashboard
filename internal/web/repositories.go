@@ -104,7 +104,7 @@ func (h *RepositoriesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 
 	now := time.Now()
 	data := repositoriesViewData{
-		shellData:    buildShell(r.URL.Path, repositoriesTitle, repositoriesSubtitle, "", statusChip(h.pollStatus.Snapshot(), now)),
+		shellData:    buildShell(r.URL.Path, repositoriesTitle, repositoriesSubtitle, "", statusChip(h.pollStatus.Snapshot(), h.pollStatus.ExtractFailureCounts(), now)),
 		Repositories: buildRepositoriesView(stats, now),
 	}
 	if err := h.tmpl.Execute(w, data); err != nil {

@@ -58,13 +58,17 @@ type entry struct {
 //
 // The zero Registry is not ready to use — construct one with New.
 type Registry struct {
-	mu      sync.Mutex
-	entries map[trackerKey]*entry
+	mu              sync.Mutex
+	entries         map[trackerKey]*entry
+	extractFailures map[string]int64 // keyed by engine (e.g. "hcl", "jq")
 }
 
 // New returns an empty Registry, ready to record poll outcomes.
 func New() *Registry {
-	return &Registry{entries: make(map[trackerKey]*entry)}
+	return &Registry{
+		entries:         make(map[trackerKey]*entry),
+		extractFailures: make(map[string]int64),
+	}
 }
 
 // trackerKey is the canonical identity of a tracker for lookup purposes —
@@ -144,5 +148,32 @@ func (r *Registry) Snapshot() []TrackerStatus {
 		return a.Field < b.Field
 	})
 
+	return out
+}
+
+// RecordExtractFailure increments, by one, the running count of
+// FieldExtractor.Extract failures for the given engine (e.g. "hcl", "jq") —
+// a file that failed to parse/extract and was skipped, per-engine so an HCL
+// tracker's structural parse failures are never conflated with a jq
+// tracker's evaluation failures. Counts are process-lifetime totals: like
+// the rest of the Registry, they hold no persistence and reset on restart.
+func (r *Registry) RecordExtractFailure(engine string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.extractFailures[engine]++
+}
+
+// ExtractFailureCounts returns an independent copy of the current per-engine
+// extract-failure counts (e.g. {"hcl": 3}) — the poll-health/status surface
+// this is reported through. An engine that has never failed is simply absent
+// from the map, never present with a zero value.
+func (r *Registry) ExtractFailureCounts() map[string]int64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	out := make(map[string]int64, len(r.extractFailures))
+	for engine, n := range r.extractFailures {
+		out[engine] = n
+	}
 	return out
 }

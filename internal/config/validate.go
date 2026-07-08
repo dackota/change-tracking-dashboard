@@ -15,13 +15,17 @@ import (
 // without a separate import block. The domain package is imported here.
 type domainTrackerType = domain.Tracker
 
-// validateJQExpr compiles expr via extractor.New and wraps any error with
-// a message that identifies tracker, file, and field.
-func validateJQExpr(trackerIdx int, repo string, fileIdx int, glob string, fieldIdx int, name, expr string) error {
-	_, err := extractor.New(expr)
-	if err != nil {
-		return fmt.Errorf("config: tracker[%d] (repo=%q), file[%d] (glob=%q), field[%d] (name=%q): invalid jq expr %q: %w",
-			trackerIdx, repo, fileIdx, glob, fieldIdx, name, expr, err)
+// validateExpr compiles expr through the same extractor.Select seam the
+// poller resolves its FieldExtractor from — engine explicit or, when unset,
+// inferred from glob (see extractor.InferEngine) — so a jq tracker's expr is
+// checked as jq and an hcl tracker's (explicit or glob-inferred) expr is
+// checked as an HCL structural traversal path. Any compile error is wrapped
+// with a message identifying tracker, file, and field.
+func validateExpr(trackerIdx int, repo string, fileIdx int, glob string, fieldIdx int, name, engine, expr string) error {
+	resolvedEngine := extractor.InferEngine(engine, glob)
+	if _, err := extractor.Select(resolvedEngine, expr); err != nil {
+		return fmt.Errorf("config: tracker[%d] (repo=%q), file[%d] (glob=%q), field[%d] (name=%q): invalid %s expr %q: %w",
+			trackerIdx, repo, fileIdx, glob, fieldIdx, name, resolvedEngine, expr, err)
 	}
 	return nil
 }

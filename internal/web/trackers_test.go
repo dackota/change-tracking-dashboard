@@ -247,6 +247,40 @@ func TestTrackersHandler_HeaderPollChip_RendersAggregateErrorStatus(t *testing.T
 	}
 }
 
+// TestTrackersHandler_HeaderPollChip_RendersHCLExtractFailureCount verifies
+// acceptance criterion 9: after a poll cycle records an HCL parse failure
+// (pollstatus.Registry.RecordExtractFailure — a malformed file that's
+// skipped rather than failing the whole poll, so the tracker's own
+// LastSuccess/LastError columns show a clean poll), the failure count is
+// nonetheless visible on the poll-health surface every page's header
+// shares, tagged with the engine that failed.
+func TestTrackersHandler_HeaderPollChip_RendersHCLExtractFailureCount(t *testing.T) {
+	t.Parallel()
+
+	reg := pollstatus.New()
+	tr := domain.Tracker{Repo: "repo-tf", FileGlob: "*.tf", Field: "provider_version", PollIntervalSeconds: 60}
+	reg.Record(tr, time.Now(), nil) // the poll itself succeeded; one file within it was skipped
+	reg.RecordExtractFailure("hcl")
+	reg.RecordExtractFailure("hcl")
+
+	cfg := &config.Config{TrackerConfigs: []config.ResolvedTracker{{Repo: "repo-tf", PollIntervalSeconds: 60}}}
+	h := web.NewTrackersHandler(fakeConfigSnapshot{cfg: cfg}, reg)
+	req := httptest.NewRequest(http.MethodGet, "/trackers", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	body := rr.Body.String()
+	if !strings.Contains(body, "2 hcl parse failures") {
+		t.Errorf("header chip missing HCL extract-failure count; got:\n%s", body)
+	}
+	// The poll attempt itself succeeded (the failure was a single skipped
+	// file, not a poll-attempt failure), so the aggregate chip must not flip
+	// to the error state over it.
+	if !strings.Contains(body, `data-poll-status="ok"`) {
+		t.Errorf("expected poll-status to remain \"ok\" despite an extract failure; got:\n%s", body)
+	}
+}
+
 // TestTrackersHandler_PerTrackerStatusColumns_RenderInTable verifies R12:
 // the Trackers table gains last-success/last-error/next-run columns sourced
 // from the poll-status registry.
