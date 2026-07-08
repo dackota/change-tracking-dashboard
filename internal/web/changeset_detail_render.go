@@ -29,10 +29,11 @@ import (
 var gitSuffixPattern = regexp.MustCompile(`/*\.git/*$`)
 
 // changesetDetailTemplateSource is the changeset-detail template's source.
-// It dispatches each Change to the chart or value partial by comparing its
-// Kind against changeset.KindChart (interpolated below as a Go string via
-// fmt.Sprintf on the constant, not a hand-typed literal) — the single
-// source of truth for "chart" stays internal/changeset/kind.go.
+// It dispatches each Change to the chart, terraform, or value partial by
+// comparing its Kind against changeset.KindChart / changeset.KindTerraform
+// (interpolated below as Go strings via fmt.Sprintf on the constants, not
+// hand-typed literals) — the single source of truth for "chart"/"terraform"
+// stays internal/changeset/kind.go.
 var changesetDetailTemplateSource = fmt.Sprintf(`
 <section class="changeset-detail" data-commit-sha="{{.CommitSha}}">
   <header class="changeset-detail-header">
@@ -45,13 +46,15 @@ var changesetDetailTemplateSource = fmt.Sprintf(`
     {{range .Changes}}
       {{if eq .Kind %q}}
         {{template "chart-change" .}}
+      {{else if eq .Kind %q}}
+        {{template "terraform-change" .}}
       {{else}}
         {{template "value-change" .}}
       {{end}}
     {{end}}
   </ul>
 </section>
-`, changeset.KindChart)
+`, changeset.KindChart, changeset.KindTerraform)
 
 // changesetDetailTemplate renders one Changeset's detail view: commit
 // metadata followed by every one of its Changes, each dispatched to the
@@ -86,6 +89,29 @@ var chartChangeTemplate = template.Must(valueChangeTemplate.New("chart-change").
   <span class="change-dependency-version-new">{{if .NewValue}}{{.NewValue}}{{end}}</span>
   <div class="change-helm-diff-slot" data-helm-diff-pending="true" data-tenant-path="{{.TenantPath}}">
     Full helm-template diff: not yet available (planned in a future slice)
+  </div>
+</li>
+`))
+
+// terraformChangeTemplate renders a Terraform-kind Change (.tf/.tofu source
+// file) distinctly from a plain value change: it is explicitly labelled
+// "terraform change", shows the tracked attribute's old→new value (interim
+// rendering — the same shape a plain value change uses), and carries a
+// clearly-identifiable plan-diff slot that timeline.js wires live: the
+// data-tenant-path attribute (the directory of this Change's own source
+// file — see newChangesetView) is what timeline.js reads to build its GET
+// /api/changesets/detail/plan-diff fetch URL for this specific slot —
+// mirroring chartChangeTemplate's identical role for the sibling Kind
+// (acceptance criterion 8).
+var terraformChangeTemplate = template.Must(chartChangeTemplate.New("terraform-change").Parse(`
+<li class="change change-kind-terraform" data-kind="terraform" data-field="{{.Field}}">
+  <span class="change-label">Terraform change</span>
+  <span class="change-field">{{.Field}}{{if .Key}} [{{.Key}}]{{end}}</span>
+  <span class="change-old-value">{{if .OldValue}}{{.OldValue}}{{end}}</span>
+  <span class="change-arrow">&rarr;</span>
+  <span class="change-new-value">{{if .NewValue}}{{.NewValue}}{{end}}</span>
+  <div class="change-plan-diff-slot" data-plan-diff-pending="true" data-tenant-path="{{.TenantPath}}">
+    Loading resource-change view…
   </div>
 </li>
 `))

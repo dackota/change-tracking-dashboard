@@ -39,6 +39,31 @@ func TestClassifyKind(t *testing.T) {
 			filePath: "infra/nested/deep/Chart.yaml",
 			want:     changeset.KindChart,
 		},
+		{
+			name:     ".tf file classifies as terraform change",
+			filePath: "envs/prod/main.tf",
+			want:     changeset.KindTerraform,
+		},
+		{
+			name:     ".tofu file classifies as terraform change",
+			filePath: "envs/prod/main.tofu",
+			want:     changeset.KindTerraform,
+		},
+		{
+			name:     ".tf file at repo root classifies as terraform change",
+			filePath: "main.tf",
+			want:     changeset.KindTerraform,
+		},
+		{
+			name:     ".terraform.lock.hcl classifies as value change (no resource blocks to diff)",
+			filePath: "envs/prod/.terraform.lock.hcl",
+			want:     changeset.KindValue,
+		},
+		{
+			name:     "file merely containing .tf as a substring (not the extension) classifies as value change",
+			filePath: "envs/prod/notes.tf.md",
+			want:     changeset.KindValue,
+		},
 	}
 
 	for _, tc := range tests {

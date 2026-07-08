@@ -58,16 +58,18 @@ type entry struct {
 //
 // The zero Registry is not ready to use — construct one with New.
 type Registry struct {
-	mu              sync.Mutex
-	entries         map[trackerKey]*entry
-	extractFailures map[string]int64 // keyed by engine (e.g. "hcl", "jq")
+	mu               sync.Mutex
+	entries          map[trackerKey]*entry
+	extractFailures  map[string]int64 // keyed by engine (e.g. "hcl", "jq")
+	planDiffOutcomes map[string]int64 // keyed by plandiff.Kind string (e.g. "ok", "exceeded-limits")
 }
 
 // New returns an empty Registry, ready to record poll outcomes.
 func New() *Registry {
 	return &Registry{
-		entries:         make(map[trackerKey]*entry),
-		extractFailures: make(map[string]int64),
+		entries:          make(map[trackerKey]*entry),
+		extractFailures:  make(map[string]int64),
+		planDiffOutcomes: make(map[string]int64),
 	}
 }
 
@@ -174,6 +176,35 @@ func (r *Registry) ExtractFailureCounts() map[string]int64 {
 	out := make(map[string]int64, len(r.extractFailures))
 	for engine, n := range r.extractFailures {
 		out[engine] = n
+	}
+	return out
+}
+
+// RecordPlanDiffOutcome increments, by one, the running count of
+// plandiff.Engine.Diff outcomes for the given Kind (e.g. "ok",
+// "exceeded-limits", "could-not-render", "no-prior-version") — acceptance
+// criterion 9's "plandiff outcome counts are reported on the poll-health/
+// status surface". kind is a plain string (rather than plandiff.Kind) so
+// this package never needs to import plandiff, mirroring how
+// RecordExtractFailure takes a plain engine string rather than importing
+// extractor.
+func (r *Registry) RecordPlanDiffOutcome(kind string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.planDiffOutcomes[kind]++
+}
+
+// PlanDiffOutcomeCounts returns an independent copy of the current per-Kind
+// plandiff outcome counts (e.g. {"ok": 12, "exceeded-limits": 1}) — the
+// poll-health/status surface this is reported through. A Kind that has never
+// occurred is simply absent from the map, never present with a zero value.
+func (r *Registry) PlanDiffOutcomeCounts() map[string]int64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	out := make(map[string]int64, len(r.planDiffOutcomes))
+	for kind, n := range r.planDiffOutcomes {
+		out[kind] = n
 	}
 	return out
 }

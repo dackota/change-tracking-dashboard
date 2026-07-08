@@ -18,7 +18,7 @@ func TestStatusChip_NoTrackersEverPolled_ReturnsUnknownStatus(t *testing.T) {
 
 	now := time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)
 
-	got := statusChip(nil, nil, now)
+	got := statusChip(nil, nil, nil, now)
 
 	want := statusChipView{
 		Status:       statusUnknown,
@@ -26,7 +26,7 @@ func TestStatusChip_NoTrackersEverPolled_ReturnsUnknownStatus(t *testing.T) {
 		NextPollText: "Next poll: —",
 	}
 	if got != want {
-		t.Errorf("statusChip(nil, nil, now) = %+v, want %+v", got, want)
+		t.Errorf("statusChip(nil, nil, nil, now) = %+v, want %+v", got, want)
 	}
 }
 
@@ -48,7 +48,7 @@ func TestStatusChip_AllSuccessSnapshot_ReturnsOKStatusWithRelativeText(t *testin
 		},
 	}
 
-	got := statusChip(snapshot, nil, now)
+	got := statusChip(snapshot, nil, nil, now)
 
 	want := statusChipView{
 		Status:       statusOK,
@@ -56,7 +56,7 @@ func TestStatusChip_AllSuccessSnapshot_ReturnsOKStatusWithRelativeText(t *testin
 		NextPollText: "Next poll: in 58 minutes",
 	}
 	if got != want {
-		t.Errorf("statusChip(snapshot, nil, now) = %+v, want %+v", got, want)
+		t.Errorf("statusChip(snapshot, nil, nil, now) = %+v, want %+v", got, want)
 	}
 }
 
@@ -84,7 +84,7 @@ func TestStatusChip_AnyTrackerErrored_ReturnsErrorStatusWithCount(t *testing.T) 
 		},
 	}
 
-	got := statusChip(snapshot, nil, now)
+	got := statusChip(snapshot, nil, nil, now)
 
 	if got.Status != statusError {
 		t.Errorf("Status = %q, want %q", got.Status, statusError)
@@ -125,7 +125,7 @@ func TestStatusChip_NextRunDerivation_PicksSoonestAcrossTrackers(t *testing.T) {
 		},
 	}
 
-	got := statusChip(snapshot, nil, now)
+	got := statusChip(snapshot, nil, nil, now)
 
 	if got.NextPollText != "Next poll: in 5 minutes" {
 		t.Errorf("NextPollText = %q, want %q (soonest NextRunAt across trackers)", got.NextPollText, "Next poll: in 5 minutes")
@@ -161,7 +161,7 @@ func TestStatusChip_ExtractFailures_SurfacedIndependentlyOfPollOutcome(t *testin
 			},
 		}
 
-		got := statusChip(snapshot, extractFailures, now)
+		got := statusChip(snapshot, extractFailures, nil, now)
 
 		if got.Status != statusOK {
 			t.Errorf("Status = %q, want %q (extract failures don't flip poll-attempt status)", got.Status, statusOK)
@@ -174,7 +174,7 @@ func TestStatusChip_ExtractFailures_SurfacedIndependentlyOfPollOutcome(t *testin
 	t.Run("alongside an empty (never-polled) snapshot", func(t *testing.T) {
 		t.Parallel()
 
-		got := statusChip(nil, extractFailures, now)
+		got := statusChip(nil, extractFailures, nil, now)
 
 		if got.Status != statusUnknown {
 			t.Errorf("Status = %q, want %q", got.Status, statusUnknown)
@@ -225,6 +225,89 @@ func TestFormatExtractFailureText_SingleEngine_RendersSingularOrPlural(t *testin
 				t.Errorf("formatExtractFailureText(%v) = %q, want %q", tt.counts, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestStatusChip_PlanDiffOutcomes_SurfacedIndependentlyOfPollOutcome verifies
+// acceptance criterion 9: plandiff.Engine.Diff outcome counts (see
+// pollstatus.Registry.RecordPlanDiffOutcome) surface on the chip's
+// PlanDiffOutcomeText even when every tracker's poll attempt itself
+// succeeded (Status stays "ok") and even when no tracker has ever been
+// polled at all (Status stays "unknown") — plandiff outcomes are a distinct
+// signal from poll-attempt failures and HCL extract failures, never
+// conflated with either.
+func TestStatusChip_PlanDiffOutcomes_SurfacedIndependentlyOfPollOutcome(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)
+	planDiffOutcomes := map[string]int64{"ok": 12, "exceeded-limits": 1}
+
+	t.Run("alongside an all-success snapshot", func(t *testing.T) {
+		t.Parallel()
+		snapshot := []pollstatus.TrackerStatus{
+			{
+				Repo: "repo-a", FileGlob: "*.tf", Field: "provider_version",
+				LastAttemptAt: now.Add(-1 * time.Minute),
+				LastSuccessAt: now.Add(-1 * time.Minute),
+				NextRunAt:     now.Add(59 * time.Minute),
+			},
+		}
+
+		got := statusChip(snapshot, nil, planDiffOutcomes, now)
+
+		if got.Status != statusOK {
+			t.Errorf("Status = %q, want %q (plandiff outcomes don't flip poll-attempt status)", got.Status, statusOK)
+		}
+		if got.PlanDiffOutcomeText != "1 exceeded-limits, 12 ok" {
+			t.Errorf("PlanDiffOutcomeText = %q, want %q", got.PlanDiffOutcomeText, "1 exceeded-limits, 12 ok")
+		}
+	})
+
+	t.Run("alongside an empty (never-polled) snapshot", func(t *testing.T) {
+		t.Parallel()
+
+		got := statusChip(nil, nil, planDiffOutcomes, now)
+
+		if got.Status != statusUnknown {
+			t.Errorf("Status = %q, want %q", got.Status, statusUnknown)
+		}
+		if got.PlanDiffOutcomeText != "1 exceeded-limits, 12 ok" {
+			t.Errorf("PlanDiffOutcomeText = %q, want %q", got.PlanDiffOutcomeText, "1 exceeded-limits, 12 ok")
+		}
+	})
+}
+
+// TestFormatPlanDiffOutcomeText_NoOutcomes_ReturnsEmpty verifies the
+// poll-health chip carries no plandiff-outcome phrase before any
+// plandiff.Engine.Diff call has ever happened — nil and empty maps must
+// render identically.
+func TestFormatPlanDiffOutcomeText_NoOutcomes_ReturnsEmpty(t *testing.T) {
+	t.Parallel()
+
+	for name, counts := range map[string]map[string]int64{
+		"nil map":   nil,
+		"empty map": {},
+	} {
+		if got := formatPlanDiffOutcomeText(counts); got != "" {
+			t.Errorf("%s: formatPlanDiffOutcomeText(%v) = %q, want \"\"", name, counts, got)
+		}
+	}
+}
+
+// TestFormatPlanDiffOutcomeText_MultipleKinds_SortsDeterministically
+// verifies Kinds are always rendered in the same (alphabetical) order
+// regardless of map iteration order, mirroring
+// formatExtractFailureText's identical determinism guarantee.
+func TestFormatPlanDiffOutcomeText_MultipleKinds_SortsDeterministically(t *testing.T) {
+	t.Parallel()
+
+	counts := map[string]int64{"ok": 5, "could-not-render": 2, "exceeded-limits": 1}
+	want := "2 could-not-render, 1 exceeded-limits, 5 ok"
+
+	for i := 0; i < 20; i++ {
+		if got := formatPlanDiffOutcomeText(counts); got != want {
+			t.Errorf("formatPlanDiffOutcomeText(%v) = %q, want %q", counts, got, want)
+		}
 	}
 }
 

@@ -1,34 +1,26 @@
 package web_test
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/dackota/change-tracking-dashboard/internal/web"
-	"go.opentelemetry.io/otel"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 // TestChangesetsHandler_QueryChangesets_WrappedInSpan verifies criterion 5
 // for the HTTP seam: GET /api/changesets' downstream store.QueryChangesets
 // call is wrapped in its own span. This test deliberately does NOT run in
-// parallel with the package's many t.Parallel() tests: it temporarily
-// installs a global TracerProvider (the mechanism every web handler's
-// package-level tracer delegates to), which would otherwise race with
-// concurrently-running siblings. Go's test runner fully drains all
-// non-parallel tests before any t.Parallel() test resumes, so this is safe.
+// parallel with the package's many t.Parallel() tests: it reads from the
+// process-wide spanExporter TestMain installs as the global TracerProvider
+// exactly once for the whole binary (see main_test.go's doc for why that
+// must be centralized rather than each span-assertion test installing its
+// own), resetting it first to isolate this assertion from any earlier test's
+// spans. Go's test runner fully drains all non-parallel tests before any
+// t.Parallel() test resumes, so no concurrently-running sibling can write to
+// spanExporter between the Reset and the assertion below.
 func TestChangesetsHandler_QueryChangesets_WrappedInSpan(t *testing.T) {
-	exporter := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
-	prev := otel.GetTracerProvider()
-	otel.SetTracerProvider(tp)
-	t.Cleanup(func() {
-		otel.SetTracerProvider(prev)
-		_ = tp.Shutdown(context.Background())
-	})
+	spanExporter.Reset()
 
 	st := newTestStore(t)
 	h := web.NewChangesetsHandler(st)
@@ -42,12 +34,12 @@ func TestChangesetsHandler_QueryChangesets_WrappedInSpan(t *testing.T) {
 	}
 
 	found := false
-	for _, s := range exporter.GetSpans() {
+	for _, s := range spanExporter.GetSpans() {
 		if s.Name == "store.query_changesets" {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("no span named store.query_changesets recorded; got spans: %v", exporter.GetSpans())
+		t.Errorf("no span named store.query_changesets recorded; got spans: %v", spanExporter.GetSpans())
 	}
 }
