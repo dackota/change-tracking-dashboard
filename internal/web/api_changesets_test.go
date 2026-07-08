@@ -63,6 +63,7 @@ type changesetBody struct {
 	Author      string       `json:"author"`
 	CommittedAt time.Time    `json:"committedAt"`
 	Changes     []changeBody `json:"changes"`
+	Risk        []string     `json:"risk"`
 }
 
 type changeBody struct {

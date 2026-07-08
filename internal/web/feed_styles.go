@@ -25,6 +25,7 @@ const feedStyles = `
     .feed-commit:hover { text-decoration: underline; }
     .feed-commit-plain { color: var(--oc-muted); }
     .feed-cell-author { color: var(--oc-muted); }
+    .feed-cell-risk { white-space: nowrap; }
     .feed-empty-row td { text-align: center; color: var(--oc-muted); font-size: 0.9rem; padding: 1.5rem 1rem; }
     .feed-clear-btn { font-size: 0.8rem; padding: 0.3rem 0.8rem; margin-left: 0.6rem; border: 1px solid var(--oc-accent); color: var(--oc-accent); background: #fff; border-radius: 6px; cursor: pointer; }
     .feed-load-more-row td { text-align: center; padding: 0.7rem 1rem; }
@@ -61,6 +62,17 @@ const detailStyles = `
     .change-new-value, .change-dependency-version-new { font-family: var(--mono); color: var(--oc-success); }
     .change-arrow { color: var(--oc-muted); }
     .change-helm-diff-slot { flex-basis: 100%; margin-top: 0.4rem; font-size: 0.82rem; color: var(--oc-muted); }
+
+    /* Risk badges (R24): one per Risk class a Changeset's classifier output
+       carries. .risk-badge is the base pill; the risk-{slug} modifier (slug
+       derived from the Risk value itself, see riskSlug) colors it. A future
+       config-added Risk class that doesn't match one of the three known
+       modifiers below still renders — just in the neutral default color —
+       so a new rule is visible with no template change required. */
+    .risk-badge { display: inline-block; font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; padding: 0.15rem 0.5rem; border-radius: 999px; background: var(--oc-line-soft); color: #495057; margin-left: 0.3rem; }
+    .risk-badge.risk-replace-destroy { background: rgba(220, 53, 69, 0.14); color: var(--oc-danger); }
+    .risk-badge.risk-security { background: rgba(220, 53, 69, 0.14); color: var(--oc-danger); }
+    .risk-badge.risk-cost-tripwire { background: rgba(184, 134, 11, 0.16); color: #8a6200; }
 
     /* Chart diff summary + color-coded hunks */
     .chart-diff-summary { display: flex; gap: 0.6rem; align-items: center; font-size: 0.82rem; margin-bottom: 0.5rem; }

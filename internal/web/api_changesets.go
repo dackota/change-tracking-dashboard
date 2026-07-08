@@ -67,12 +67,21 @@ type changesetsResponse struct {
 // changesetJSON is the explicit JSON shape for one Changeset. Defined here
 // (rather than relying on changeset.Changeset's Go struct tags) so the wire
 // format is decoupled from internal field naming.
+//
+// Risk is a Changeset-level, query-time projection (changeset.ClassifyRisk
+// against changeset.DefaultRiskRules) — like Kind, it is never stored, only
+// computed on read — so the feed the browser renders from this endpoint
+// carries each changeset's risk badge (R24) without a schema migration.
+// Marshaled as "risk": [] (never omitted, never null) so a changeset with no
+// risk classes still renders as an explicit empty list, matching
+// ClassifyRisk's own "empty set is a valid result" contract.
 type changesetJSON struct {
 	Repo        string       `json:"repo"`
 	CommitSha   string       `json:"commitSha"`
 	Author      string       `json:"author"`
 	CommittedAt string       `json:"committedAt"`
 	Changes     []changeJSON `json:"changes"`
+	Risk        []string     `json:"risk"`
 }
 
 // changeJSON is the explicit JSON shape for one Change within a Changeset.
@@ -261,7 +270,19 @@ func toChangesetJSON(cs changeset.Changeset) changesetJSON {
 		Author:      cs.Author,
 		CommittedAt: cs.CommittedAt.UTC().Format(time.RFC3339Nano),
 		Changes:     changes,
+		Risk:        toRiskStrings(changeset.ClassifyRisk(cs, changeset.DefaultRiskRules())),
 	}
+}
+
+// toRiskStrings converts a []changeset.Risk into its wire []string form,
+// always non-nil so an empty risk set marshals as "risk": [] rather than
+// "risk": null.
+func toRiskStrings(risks []changeset.Risk) []string {
+	out := make([]string, 0, len(risks))
+	for _, r := range risks {
+		out = append(out, string(r))
+	}
+	return out
 }
 
 // writeJSON marshals v and writes it with the given status code.
