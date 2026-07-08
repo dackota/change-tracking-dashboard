@@ -16,11 +16,27 @@ name: Renovate
 #     never needs write access;
 #   - RENOVATE_REPOSITORIES pins the run to this repo only, so the (shared)
 #     App installation on the gitops repo can't leak into this schedule.
+#
+# Dependency Dashboard / PR checkboxes (dependencyDashboard: true in
+# renovate.json): checking a box only changes issue/PR *state* — it does not
+# itself run Renovate. The hosted Mend app reacts to that state change via a
+# webhook the instant it happens; a self-hosted runner like this one only
+# reacts on its own trigger, so without the two event triggers below, a
+# checked box (dashboard "run again"/approve/unignore, or a PR's
+# rebase/retry checkbox) would just sit there until the next 05:00 UTC
+# cron. `issues`/`pull_request` `edited` covers that: the job's `if:` below
+# still gates on schedule/workflow_dispatch/the Dashboard issue/Renovate's
+# own PRs, so unrelated issue and PR edits elsewhere in the repo don't
+# trigger a run.
 
 on:
   schedule:
     - cron: "0 5 * * *"
   workflow_dispatch:
+  issues:
+    types: [edited]
+  pull_request:
+    types: [edited]
 
 permissions:
   contents: read
@@ -28,6 +44,16 @@ permissions:
 jobs:
   renovate:
     runs-on: ubuntu-latest
+    # Only react to an issue/PR edit when it's actually a Renovate checkbox:
+    # the Dependency Dashboard issue (title must match
+    # dependencyDashboardTitle in renovate.json -- default "Dependency
+    # Dashboard", update both together if it's ever customized), or a PR
+    # opened by the renovate bot App.
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issues' && github.event.issue.title == 'Dependency Dashboard') ||
+      (github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dk-renovate-bot[bot]')
     steps:
       - name: Generate a token for the dk-renovate-bot App
         id: app-token

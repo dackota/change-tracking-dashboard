@@ -23,7 +23,7 @@ name: Publish
 #     can't exfiltrate the token or push a malicious artifact; trailing
 #     comment records the major/version tag -- bump via Dependabot/Renovate);
 #   - base images are digest-pinned in the Dockerfile;
-#   - Trivy scans the built image and fails the job on HIGH/CRITICAL vulns
+#   - Grype scans the built image and fails the job on HIGH/CRITICAL vulns
 #     BEFORE anything is pushed;
 #   - the ghcr owner is lowercased (ghcr/OCI repo paths must be lowercase);
 #   - the tag-derived version is read via the $GITHUB_REF_NAME environment
@@ -94,7 +94,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Build a single-arch (amd64) image and load it locally so Trivy can
+      # Build a single-arch (amd64) image and load it locally so Grype can
       # scan it BEFORE anything is pushed. The Go module deps (read from the
       # compiled binary) and the distroless base are identical across
       # arches, so the amd64 image is representative; the multi-arch
@@ -109,15 +109,14 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Scan image (Trivy) — fail on HIGH/CRITICAL
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      - name: Scan image (Grype) — fail on HIGH/CRITICAL
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
         with:
-          image-ref: ${{ env.IMAGE_NAME }}:scan
-          format: table
-          exit-code: "1"
-          ignore-unfixed: true
-          severity: HIGH,CRITICAL
-          vuln-type: os,library
+          image: ${{ env.IMAGE_NAME }}:scan
+          output-format: table
+          fail-build: "true"
+          only-fixed: "true"
+          severity-cutoff: high
 
       - name: Image tags + labels
         id: meta
