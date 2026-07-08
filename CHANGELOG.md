@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.7.0...app-v0.8.0) (2026-07-08)
+
+
+### Features
+
+* classify Terraform changes by Kind and Risk with feed badge ([#75](https://github.com/dackota/change-tracking-dashboard/issues/75)) ([92b9578](https://github.com/dackota/change-tracking-dashboard/commit/92b9578e111c67bdbb5beb18d0956d2db6603720))
+
 ## [0.7.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.6.1...app-v0.7.0) (2026-07-08)
 
 
