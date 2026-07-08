@@ -162,7 +162,7 @@ const timelineTemplate = `<!DOCTYPE html>
         </div>
         <div class="table-scroll"><table class="feed-table">
           <thead>
-            <tr><th>When</th><th>Repository</th><th>Commit</th><th>Author</th><th>Changes</th></tr>
+            <tr><th>When</th><th>Repository</th><th>Commit</th><th>Author</th><th>Changes</th><th>Risk</th></tr>
           </thead>
           <tbody id="feed-list"></tbody>
         </table></div>

@@ -3,7 +3,7 @@ package web
 // changesTemplate is the page markup for GET /changes (R2): the shared shell
 // (sidebar + header, via the "sidebar"/"header" named templates — R6) around
 // the changeset feed as a full-page table (thead: When, Repository, Commit,
-// Author, Changes). <tbody id="feed-list"> keeps the exact id timeline.js's
+// Author, Changes, Risk — R24). <tbody id="feed-list"> keeps the exact id timeline.js's
 // feed-rendering functions (buildFeedRow/buildEmptyRow/renderFeed) already
 // wire up — this page loads the same first-party <script src="/static/
 // timeline.js"> the Timeline page does, so the feed here is the Timeline
@@ -38,7 +38,7 @@ const changesTemplate = `<!DOCTYPE html>
         </div>
         <div class="table-scroll"><table class="feed-table">
           <thead>
-            <tr><th>When</th><th>Repository</th><th>Commit</th><th>Author</th><th>Changes</th></tr>
+            <tr><th>When</th><th>Repository</th><th>Commit</th><th>Author</th><th>Changes</th><th>Risk</th></tr>
           </thead>
           <tbody id="feed-list"></tbody>
         </table></div>
