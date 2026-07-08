@@ -40,6 +40,7 @@ var changesetDetailTemplateSource = fmt.Sprintf(`
     {{if .CommitURL}}<a class="changeset-detail-commit" href="{{.CommitURL}}" target="_blank" rel="noopener noreferrer" title="{{.CommitSha}}">{{.ShortSha}}</a>{{else}}<span class="changeset-detail-commit" title="{{.CommitSha}}">{{.ShortSha}}</span>{{end}}
     <span class="changeset-detail-author">{{.Author}}</span>
     <time class="changeset-detail-committed-at">{{.CommittedAt.Format "2006-01-02 15:04"}}</time>
+    {{if .IssueRefs}}<span class="changeset-detail-issue-refs">{{range .IssueRefs}}<span class="changeset-detail-issue-ref">{{.}}</span>{{end}}</span>{{end}}
   </header>
   <ul class="changeset-detail-changes">
     {{range .Changes}}
@@ -113,6 +114,7 @@ type changesetView struct {
 	CommitURL   string // web URL to the commit, empty for non-URL (local-path) repos
 	Author      string
 	CommittedAt time.Time
+	IssueRefs   []string // issue/PR references linked to this commit; empty when none
 	Changes     []changeView
 }
 
@@ -130,6 +132,7 @@ func newChangesetView(cs changeset.Changeset) changesetView {
 		CommitURL:   commitURL(cs.Repo, cs.CommitSha),
 		Author:      cs.Author,
 		CommittedAt: cs.CommittedAt,
+		IssueRefs:   cs.IssueRefs,
 		Changes:     changes,
 	}
 }

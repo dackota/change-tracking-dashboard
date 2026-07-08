@@ -72,6 +72,7 @@ type changesetJSON struct {
 	CommitSha   string       `json:"commitSha"`
 	Author      string       `json:"author"`
 	CommittedAt string       `json:"committedAt"`
+	IssueRefs   []string     `json:"issueRefs,omitempty"`
 	Changes     []changeJSON `json:"changes"`
 }
 
@@ -260,6 +261,7 @@ func toChangesetJSON(cs changeset.Changeset) changesetJSON {
 		CommitSha:   cs.CommitSha,
 		Author:      cs.Author,
 		CommittedAt: cs.CommittedAt.UTC().Format(time.RFC3339Nano),
+		IssueRefs:   cs.IssueRefs,
 		Changes:     changes,
 	}
 }

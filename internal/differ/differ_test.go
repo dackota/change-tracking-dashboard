@@ -1,6 +1,7 @@
 package differ_test
 
 import (
+	"reflect"
 	"sort"
 	"testing"
 	"time"
@@ -206,6 +207,67 @@ func indexByKey(changes []domain.Change) map[string]domain.Change {
 		out[k] = c
 	}
 	return out
+}
+
+// TestDiffScalar_CopiesIssueRefsFromParamsDefensively proves that a Change
+// produced by DiffScalar carries ScalarParams.IssueRefs (the issue/PR
+// references parsed from the triggering commit's message — see
+// internal/issueref) and that the Change's slice is its own copy, never an
+// alias of the caller's params.IssueRefs slice.
+func TestDiffScalar_CopiesIssueRefsFromParamsDefensively(t *testing.T) {
+	t.Parallel()
+
+	inputRefs := []string{"#123", "ABC-456"}
+	params := differ.ScalarParams{
+		Repo:      "apps-repo",
+		FilePath:  "versions.tf",
+		Field:     "google-provider-version",
+		CommitSha: "abc123",
+		Author:    "alice",
+		IssueRefs: inputRefs,
+	}
+
+	changes := differ.DiffScalar(params, domain.TrackedField{Present: false}, domain.TrackedField{Value: "1.0.0", Present: true})
+	if len(changes) != 1 {
+		t.Fatalf("DiffScalar() returned %d changes, want 1", len(changes))
+	}
+
+	if got := changes[0].IssueRefs; !reflect.DeepEqual(got, inputRefs) {
+		t.Errorf("Change.IssueRefs = %#v, want %#v", got, inputRefs)
+	}
+
+	// Mutating the returned Change's slice must not affect the caller's
+	// original params.IssueRefs (defensive copy, not aliasing) — mirrors the
+	// existing Facets-map defensive-copy contract.
+	changes[0].IssueRefs[0] = "mutated"
+	if inputRefs[0] != "#123" {
+		t.Errorf("mutating Change.IssueRefs leaked back into params.IssueRefs: %#v", inputRefs)
+	}
+}
+
+// TestDiffScalar_NilIssueRefs_YieldsNilOnChange proves that a commit with no
+// parsed issue references (params.IssueRefs is nil, matching issueref.Parse's
+// nil return for "no reference found") produces a Change with no false link
+// — IssueRefs stays nil/empty, never a spuriously non-empty slice.
+func TestDiffScalar_NilIssueRefs_YieldsNilOnChange(t *testing.T) {
+	t.Parallel()
+
+	params := differ.ScalarParams{
+		Repo:      "apps-repo",
+		FilePath:  "versions.tf",
+		Field:     "google-provider-version",
+		CommitSha: "abc123",
+		Author:    "alice",
+		IssueRefs: nil,
+	}
+
+	changes := differ.DiffScalar(params, domain.TrackedField{Present: false}, domain.TrackedField{Value: "1.0.0", Present: true})
+	if len(changes) != 1 {
+		t.Fatalf("DiffScalar() returned %d changes, want 1", len(changes))
+	}
+	if len(changes[0].IssueRefs) != 0 {
+		t.Errorf("Change.IssueRefs = %#v, want empty", changes[0].IssueRefs)
+	}
 }
 
 // TestDiffKeyed exercises all per-key cases: modified, added, removed, unchanged,

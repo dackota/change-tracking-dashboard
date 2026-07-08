@@ -28,6 +28,7 @@ type Change struct {
 	CommitSha   string
 	Author      string
 	CommittedAt time.Time // feed ordering key; newest first
+	IssueRefs   []string  // issue/PR references parsed from the commit message, e.g. ["#123", "ABC-456"]; nil when none
 }
 
 // TrackedField is the result an Extractor yields for a single watched value.
@@ -80,4 +81,5 @@ type CommitSnapshot struct {
 	CommittedAt time.Time
 	FilePath    string
 	Content     []byte // raw file bytes at this commit; nil if file was deleted
+	Message     string // full commit message; used to link issue/PR references
 }

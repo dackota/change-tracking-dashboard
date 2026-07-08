@@ -53,7 +53,8 @@ CREATE TABLE IF NOT EXISTS changes (
     facets_json   TEXT    NOT NULL DEFAULT '{}',
     commit_sha    TEXT    NOT NULL,
     author        TEXT    NOT NULL,
-    committed_at  TEXT    NOT NULL
+    committed_at  TEXT    NOT NULL,
+    issue_refs_json TEXT  NOT NULL DEFAULT '[]'
 );`
 
 // high_water_marks is keyed by (repo, file_path), not repo alone: a glob
@@ -85,11 +86,15 @@ func (s *Store) SaveChange(c domain.Change) error {
 	if err != nil {
 		return fmt.Errorf("store: marshal facets: %w", err)
 	}
+	issueRefsJSON, err := json.Marshal(c.IssueRefs)
+	if err != nil {
+		return fmt.Errorf("store: marshal issue refs: %w", err)
+	}
 
 	const query = `
 INSERT INTO changes (repo, file_path, field, key_val, change_type,
-                     old_value, new_value, facets_json, commit_sha, author, committed_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                     old_value, new_value, facets_json, commit_sha, author, committed_at, issue_refs_json)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err = s.db.Exec(query,
 		c.Repo,
@@ -103,6 +108,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		c.CommitSha,
 		c.Author,
 		c.CommittedAt.UTC().Format(time.RFC3339Nano),
+		string(issueRefsJSON),
 	)
 	if err != nil {
 		return fmt.Errorf("store: insert change: %w", err)
@@ -114,7 +120,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 func (s *Store) QueryFeed(limit int) ([]domain.Change, error) {
 	const query = `
 SELECT repo, file_path, field, key_val, change_type,
-       old_value, new_value, facets_json, commit_sha, author, committed_at
+       old_value, new_value, facets_json, commit_sha, author, committed_at, issue_refs_json
 FROM changes
 ORDER BY committed_at DESC
 LIMIT ?`
@@ -171,22 +177,23 @@ ON CONFLICT(repo, file_path) DO UPDATE SET sha = excluded.sha`
 // scanChange reads one row from a *sql.Rows cursor into a Change.
 func scanChange(rows *sql.Rows) (domain.Change, error) {
 	var (
-		repo        string
-		filePath    string
-		field       string
-		keyVal      sql.NullString
-		changeType  string
-		oldValue    sql.NullString
-		newValue    sql.NullString
-		facetsJSON  string
-		commitSha   string
-		author      string
-		committedAt string
+		repo          string
+		filePath      string
+		field         string
+		keyVal        sql.NullString
+		changeType    string
+		oldValue      sql.NullString
+		newValue      sql.NullString
+		facetsJSON    string
+		commitSha     string
+		author        string
+		committedAt   string
+		issueRefsJSON string
 	)
 
 	if err := rows.Scan(
 		&repo, &filePath, &field, &keyVal, &changeType,
-		&oldValue, &newValue, &facetsJSON, &commitSha, &author, &committedAt,
+		&oldValue, &newValue, &facetsJSON, &commitSha, &author, &committedAt, &issueRefsJSON,
 	); err != nil {
 		return domain.Change{}, err
 	}
@@ -201,6 +208,11 @@ func scanChange(rows *sql.Rows) (domain.Change, error) {
 		return domain.Change{}, fmt.Errorf("unmarshal facets: %w", err)
 	}
 
+	var issueRefs []string
+	if err := json.Unmarshal([]byte(issueRefsJSON), &issueRefs); err != nil {
+		return domain.Change{}, fmt.Errorf("unmarshal issue refs: %w", err)
+	}
+
 	c := domain.Change{
 		Repo:        repo,
 		FilePath:    filePath,
@@ -210,6 +222,7 @@ func scanChange(rows *sql.Rows) (domain.Change, error) {
 		CommitSha:   commitSha,
 		Author:      author,
 		CommittedAt: ts,
+		IssueRefs:   issueRefs,
 	}
 	if keyVal.Valid {
 		c.Key = &keyVal.String

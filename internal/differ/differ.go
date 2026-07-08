@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/dackota/change-tracking-dashboard/internal/domain"
+	"github.com/dackota/change-tracking-dashboard/internal/issueref"
 )
 
 // ScalarParams carries the immutable commit-level metadata passed through to
@@ -27,6 +28,7 @@ type ScalarParams struct {
 	Author      string
 	CommittedAt time.Time
 	Facets      map[string]string // caller attaches facets after extraction
+	IssueRefs   []string          // issue/PR references parsed from the triggering commit's message (see internal/issueref); nil when none
 }
 
 // DiffScalar compares an old and new scalar TrackedField for the same tracked
@@ -139,6 +141,10 @@ func newChange(p ScalarParams, ct domain.ChangeType, oldVal, newVal *string) dom
 		facets[k] = v
 	}
 
+	// Copy issue refs defensively — do not reference the caller's slice. See
+	// issueref.Copy for the nil-preserving contract.
+	issueRefs := issueref.Copy(p.IssueRefs)
+
 	return domain.Change{
 		Repo:        p.Repo,
 		FilePath:    p.FilePath,
@@ -151,5 +157,6 @@ func newChange(p ScalarParams, ct domain.ChangeType, oldVal, newVal *string) dom
 		CommitSha:   p.CommitSha,
 		Author:      p.Author,
 		CommittedAt: p.CommittedAt,
+		IssueRefs:   issueRefs,
 	}
 }

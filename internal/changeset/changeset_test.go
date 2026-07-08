@@ -309,6 +309,94 @@ func TestAssemble_DoesNotMergeSameCommitShaAcrossDifferentRepos(t *testing.T) {
 	}
 }
 
+// TestAssemble_HoistsIssueRefsFromCommit verifies that a Changeset carries
+// the issue/PR references parsed from its commit's message at the top level
+// (mirroring how Author/CommitSha/CommittedAt are hoisted from the group's
+// Changes), and that a commit with no references hoists to an empty
+// Changeset.IssueRefs — no false link.
+func TestAssemble_HoistsIssueRefsFromCommit(t *testing.T) {
+	t.Parallel()
+
+	commitTime := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	changes := []domain.Change{
+		{
+			Repo:        "apps-repo",
+			FilePath:    "versions.tf",
+			Field:       "google-provider-version",
+			ChangeType:  domain.ChangeTypeModified,
+			OldValue:    ptr("5.0.0"),
+			NewValue:    ptr("5.10.0"),
+			CommitSha:   "commit-with-refs",
+			Author:      "alice",
+			CommittedAt: commitTime,
+			IssueRefs:   []string{"#123", "ABC-456"},
+		},
+		{
+			Repo:        "apps-repo",
+			FilePath:    "versions.tf",
+			Field:       "google-provider-version",
+			ChangeType:  domain.ChangeTypeModified,
+			OldValue:    ptr("5.10.0"),
+			NewValue:    ptr("5.11.0"),
+			CommitSha:   "commit-no-refs",
+			Author:      "bob",
+			CommittedAt: commitTime.Add(time.Hour),
+		},
+	}
+
+	got := changeset.Assemble(changes)
+	if len(got) != 2 {
+		t.Fatalf("Assemble() returned %d Changesets, want 2", len(got))
+	}
+
+	// Most-recent-first: commit-no-refs (later) is first.
+	if got[0].CommitSha != "commit-no-refs" {
+		t.Fatalf("Changesets[0].CommitSha = %q, want commit-no-refs", got[0].CommitSha)
+	}
+	if len(got[0].IssueRefs) != 0 {
+		t.Errorf("Changesets[0].IssueRefs = %#v, want empty (no false link)", got[0].IssueRefs)
+	}
+
+	if got[1].CommitSha != "commit-with-refs" {
+		t.Fatalf("Changesets[1].CommitSha = %q, want commit-with-refs", got[1].CommitSha)
+	}
+	want := []string{"#123", "ABC-456"}
+	if len(got[1].IssueRefs) != len(want) || got[1].IssueRefs[0] != want[0] || got[1].IssueRefs[1] != want[1] {
+		t.Errorf("Changesets[1].IssueRefs = %#v, want %#v", got[1].IssueRefs, want)
+	}
+}
+
+// TestAssemble_DoesNotMutateInputIssueRefs proves the Changeset's IssueRefs
+// slice is its own copy, never an alias of the input Change's IssueRefs —
+// mirroring the Facets defensive-copy contract already proven above.
+func TestAssemble_DoesNotMutateInputIssueRefs(t *testing.T) {
+	t.Parallel()
+
+	commitTime := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	inputRefs := []string{"#123"}
+	input := []domain.Change{
+		{
+			Repo:        "apps-repo",
+			FilePath:    "versions.tf",
+			ChangeType:  domain.ChangeTypeModified,
+			CommitSha:   "commit-1",
+			Author:      "alice",
+			CommittedAt: commitTime,
+			IssueRefs:   inputRefs,
+		},
+	}
+
+	got := changeset.Assemble(input)
+	if len(got) != 1 {
+		t.Fatalf("Assemble() returned %d Changesets, want 1", len(got))
+	}
+
+	got[0].IssueRefs[0] = "mutated"
+	if inputRefs[0] != "#123" {
+		t.Errorf("mutating Changeset.IssueRefs leaked back into input: %#v", inputRefs)
+	}
+}
+
 func TestAssemble_EmptyInputYieldsEmptyOutput(t *testing.T) {
 	t.Parallel()
 

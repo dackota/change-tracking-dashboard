@@ -221,6 +221,39 @@ func TestWalkCommits_AllCommits(t *testing.T) {
 	}
 }
 
+// TestWalkCommits_PopulatesCommitMessage verifies that WalkCommits carries the
+// full commit message on each CommitSnapshot's Message field — the
+// prerequisite for downstream issue-reference parsing (tf-issue-correlation),
+// which needs the raw message text, not just the commit metadata already
+// captured (sha/author/committed-at).
+func TestWalkCommits_PopulatesCommitMessage(t *testing.T) {
+	t.Parallel()
+
+	repoPath, sha1, sha2 := buildFixtureRepo(t)
+
+	src, err := gitsource.Open(repoPath)
+	if err != nil {
+		t.Fatalf("gitsource.Open: %v", err)
+	}
+
+	snapshots, err := src.WalkCommits(context.Background(), "Chart.yaml", "", time.Time{})
+	if err != nil {
+		t.Fatalf("WalkCommits: %v", err)
+	}
+
+	if len(snapshots) != 2 {
+		t.Fatalf("WalkCommits returned %d snapshots, want 2", len(snapshots))
+	}
+	if snapshots[0].CommitSha != sha1 || snapshots[0].Message != "chore: initial Chart.yaml" {
+		t.Errorf("snapshots[0] = {sha: %q, message: %q}, want {sha: %q, message: %q}",
+			snapshots[0].CommitSha, snapshots[0].Message, sha1, "chore: initial Chart.yaml")
+	}
+	if snapshots[1].CommitSha != sha2 || snapshots[1].Message != "feat: bump version" {
+		t.Errorf("snapshots[1] = {sha: %q, message: %q}, want {sha: %q, message: %q}",
+			snapshots[1].CommitSha, snapshots[1].Message, sha2, "feat: bump version")
+	}
+}
+
 func TestWalkCommits_SinceHighWaterMark(t *testing.T) {
 	t.Parallel()
 
