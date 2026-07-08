@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.6.1...app-v0.7.0) (2026-07-08)
+
+
+### Features
+
+* add HCL extraction backend on the timeline ([feedb81](https://github.com/dackota/change-tracking-dashboard/commit/feedb81f7ebc1072a13dd447a128a29a7e4ca998))
+* add HCL extraction backend on the timeline ([2f1e981](https://github.com/dackota/change-tracking-dashboard/commit/2f1e9819375e8079bf59e4e2c9dc8c7b14a3f148))
+
 ## [0.6.1](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.6.0...app-v0.6.1) (2026-07-07)
 
 
