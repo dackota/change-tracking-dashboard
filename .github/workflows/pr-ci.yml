@@ -1,7 +1,7 @@
 name: PR CI
 
 # Required checks for every pull request targeting main: Go build/vet/test
-# and a Trivy filesystem/dependency scan.
+# and a Grype filesystem/dependency scan.
 #
 # - changes     -> dorny/paths-filter computes which path groups this PR
 #                  touches, so go-verify can skip cleanly (a "skipped"
@@ -12,7 +12,7 @@ name: PR CI
 #                  check on the first failing step). Only runs when the PR
 #                  touches Go source or module files -- a workflow-only PR
 #                  has nothing for it to verify.
-# - trivy-fs    -> scans the working tree's dependency graph (go.sum, etc.)
+# - grype-fs    -> scans the working tree's dependency graph (go.sum, etc.)
 #                  the same way publish.yml scans the built image: HIGH/CRITICAL,
 #                  fixed-only findings fail the check before anything merges.
 #
@@ -85,19 +85,18 @@ jobs:
       - name: go test
         run: go test ./...
 
-  trivy-fs-scan:
-    name: Trivy filesystem/dependency scan
+  grype-fs-scan:
+    name: Grype filesystem/dependency scan
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: Scan dependencies (Trivy) — fail on HIGH/CRITICAL
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      - name: Scan dependencies (Grype) — fail on HIGH/CRITICAL
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
         with:
-          scan-type: fs
-          scan-ref: "."
-          format: table
-          exit-code: "1"
-          ignore-unfixed: true
-          severity: HIGH,CRITICAL
+          path: "."
+          output-format: table
+          fail-build: "true"
+          only-fixed: "true"
+          severity-cutoff: high
