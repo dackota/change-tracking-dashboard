@@ -36,6 +36,7 @@ import (
 	"github.com/dackota/change-tracking-dashboard/internal/domain"
 	"github.com/dackota/change-tracking-dashboard/internal/githubapp"
 	"github.com/dackota/change-tracking-dashboard/internal/gitsource"
+	"github.com/dackota/change-tracking-dashboard/internal/plandiff"
 	"github.com/dackota/change-tracking-dashboard/internal/poller"
 	"github.com/dackota/change-tracking-dashboard/internal/pollstatus"
 	"github.com/dackota/change-tracking-dashboard/internal/scheduler"
@@ -194,12 +195,28 @@ func run(configPath, dbPath, listenAddr string, logger *slog.Logger) error {
 		return fmt.Errorf("create chart diff engine: %w", err)
 	}
 
+	// --- Terraform static plan-diff engine ---
+	// plandiff.Config{} (all-zero) resolves to the package's conservative
+	// defaults (see plandiff/config.go), mirroring chartDiffEngine's own
+	// zero-Config convention above. WithOutcomeRecorder wires the same
+	// pollStatus registry chartDiffEngine has no equivalent for yet, so
+	// every Diff outcome's Kind is counted on the poll-health/status surface
+	// (acceptance criterion 9).
+	planDiffEngine, err := plandiff.NewEngine(plandiff.Config{}, nil,
+		plandiff.WithTracerProvider(sdk.TracerProvider),
+		plandiff.WithOutcomeRecorder(pollStatus),
+	)
+	if err != nil {
+		return fmt.Errorf("create plan diff engine: %w", err)
+	}
+
 	// --- HTTP ---
 	timelineHandler := web.NewTimelineHandler(st, pollStatus)
 	staticHandler := web.NewStaticHandler()
 	changesetsHandler := web.NewChangesetsHandler(st)
 	changesetDetailHandler := web.NewChangesetDetailHandler(st)
 	chartDiffHandler := web.NewChartDiffHandler(chartDiffEngine, sources, st)
+	planDiffHandler := web.NewPlanDiffHandler(planDiffEngine, sources, st)
 	trackersHandler := web.NewTrackersHandler(cfgWatcher, pollStatus)
 	repositoriesHandler := web.NewRepositoriesHandler(st, pollStatus)
 	changesHandler := web.NewChangesHandler(pollStatus)
@@ -210,6 +227,7 @@ func run(configPath, dbPath, listenAddr string, logger *slog.Logger) error {
 	mux.Handle("/api/changesets", changesetsHandler)
 	mux.Handle("/api/changesets/detail", changesetDetailHandler)
 	mux.Handle("/api/changesets/detail/chart-diff", chartDiffHandler)
+	mux.Handle("/api/changesets/detail/plan-diff", planDiffHandler)
 	mux.Handle("GET /trackers", trackersHandler)
 	mux.Handle("GET /repositories", repositoriesHandler)
 	mux.Handle("GET /changes", changesHandler)
@@ -332,6 +350,20 @@ func (c *sourceCache) get(repo string) (*gitsource.Source, error) {
 // already satisfies chartdiff.ChartRepo directly, so no further wrapping is
 // needed beyond the interface conversion.
 func (c *sourceCache) ResolveChartRepo(repo string) (chartdiff.ChartRepo, error) {
+	src, err := c.get(repo)
+	if err != nil {
+		return nil, err
+	}
+	return src, nil
+}
+
+// ResolvePlanRepo adapts sourceCache.get to web.PlanRepoResolver, letting
+// the plan-diff handler resolve/clone a repo via the same source cache
+// every poller, the chart-diff handler, and the timeline detail handler
+// use. *gitsource.Source already satisfies plandiff.PlanRepo directly (the
+// same two methods chartdiff.ChartRepo requires), so no further wrapping is
+// needed beyond the interface conversion.
+func (c *sourceCache) ResolvePlanRepo(repo string) (plandiff.PlanRepo, error) {
 	src, err := c.get(repo)
 	if err != nil {
 		return nil, err

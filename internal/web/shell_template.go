@@ -93,15 +93,16 @@ const sidebarTemplate = `{{define "sidebar"}}<aside class="sidebar">
 // of the fixed values statusUnknown/statusOK/statusError (never
 // request/stored data), so interpolating it straight into the class
 // attribute carries no injection risk;
-// LastPollText/NextPollText/ErrorText/ExtractFailureText go through
-// html/template's default auto-escaping like any other field.
+// LastPollText/NextPollText/ErrorText/ExtractFailureText/
+// PlanDiffOutcomeText go through html/template's default auto-escaping like
+// any other field.
 const headerTemplate = `{{define "header"}}<div class="page-header">
         <h1>{{.Header.Title}}</h1>
         <p class="page-subtitle">{{.Header.Subtitle}}</p>
         <span class="spacer"></span>
         <div class="poll-chip poll-chip-{{.Header.PollHealth.Status}}" data-poll-status="{{.Header.PollHealth.Status}}">
           <span class="poll-chip-dot"></span>
-          <span class="poll-chip-text">{{.Header.PollHealth.LastPollText}} · {{.Header.PollHealth.NextPollText}}{{if .Header.PollHealth.ErrorText}} · {{.Header.PollHealth.ErrorText}}{{end}}{{if .Header.PollHealth.ExtractFailureText}} · {{.Header.PollHealth.ExtractFailureText}}{{end}}</span>
+          <span class="poll-chip-text">{{.Header.PollHealth.LastPollText}} · {{.Header.PollHealth.NextPollText}}{{if .Header.PollHealth.ErrorText}} · {{.Header.PollHealth.ErrorText}}{{end}}{{if .Header.PollHealth.ExtractFailureText}} · {{.Header.PollHealth.ExtractFailureText}}{{end}}{{if .Header.PollHealth.PlanDiffOutcomeText}} · plan-diff: {{.Header.PollHealth.PlanDiffOutcomeText}}{{end}}</span>
         </div>
         {{.Header.Actions}}
       </div>{{end}}`

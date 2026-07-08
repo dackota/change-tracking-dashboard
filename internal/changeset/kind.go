@@ -11,8 +11,8 @@ type Kind string
 const (
 	// KindChart is a Change sourced from a Chart.yaml file.
 	KindChart Kind = "chart"
-	// KindValue is a Change sourced from any file other than Chart.yaml
-	// (e.g. values.yaml).
+	// KindValue is a Change sourced from any file other than Chart.yaml or
+	// a Terraform/OpenTofu source file (e.g. values.yaml).
 	KindValue Kind = "value"
 
 	// KindProvider is a Terraform Change sourced from a provider version
@@ -33,6 +33,20 @@ const (
 // terraformLockfileName is the fixed basename Terraform/OpenTofu always use
 // for the dependency lock file — never a glob, always this exact name.
 const terraformLockfileName = ".terraform.lock.hcl"
+
+// IsTerraform reports whether k is one of the Terraform/OpenTofu-sourced
+// Kinds (provider/module/resource/variable) -- the routing basis for the
+// plandiff resource-change view (acceptance criterion 8): a Terraform
+// changeset is one whose Changeset contains at least one Change whose Kind
+// satisfies IsTerraform.
+func (k Kind) IsTerraform() bool {
+	switch k {
+	case KindProvider, KindModule, KindResource, KindVariable:
+		return true
+	default:
+		return false
+	}
+}
 
 // ClassifyKind classifies a Change by the basename of its source file path.
 // Chart.yaml yields KindChart; a Terraform/OpenTofu source

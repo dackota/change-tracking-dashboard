@@ -74,7 +74,7 @@ func TestStatusChip_Invariants_Property(t *testing.T) {
 	t.Parallel()
 
 	property := func(c pollHealthCase) bool {
-		got := statusChip(c.snapshot, nil, c.now)
+		got := statusChip(c.snapshot, nil, nil, c.now)
 
 		wantErrorCount := 0
 		for _, ts := range c.snapshot {

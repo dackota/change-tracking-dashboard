@@ -46,6 +46,7 @@
   var API_PATH = '/api/changesets';
   var DETAIL_API_PATH = '/api/changesets/detail';
   var CHART_DIFF_API_PATH = '/api/changesets/detail/chart-diff';
+  var PLAN_DIFF_API_PATH = '/api/changesets/detail/plan-diff';
 
   var REPO_COLORS = {
     'application-config': '#0d6efd',
@@ -374,6 +375,9 @@
   function fetchChartDiff(repo, sha, path, onDone) {
     fetchFragment(CHART_DIFF_API_PATH + '?repo=' + encodeURIComponent(repo) + '&commitSha=' + encodeURIComponent(sha) + '&path=' + encodeURIComponent(path), onDone);
   }
+  function fetchPlanDiff(repo, sha, path, onDone) {
+    fetchFragment(PLAN_DIFF_API_PATH + '?repo=' + encodeURIComponent(repo) + '&commitSha=' + encodeURIComponent(sha) + '&path=' + encodeURIComponent(path), onDone);
+  }
   function classifyDiffLine(line) {
     var c = line.charAt(0);
     if (c === '+') { return 'add'; }
@@ -432,6 +436,36 @@
       })(slots[i]);
     }
   }
+  function transformPlanDiff(slot) {
+    var pre = slot.querySelector('.plan-diff-unified');
+    if (!pre) { return; }
+    var lines = pre.textContent.split('\n');
+    if (lines.length && lines[lines.length - 1] === '') { lines.pop(); }
+    if (lines.length === 0) { return; }
+    var container = document.createElement('div');
+    container.className = 'diff-hunks';
+    buildHunks(lines).forEach(function (item) {
+      var rowEl = document.createElement('div');
+      rowEl.className = 'diff-line diff-' + item.t;
+      rowEl.textContent = item.text;
+      container.appendChild(rowEl);
+    });
+    pre.parentNode.replaceChild(container, pre);
+  }
+  function loadPlanDiffsForChangeset(subtree, cs, gen) {
+    if (!subtree || !subtree.querySelectorAll) { return; }
+    var slots = subtree.querySelectorAll('.change-plan-diff-slot');
+    for (var i = 0; i < slots.length; i++) {
+      (function (slot) {
+        slot.textContent = 'Loading resource-change view…';
+        fetchPlanDiff(cs.repo, cs.commitSha, slot.getAttribute('data-tenant-path') || '', function (html) {
+          if (gen !== clickGeneration) { return; }
+          if (html) { slot.innerHTML = html; transformPlanDiff(slot); }
+          else { slot.textContent = 'Could not load resource-change view.'; }
+        });
+      })(slots[i]);
+    }
+  }
   function onFlagClick(changesets) {
     var panel = ensureDetailPanel();
     if (!panel) { return; }
@@ -443,6 +477,7 @@
         if (gen !== clickGeneration || !html) { return; }
         panel.insertAdjacentHTML('beforeend', html);
         loadChartDiffsForChangeset(panel.lastElementChild, cs, gen);
+        loadPlanDiffsForChangeset(panel.lastElementChild, cs, gen);
       });
     });
     panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });

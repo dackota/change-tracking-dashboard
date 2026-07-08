@@ -38,6 +38,11 @@ type PollHealthSnapshot interface {
 	// rather than failing the whole poll) — acceptance criterion 9's
 	// poll-health/status surface for extraction failures.
 	ExtractFailureCounts() map[string]int64
+	// PlanDiffOutcomeCounts returns the process-lifetime, per-Kind count of
+	// plandiff.Engine.Diff outcomes (e.g. "ok", "exceeded-limits") — the
+	// plandiff slice's own acceptance criterion 9 poll-health/status surface
+	// requirement.
+	PlanDiffOutcomeCounts() map[string]int64
 }
 
 // statusChipView is the header's aggregate poll-health chip (R11): how long
@@ -74,6 +79,16 @@ type statusChipView struct {
 	// independent of Status/ErrorText and can be non-empty even when Status
 	// is "ok" or "unknown".
 	ExtractFailureText string
+	// PlanDiffOutcomeText is a short, ready-to-render summary of
+	// process-lifetime plandiff.Engine.Diff outcomes by Kind (e.g. "1
+	// exceeded-limits, 12 ok"), sourced from
+	// pollstatus.Registry.PlanDiffOutcomeCounts (the plandiff slice's
+	// acceptance criterion 9). "" when Diff has never been called. Diff
+	// outcomes are computed on demand (when a Terraform changeset's
+	// resource-change view is requested), independent of the poll cycle, so
+	// this is independent of Status/ErrorText/ExtractFailureText and can be
+	// non-empty even when Status is "ok" or "unknown".
+	PlanDiffOutcomeText string
 }
 
 // statusChip reduces a pollstatus snapshot to the header chip's aggregate
@@ -83,24 +98,27 @@ type statusChipView struct {
 // polled — renders an explicit "never polled" state rather than a
 // nonsensical zero-time phrase, so a quiet dashboard can be told apart from
 // a broken one.
-func statusChip(snapshot []pollstatus.TrackerStatus, extractFailures map[string]int64, now time.Time) statusChipView {
+func statusChip(snapshot []pollstatus.TrackerStatus, extractFailures map[string]int64, planDiffOutcomes map[string]int64, now time.Time) statusChipView {
 	extractFailureText := formatExtractFailureText(extractFailures)
+	planDiffOutcomeText := formatPlanDiffOutcomeText(planDiffOutcomes)
 
 	if len(snapshot) == 0 {
 		return statusChipView{
-			Status:             statusUnknown,
-			LastPollText:       "Last poll: never",
-			NextPollText:       "Next poll: —",
-			ExtractFailureText: extractFailureText,
+			Status:              statusUnknown,
+			LastPollText:        "Last poll: never",
+			NextPollText:        "Next poll: —",
+			ExtractFailureText:  extractFailureText,
+			PlanDiffOutcomeText: planDiffOutcomeText,
 		}
 	}
 
 	agg := aggregatePollHealth(snapshot)
 	view := statusChipView{
-		Status:             statusOK,
-		LastPollText:       "Last poll: " + humanizeRelative(agg.LatestAttempt, now),
-		NextPollText:       "Next poll: " + humanizeUntil(agg.SoonestNextRun, now),
-		ExtractFailureText: extractFailureText,
+		Status:              statusOK,
+		LastPollText:        "Last poll: " + humanizeRelative(agg.LatestAttempt, now),
+		NextPollText:        "Next poll: " + humanizeUntil(agg.SoonestNextRun, now),
+		ExtractFailureText:  extractFailureText,
+		PlanDiffOutcomeText: planDiffOutcomeText,
 	}
 	if agg.ErrorCount > 0 {
 		view.Status = statusError
@@ -181,6 +199,31 @@ func formatExtractFailureText(counts map[string]int64) string {
 		} else {
 			parts = append(parts, fmt.Sprintf("%d %s %s", n, engine, unit))
 		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// formatPlanDiffOutcomeText renders per-Kind plandiff.Engine.Diff outcome
+// counts (see pollstatus.Registry.PlanDiffOutcomeCounts) as a short,
+// comma-joined summary, e.g. "1 exceeded-limits, 12 ok" — satisfying the
+// plandiff slice's acceptance criterion 9. Kinds are sorted so the same
+// counts always render identically regardless of map iteration order,
+// mirroring formatExtractFailureText's identical determinism guarantee.
+// Returns "" for a nil or empty map — Diff has never been called.
+func formatPlanDiffOutcomeText(counts map[string]int64) string {
+	if len(counts) == 0 {
+		return ""
+	}
+
+	kinds := make([]string, 0, len(counts))
+	for kind := range counts {
+		kinds = append(kinds, kind)
+	}
+	sort.Strings(kinds)
+
+	parts := make([]string, 0, len(kinds))
+	for _, kind := range kinds {
+		parts = append(parts, fmt.Sprintf("%d %s", counts[kind], kind))
 	}
 	return strings.Join(parts, ", ")
 }

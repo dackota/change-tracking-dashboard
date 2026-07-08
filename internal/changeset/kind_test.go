@@ -40,6 +40,11 @@ func TestClassifyKind(t *testing.T) {
 			want:     changeset.KindChart,
 		},
 		{
+			name:     "file merely containing .tf as a substring (not the extension) classifies as value change",
+			filePath: "envs/prod/notes.tf.md",
+			want:     changeset.KindValue,
+		},
+		{
 			name:     "versions.tf classifies as provider (required_providers + required_version live here)",
 			filePath: "versions.tf",
 			want:     changeset.KindProvider,
@@ -97,5 +102,27 @@ func TestClassifyKind(t *testing.T) {
 				t.Errorf("ClassifyKind(%q): got %q, want %q", tc.filePath, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestKind_IsTerraform(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		kind changeset.Kind
+		want bool
+	}{
+		{changeset.KindProvider, true},
+		{changeset.KindModule, true},
+		{changeset.KindResource, true},
+		{changeset.KindVariable, true},
+		{changeset.KindChart, false},
+		{changeset.KindValue, false},
+	}
+
+	for _, tc := range tests {
+		if got := tc.kind.IsTerraform(); got != tc.want {
+			t.Errorf("Kind(%q).IsTerraform() = %v, want %v", tc.kind, got, tc.want)
+		}
 	}
 }

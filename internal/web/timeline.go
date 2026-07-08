@@ -168,7 +168,7 @@ func (h *TimelineHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now()
 	data := timelineViewData{
-		shellData:     buildShell(r.URL.Path, timelineTitle, timelineSubtitle, timelineHeaderActions, statusChip(h.pollStatus.Snapshot(), h.pollStatus.ExtractFailureCounts(), now)),
+		shellData:     buildShell(r.URL.Path, timelineTitle, timelineSubtitle, timelineHeaderActions, statusChip(h.pollStatus.Snapshot(), h.pollStatus.ExtractFailureCounts(), h.pollStatus.PlanDiffOutcomeCounts(), now)),
 		KPI:           buildKPIView(h.loadMetrics(r.Context()), now),
 		FacetControls: buildFacetControls(opts),
 		RepoOptions:   buildRepoOptions(repoStats),

@@ -46,7 +46,7 @@ func (h *ChangesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	now := time.Now()
-	data := buildShell(r.URL.Path, changesTitle, changesSubtitle, "", statusChip(h.pollStatus.Snapshot(), h.pollStatus.ExtractFailureCounts(), now))
+	data := buildShell(r.URL.Path, changesTitle, changesSubtitle, "", statusChip(h.pollStatus.Snapshot(), h.pollStatus.ExtractFailureCounts(), h.pollStatus.PlanDiffOutcomeCounts(), now))
 	if err := h.tmpl.Execute(w, data); err != nil {
 		// The response may already be partly written, so we can't change the
 		// status code here — just record the failure so it's observable.
