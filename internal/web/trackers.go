@@ -220,7 +220,7 @@ func (h *TrackersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	snapshot := h.pollStatus.Snapshot()
 	data := trackersViewData{
-		shellData: buildShell(r.URL.Path, trackersTitle, trackersSubtitle, "", statusChip(snapshot, now)),
+		shellData: buildShell(r.URL.Path, trackersTitle, trackersSubtitle, "", statusChip(snapshot, h.pollStatus.ExtractFailureCounts(), now)),
 		Trackers:  buildTrackersView(h.cfg.Current(), snapshot, now),
 	}
 	if err := h.tmpl.Execute(w, data); err != nil {

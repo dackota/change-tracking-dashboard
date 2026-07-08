@@ -86,20 +86,22 @@ const sidebarTemplate = `{{define "sidebar"}}<aside class="sidebar">
     </aside>{{end}}`
 
 // headerTemplate defines the "header" named template shared by every page
-// (R6): title, subtitle, the aggregate poll-status chip (R11), and any
+// (R6): title, subtitle, the aggregate poll-status chip (R11, plus R9's
+// per-engine extract-failure counts — acceptance criterion 9), and any
 // page-specific header actions (pre-rendered trusted HTML, e.g. the
 // timeline's Reset zoom button). The chip's Status field only ever takes one
 // of the fixed values statusUnknown/statusOK/statusError (never
 // request/stored data), so interpolating it straight into the class
-// attribute carries no injection risk; LastPollText/NextPollText/ErrorText
-// go through html/template's default auto-escaping like any other field.
+// attribute carries no injection risk;
+// LastPollText/NextPollText/ErrorText/ExtractFailureText go through
+// html/template's default auto-escaping like any other field.
 const headerTemplate = `{{define "header"}}<div class="page-header">
         <h1>{{.Header.Title}}</h1>
         <p class="page-subtitle">{{.Header.Subtitle}}</p>
         <span class="spacer"></span>
         <div class="poll-chip poll-chip-{{.Header.PollHealth.Status}}" data-poll-status="{{.Header.PollHealth.Status}}">
           <span class="poll-chip-dot"></span>
-          <span class="poll-chip-text">{{.Header.PollHealth.LastPollText}} · {{.Header.PollHealth.NextPollText}}{{if .Header.PollHealth.ErrorText}} · {{.Header.PollHealth.ErrorText}}{{end}}</span>
+          <span class="poll-chip-text">{{.Header.PollHealth.LastPollText}} · {{.Header.PollHealth.NextPollText}}{{if .Header.PollHealth.ErrorText}} · {{.Header.PollHealth.ErrorText}}{{end}}{{if .Header.PollHealth.ExtractFailureText}} · {{.Header.PollHealth.ExtractFailureText}}{{end}}</span>
         </div>
         {{.Header.Actions}}
       </div>{{end}}`

@@ -65,6 +65,24 @@ func diffFields(p differ.ScalarParams, old, new domain.TrackedField) []domain.Ch
 	return differ.DiffScalar(p, old, new)
 }
 
+// ExtractFailureRecorder is the seam through which Poll reports a
+// FieldExtractor.Extract failure (e.g. an unparseable HCL file) to the
+// poll-health/status surface, tagged by engine (e.g. "hcl", "jq") so one
+// engine's structural parse failures are never conflated with another's
+// evaluation failures. pollstatus.Registry satisfies this interface
+// directly; tests may substitute a fake without importing that package,
+// mirroring scheduler.StatusRecorder's role for the scheduler.
+type ExtractFailureRecorder interface {
+	RecordExtractFailure(engine string)
+}
+
+// noopExtractFailureRecorder is the default ExtractFailureRecorder for a
+// Poller built without WithExtractFailureRecorder, so pollFile never needs
+// to nil-check it.
+type noopExtractFailureRecorder struct{}
+
+func (noopExtractFailureRecorder) RecordExtractFailure(string) {}
+
 // Poller wires the git source and store together to run polling cycles.
 type Poller struct {
 	src *gitsource.Source
@@ -73,9 +91,10 @@ type Poller struct {
 	// a fixed clock to make the backfill window deterministic.
 	now func() time.Time
 
-	tracer trace.Tracer
-	red    *telemetry.REDMetrics
-	logger *slog.Logger
+	tracer          trace.Tracer
+	red             *telemetry.REDMetrics
+	logger          *slog.Logger
+	extractFailures ExtractFailureRecorder
 }
 
 // Option configures optional Poller dependencies (telemetry providers,
@@ -120,6 +139,17 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 }
 
+// WithExtractFailureRecorder wires rec as the destination for per-engine
+// extract-failure counts (e.g. HCL structural parse failures) recorded
+// during Poll — see ExtractFailureRecorder. Without this Option, failures
+// are still logged and returned as errors exactly as before; only the
+// poll-health/status surface's count is skipped.
+func WithExtractFailureRecorder(rec ExtractFailureRecorder) Option {
+	return func(p *Poller) {
+		p.extractFailures = rec
+	}
+}
+
 // New returns a Poller wired to the given source and store. Without any
 // Option, telemetry defaults to the ambient global OTel providers (a safe
 // no-op until cmd/dashboard/main.go calls telemetry.Init) and a
@@ -127,12 +157,13 @@ func WithLogger(logger *slog.Logger) Option {
 // before this package was instrumented.
 func New(src *gitsource.Source, st *store.Store, opts ...Option) *Poller {
 	p := &Poller{
-		src:    src,
-		st:     st,
-		now:    time.Now,
-		tracer: otel.GetTracerProvider().Tracer(instrumentationName),
-		red:    mustNoopREDMetrics(),
-		logger: telemetry.LoggerFromContext(context.Background()),
+		src:             src,
+		st:              st,
+		now:             time.Now,
+		tracer:          otel.GetTracerProvider().Tracer(instrumentationName),
+		red:             mustNoopREDMetrics(),
+		logger:          telemetry.LoggerFromContext(context.Background()),
+		extractFailures: noopExtractFailureRecorder{},
 	}
 	for _, opt := range opts {
 		opt(p)
@@ -157,7 +188,11 @@ func mustNoopREDMetrics() *telemetry.REDMetrics {
 // window calculation. Every other field — including any telemetry wired in
 // via New's Options — carries over unchanged.
 func (p *Poller) WithNow(fn func() time.Time) *Poller {
-	return &Poller{src: p.src, st: p.st, now: fn, tracer: p.tracer, red: p.red, logger: p.logger}
+	return &Poller{
+		src: p.src, st: p.st, now: fn,
+		tracer: p.tracer, red: p.red, logger: p.logger,
+		extractFailures: p.extractFailures,
+	}
 }
 
 // globMetaChars are the path.Match wildcard characters. A FileGlob containing
@@ -214,9 +249,10 @@ func (p *Poller) Poll(t domain.Tracker) error {
 // purely so Poll can wrap the whole cycle in a span/RED signal without
 // mixing that concern into the tracker-polling logic itself.
 func (p *Poller) pollTracker(ctx context.Context, logger *slog.Logger, t domain.Tracker) error {
-	ex, err := extractor.Select(t.Engine, t.ExtractorExpr)
+	engine := extractor.InferEngine(t.Engine, t.FileGlob)
+	ex, err := extractor.Select(engine, t.ExtractorExpr)
 	if err != nil {
-		return fmt.Errorf("poller: select extractor (engine=%q, expr=%q): %w", t.Engine, t.ExtractorExpr, err)
+		return fmt.Errorf("poller: select extractor (engine=%q, expr=%q): %w", engine, t.ExtractorExpr, err)
 	}
 
 	fe, err := facet.NewExtractor(t.FacetPattern)
@@ -236,7 +272,7 @@ func (p *Poller) pollTracker(ctx context.Context, logger *slog.Logger, t domain.
 	// slice is empty, so a fully clean cycle still returns nil.
 	var errs []error
 	for _, filePath := range filePaths {
-		if err := p.pollFile(ctx, logger, t, filePath, ex, fe); err != nil {
+		if err := p.pollFile(ctx, logger, t, filePath, engine, ex, fe); err != nil {
 			errs = append(errs, fmt.Errorf("file %q: %w", filePath, err))
 		}
 	}
@@ -270,7 +306,13 @@ func (p *Poller) resolveFilePaths(ctx context.Context, glob string) ([]string, e
 // both logged (with repo/path context — safe here, since logs, unlike
 // metric labels, are not cardinality-bounded) and returned unchanged, so
 // existing callers and tests observe identical error behavior to before.
-func (p *Poller) pollFile(ctx context.Context, logger *slog.Logger, t domain.Tracker, filePath string, ex extractor.FieldExtractor, fe *facet.Extractor) error {
+//
+// ex is typed as the extractor.FieldExtractor interface (not the concrete
+// gojq-based *extractor.Extractor) so an alternate backend — e.g. the HCL
+// extractor — can be substituted without pollFile changing at all. engine is
+// the resolved engine name (see extractor.InferEngine) tagging any Extract
+// failure reported to the ExtractFailureRecorder.
+func (p *Poller) pollFile(ctx context.Context, logger *slog.Logger, t domain.Tracker, filePath, engine string, ex extractor.FieldExtractor, fe *facet.Extractor) error {
 	var hwm string
 	err := telemetry.WithSpan(ctx, p.tracer, "store.get_high_water_mark", func(context.Context) error {
 		v, err := p.st.GetHighWaterMark(t.Repo, filePath)
@@ -311,7 +353,7 @@ func (p *Poller) pollFile(ctx context.Context, logger *slog.Logger, t domain.Tra
 		// Extract state of the very first snapshot as the initial "old" value.
 		// Then walk pairs starting from index 1 using the first as old.
 		// This means: if there's only one snapshot, we produce an "added" Change.
-		prevField, err = ex.Extract(snapshots[0].Content)
+		prevField, err = p.extractField(logger, engine, t, filePath, ex, snapshots[0].CommitSha, snapshots[0].Content)
 		if err != nil {
 			return fmt.Errorf("poller: extract (initial): %w", err)
 		}
@@ -353,7 +395,7 @@ func (p *Poller) pollFile(ctx context.Context, logger *slog.Logger, t domain.Tra
 		}
 		for _, snap := range hwmSnaps {
 			if snap.CommitSha == hwm {
-				prevField, err = ex.Extract(snap.Content)
+				prevField, err = p.extractField(logger, engine, t, filePath, ex, snap.CommitSha, snap.Content)
 				if err != nil {
 					return fmt.Errorf("poller: extract HWM content: %w", err)
 				}
@@ -364,7 +406,7 @@ func (p *Poller) pollFile(ctx context.Context, logger *slog.Logger, t domain.Tra
 
 	var lastSha string
 	for _, snap := range snapshots {
-		newField, err := ex.Extract(snap.Content)
+		newField, err := p.extractField(logger, engine, t, filePath, ex, snap.CommitSha, snap.Content)
 		if err != nil {
 			return fmt.Errorf("poller: extract at %s: %w", snap.CommitSha, err)
 		}
@@ -396,6 +438,27 @@ func (p *Poller) pollFile(ctx context.Context, logger *slog.Logger, t domain.Tra
 	}
 
 	return nil
+}
+
+// extractField wraps a single ex.Extract call, logging and reporting a
+// failure to the ExtractFailureRecorder (tagged with engine, e.g. "hcl") in
+// one place — every one of pollFile's three extraction sites (initial
+// baseline, HWM-content lookup, and the main per-commit loop) shares this so
+// a malformed or unparseable file is consistently logged and counted on the
+// poll-health/status surface no matter which site hits it.
+func (p *Poller) extractField(logger *slog.Logger, engine string, t domain.Tracker, filePath string, ex extractor.FieldExtractor, commitSha string, content []byte) (domain.TrackedField, error) {
+	field, err := ex.Extract(content)
+	if err != nil {
+		logger.Error("poller: extract failed",
+			slog.String("repo", t.Repo),
+			slog.String("filePath", filePath),
+			slog.String("commitSha", commitSha),
+			slog.String("engine", engine),
+			slog.Any("error", err))
+		p.extractFailures.RecordExtractFailure(engine)
+		return domain.TrackedField{}, fmt.Errorf("engine=%q: %w", engine, err)
+	}
+	return field, nil
 }
 
 // saveChange wraps one store.SaveChange call in its own span, logging and

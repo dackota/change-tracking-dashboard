@@ -10,6 +10,9 @@
 package web
 
 import (
+	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/dackota/change-tracking-dashboard/internal/pollstatus"
@@ -30,6 +33,11 @@ const (
 // TrackersHandler also uses it for the per-tracker columns).
 type PollHealthSnapshot interface {
 	Snapshot() []pollstatus.TrackerStatus
+	// ExtractFailureCounts returns the process-lifetime, per-engine count of
+	// FieldExtractor.Extract failures (e.g. a malformed HCL file, skipped
+	// rather than failing the whole poll) — acceptance criterion 9's
+	// poll-health/status surface for extraction failures.
+	ExtractFailureCounts() map[string]int64
 }
 
 // statusChipView is the header's aggregate poll-health chip (R11): how long
@@ -57,6 +65,15 @@ type statusChipView struct {
 	// widening the unauthenticated-exposure surface of internal error
 	// detail (see pollstatus.TrackerStatus.LastError doc comment).
 	ErrorText string
+	// ExtractFailureText is a short, ready-to-render summary of
+	// process-lifetime FieldExtractor.Extract failures by engine (e.g. "2
+	// hcl parse failures"), sourced from
+	// pollstatus.Registry.ExtractFailureCounts (acceptance criterion 9). ""
+	// when no engine has ever failed to extract a field. A malformed file
+	// is skipped rather than failing its tracker's poll attempt, so this is
+	// independent of Status/ErrorText and can be non-empty even when Status
+	// is "ok" or "unknown".
+	ExtractFailureText string
 }
 
 // statusChip reduces a pollstatus snapshot to the header chip's aggregate
@@ -66,20 +83,24 @@ type statusChipView struct {
 // polled — renders an explicit "never polled" state rather than a
 // nonsensical zero-time phrase, so a quiet dashboard can be told apart from
 // a broken one.
-func statusChip(snapshot []pollstatus.TrackerStatus, now time.Time) statusChipView {
+func statusChip(snapshot []pollstatus.TrackerStatus, extractFailures map[string]int64, now time.Time) statusChipView {
+	extractFailureText := formatExtractFailureText(extractFailures)
+
 	if len(snapshot) == 0 {
 		return statusChipView{
-			Status:       statusUnknown,
-			LastPollText: "Last poll: never",
-			NextPollText: "Next poll: —",
+			Status:             statusUnknown,
+			LastPollText:       "Last poll: never",
+			NextPollText:       "Next poll: —",
+			ExtractFailureText: extractFailureText,
 		}
 	}
 
 	agg := aggregatePollHealth(snapshot)
 	view := statusChipView{
-		Status:       statusOK,
-		LastPollText: "Last poll: " + humanizeRelative(agg.LatestAttempt, now),
-		NextPollText: "Next poll: " + humanizeUntil(agg.SoonestNextRun, now),
+		Status:             statusOK,
+		LastPollText:       "Last poll: " + humanizeRelative(agg.LatestAttempt, now),
+		NextPollText:       "Next poll: " + humanizeUntil(agg.SoonestNextRun, now),
+		ExtractFailureText: extractFailureText,
 	}
 	if agg.ErrorCount > 0 {
 		view.Status = statusError
@@ -131,4 +152,35 @@ func aggregatePollHealth(statuses []pollstatus.TrackerStatus) pollHealthAggregat
 	}
 
 	return agg
+}
+
+// formatExtractFailureText renders per-engine FieldExtractor.Extract failure
+// counts (see pollstatus.Registry.ExtractFailureCounts) as a short,
+// comma-joined summary, e.g. "2 hcl parse failures" or "2 hcl parse
+// failures, 1 jq parse failure" — satisfying acceptance criterion 9's "HCL
+// parse-failure counts must appear on the poll-health/status surface".
+// Engines are sorted by name so the same counts always render identically
+// regardless of map iteration order (Go map order is randomized). Returns ""
+// for a nil or empty map — no engine has ever failed to extract a field.
+func formatExtractFailureText(counts map[string]int64) string {
+	if len(counts) == 0 {
+		return ""
+	}
+
+	engines := make([]string, 0, len(counts))
+	for engine := range counts {
+		engines = append(engines, engine)
+	}
+	sort.Strings(engines)
+
+	parts := make([]string, 0, len(engines))
+	for _, engine := range engines {
+		unit := "parse failure"
+		if n := counts[engine]; n != 1 {
+			parts = append(parts, fmt.Sprintf("%d %s %ss", n, engine, unit))
+		} else {
+			parts = append(parts, fmt.Sprintf("%d %s %s", n, engine, unit))
+		}
+	}
+	return strings.Join(parts, ", ")
 }

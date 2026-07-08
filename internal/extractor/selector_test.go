@@ -6,10 +6,9 @@ import (
 	"github.com/dackota/change-tracking-dashboard/internal/extractor"
 )
 
-// TestValidateEngine covers the legal-value contract: unset/empty and "jq" are
-// the only values accepted right now. "hcl" is reserved for a future task and
-// must NOT validate successfully yet — accepting it prematurely would let a
-// tracker silently no-op once the hcl engine ships.
+// TestValidateEngine covers the legal-value contract: unset/empty, "jq", and
+// "hcl" (the HCL/Terraform backend — see internal/hclextract) are the values
+// accepted today; anything else is rejected so a typo'd config fails fast.
 func TestValidateEngine(t *testing.T) {
 	t.Parallel()
 
@@ -20,7 +19,7 @@ func TestValidateEngine(t *testing.T) {
 	}{
 		{name: "empty defaults to jq", engine: "", wantErr: false},
 		{name: "explicit jq", engine: "jq", wantErr: false},
-		{name: "hcl is reserved, not yet accepted", engine: "hcl", wantErr: true},
+		{name: "explicit hcl", engine: "hcl", wantErr: false},
 		{name: "unknown value", engine: "bogus", wantErr: true},
 		{name: "case mismatch is rejected", engine: "JQ", wantErr: true},
 	}
@@ -46,12 +45,12 @@ func TestValidateEngine(t *testing.T) {
 func TestValidateEngine_ErrorNamesTheBadValue(t *testing.T) {
 	t.Parallel()
 
-	err := extractor.ValidateEngine("hcl")
+	err := extractor.ValidateEngine("cobol")
 	if err == nil {
-		t.Fatal("ValidateEngine(\"hcl\") = nil, want an error")
+		t.Fatal("ValidateEngine(\"cobol\") = nil, want an error")
 	}
-	if !contains(err.Error(), "hcl") {
-		t.Errorf("error %q does not name the invalid value %q", err.Error(), "hcl")
+	if !contains(err.Error(), "cobol") {
+		t.Errorf("error %q does not name the invalid value %q", err.Error(), "cobol")
 	}
 }
 
@@ -84,9 +83,9 @@ func TestSelect_EmptyAndJQEngine_BehaveIdentically(t *testing.T) {
 func TestSelect_UnrecognizedEngine_ReturnsError(t *testing.T) {
 	t.Parallel()
 
-	_, err := extractor.Select("hcl", ".version")
+	_, err := extractor.Select("cobol", ".version")
 	if err == nil {
-		t.Fatal("Select(\"hcl\", ...) = nil error, want rejection")
+		t.Fatal("Select(\"cobol\", ...) = nil error, want rejection")
 	}
 }
 

@@ -174,8 +174,9 @@ func resolveTracker(idx int, tr TrackerRaw, defaults Defaults) (ResolvedTracker,
 }
 
 // flattenTracker produces one domain.Tracker per (file-glob × field) entry,
-// validating jq expressions along the way. The resolved per-tracker cadence
-// and backfill window are carried onto every flattened tracker.
+// validating each field's extractor expression against its resolved engine
+// along the way. The resolved per-tracker cadence and backfill window are
+// carried onto every flattened tracker.
 func flattenTracker(trackerIdx int, tr TrackerRaw, rt ResolvedTracker) ([]domainTracker, error) {
 	var out []domainTracker
 
@@ -194,7 +195,7 @@ func flattenTracker(trackerIdx int, tr TrackerRaw, rt ResolvedTracker) ([]domain
 			if field.Expr == "" {
 				return nil, fmt.Errorf("config: tracker[%d] (repo=%q), file[%d] (glob=%q), field[%d] (name=%q): expr is required", trackerIdx, tr.Repo, fileIdx, f.Glob, fieldIdx, field.Name)
 			}
-			if err := validateJQExpr(trackerIdx, tr.Repo, fileIdx, f.Glob, fieldIdx, field.Name, field.Expr); err != nil {
+			if err := validateExpr(trackerIdx, tr.Repo, fileIdx, f.Glob, fieldIdx, field.Name, tr.Engine, field.Expr); err != nil {
 				return nil, err
 			}
 

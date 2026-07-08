@@ -101,7 +101,7 @@ func TestPollFile_UsesInjectedFieldExtractor(t *testing.T) {
 	}
 
 	p := New(src, st)
-	if err := p.pollFile(context.Background(), p.logger, tracker, "Chart.yaml", fake, fe); err != nil {
+	if err := p.pollFile(context.Background(), p.logger, tracker, "Chart.yaml", "jq", fake, fe); err != nil {
 		t.Fatalf("pollFile: %v", err)
 	}
 
