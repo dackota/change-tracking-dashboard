@@ -40,6 +40,7 @@ var changesetDetailTemplateSource = fmt.Sprintf(`
     {{if .CommitURL}}<a class="changeset-detail-commit" href="{{.CommitURL}}" target="_blank" rel="noopener noreferrer" title="{{.CommitSha}}">{{.ShortSha}}</a>{{else}}<span class="changeset-detail-commit" title="{{.CommitSha}}">{{.ShortSha}}</span>{{end}}
     <span class="changeset-detail-author">{{.Author}}</span>
     <time class="changeset-detail-committed-at">{{.CommittedAt.Format "2006-01-02 15:04"}}</time>
+    {{range .Risks}}<span class="risk-badge risk-{{.Slug}}" data-risk="{{.Label}}">{{.Label}}</span>{{end}}
     {{if .IssueRefs}}<span class="changeset-detail-issue-refs">{{range .IssueRefs}}<span class="changeset-detail-issue-ref">{{.}}</span>{{end}}</span>{{end}}
   </header>
   <ul class="changeset-detail-changes">
@@ -116,6 +117,47 @@ type changesetView struct {
 	CommittedAt time.Time
 	IssueRefs   []string // issue/PR references linked to this commit; empty when none
 	Changes     []changeView
+	// Risks is cs's risk class(es) (R12, R24), classified fresh on every
+	// render via changeset.ClassifyRisk — never stored, mirroring how Kind
+	// is already a query-time projection. Empty when cs trips no risk rule
+	// (acceptance criterion 6's "zero risk classes" case), which the
+	// template's {{range}} renders as no badge at all.
+	Risks []riskBadgeView
+}
+
+// riskBadgeView is one risk class rendered as a badge: Label is the
+// human-readable Risk value ("cost tripwire"); Slug is the same value
+// reduced to a CSS-class-safe token ("cost-tripwire") for the "risk-{{.Slug}}"
+// class html/template interpolates into the badge element.
+type riskBadgeView struct {
+	Label string
+	Slug  string
+}
+
+// riskClassSlugPattern matches every run of characters that is not safe to
+// carry unescaped into a CSS class name (i.e. not [a-z0-9-]), so an arbitrary
+// Risk value (today's three constants, or a future config-added one) always
+// yields a well-formed "risk-<slug>" class.
+var riskClassSlugPattern = regexp.MustCompile(`[^a-z0-9]+`)
+
+// riskSlug reduces a Risk's human-readable label to a CSS-class-safe token:
+// lowercased, with every run of non-alphanumeric characters collapsed to a
+// single hyphen, and leading/trailing hyphens trimmed (e.g. "cost tripwire"
+// -> "cost-tripwire", "replace/destroy" -> "replace-destroy").
+func riskSlug(r changeset.Risk) string {
+	return strings.Trim(riskClassSlugPattern.ReplaceAllString(strings.ToLower(string(r)), "-"), "-")
+}
+
+// newRiskBadgeViews classifies cs's risk and projects the result into the
+// template's badge view model, in the same stable/sorted order
+// changeset.ClassifyRisk already returns.
+func newRiskBadgeViews(cs changeset.Changeset) []riskBadgeView {
+	risks := changeset.ClassifyRisk(cs, changeset.DefaultRiskRules())
+	views := make([]riskBadgeView, 0, len(risks))
+	for _, r := range risks {
+		views = append(views, riskBadgeView{Label: string(r), Slug: riskSlug(r)})
+	}
+	return views
 }
 
 // newChangesetView builds the template view model for cs.
@@ -134,6 +176,7 @@ func newChangesetView(cs changeset.Changeset) changesetView {
 		CommittedAt: cs.CommittedAt,
 		IssueRefs:   cs.IssueRefs,
 		Changes:     changes,
+		Risks:       newRiskBadgeViews(cs),
 	}
 }
 

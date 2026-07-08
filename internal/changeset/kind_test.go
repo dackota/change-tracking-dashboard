@@ -39,6 +39,51 @@ func TestClassifyKind(t *testing.T) {
 			filePath: "infra/nested/deep/Chart.yaml",
 			want:     changeset.KindChart,
 		},
+		{
+			name:     "versions.tf classifies as provider (required_providers + required_version live here)",
+			filePath: "versions.tf",
+			want:     changeset.KindProvider,
+		},
+		{
+			name:     "providers.tf classifies as provider",
+			filePath: "providers.tf",
+			want:     changeset.KindProvider,
+		},
+		{
+			name:     ".terraform.lock.hcl classifies as provider (lockfile pins)",
+			filePath: ".terraform.lock.hcl",
+			want:     changeset.KindProvider,
+		},
+		{
+			name:     "nested .terraform.lock.hcl still classifies as provider",
+			filePath: "terraform/.terraform.lock.hcl",
+			want:     changeset.KindProvider,
+		},
+		{
+			name:     "modules.tf classifies as module",
+			filePath: "modules.tf",
+			want:     changeset.KindModule,
+		},
+		{
+			name:     "variables.tf classifies as variable",
+			filePath: "variables.tf",
+			want:     changeset.KindVariable,
+		},
+		{
+			name:     "an arbitrary resource-defining .tf file classifies as resource (the default Terraform Kind)",
+			filePath: "terraform/oci-containerengine-nodepool.tf",
+			want:     changeset.KindResource,
+		},
+		{
+			name:     "node_pool.tf classifies as resource",
+			filePath: "node_pool.tf",
+			want:     changeset.KindResource,
+		},
+		{
+			name:     ".tofu file follows the same Terraform classification as .tf",
+			filePath: "main.tofu",
+			want:     changeset.KindResource,
+		},
 	}
 
 	for _, tc := range tests {

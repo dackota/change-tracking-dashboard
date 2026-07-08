@@ -64,6 +64,7 @@ type changesetBody struct {
 	CommittedAt time.Time    `json:"committedAt"`
 	IssueRefs   []string     `json:"issueRefs,omitempty"`
 	Changes     []changeBody `json:"changes"`
+	Risk        []string     `json:"risk"`
 }
 
 type changeBody struct {
