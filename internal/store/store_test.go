@@ -252,3 +252,63 @@ func TestKeyedChangeRoundTrip(t *testing.T) {
 		t.Errorf("Field = %q, want subchart-versions", got.Field)
 	}
 }
+
+// TestIssueRefsRoundTrip confirms that a Change's IssueRefs (issue/PR
+// references parsed from its triggering commit message — see
+// internal/issueref) persists and reads back intact through SaveChange ->
+// QueryFeed, and that a Change with no references round-trips to an empty
+// slice — never a false/spurious reference (mirrors the Facets and Key
+// round-trip contracts already proven above).
+func TestIssueRefsRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+
+	withRefs := domain.Change{
+		Repo:        "apps-repo",
+		FilePath:    "versions.tf",
+		Field:       "google-provider-version",
+		ChangeType:  domain.ChangeTypeModified,
+		OldValue:    ptr("5.0.0"),
+		NewValue:    ptr("5.10.0"),
+		CommitSha:   "sha-with-refs",
+		Author:      "alice",
+		CommittedAt: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+		IssueRefs:   []string{"#123", "ABC-456"},
+	}
+	withoutRefs := domain.Change{
+		Repo:        "apps-repo",
+		FilePath:    "versions.tf",
+		Field:       "google-provider-version",
+		ChangeType:  domain.ChangeTypeModified,
+		OldValue:    ptr("5.10.0"),
+		NewValue:    ptr("5.11.0"),
+		CommitSha:   "sha-without-refs",
+		Author:      "bob",
+		CommittedAt: time.Date(2024, 1, 1, 1, 0, 0, 0, time.UTC),
+		IssueRefs:   nil,
+	}
+
+	if err := s.SaveChange(withRefs); err != nil {
+		t.Fatalf("SaveChange (withRefs): %v", err)
+	}
+	if err := s.SaveChange(withoutRefs); err != nil {
+		t.Fatalf("SaveChange (withoutRefs): %v", err)
+	}
+
+	feed, err := s.QueryFeed(100)
+	if err != nil {
+		t.Fatalf("QueryFeed: %v", err)
+	}
+	if len(feed) != 2 {
+		t.Fatalf("QueryFeed returned %d changes, want 2", len(feed))
+	}
+
+	// Newest first: sha-without-refs (later CommittedAt) is feed[0].
+	if got := feed[0].IssueRefs; len(got) != 0 {
+		t.Errorf("feed[0] (sha-without-refs) IssueRefs = %#v, want empty (no false reference)", got)
+	}
+	if got := feed[1].IssueRefs; len(got) != 2 || got[0] != "#123" || got[1] != "ABC-456" {
+		t.Errorf("feed[1] (sha-with-refs) IssueRefs = %#v, want [\"#123\", \"ABC-456\"]", got)
+	}
+}

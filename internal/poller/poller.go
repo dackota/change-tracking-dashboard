@@ -36,6 +36,7 @@ import (
 	"github.com/dackota/change-tracking-dashboard/internal/extractor"
 	"github.com/dackota/change-tracking-dashboard/internal/facet"
 	"github.com/dackota/change-tracking-dashboard/internal/gitsource"
+	"github.com/dackota/change-tracking-dashboard/internal/issueref"
 	"github.com/dackota/change-tracking-dashboard/internal/store"
 	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
 	"go.opentelemetry.io/otel"
@@ -368,6 +369,7 @@ func (p *Poller) pollFile(ctx context.Context, logger *slog.Logger, t domain.Tra
 				Author:      snapshots[0].Author,
 				CommittedAt: snapshots[0].CommittedAt,
 				Facets:      facets,
+				IssueRefs:   issueref.Parse(snapshots[0].Message),
 			}
 			changes := diffFields(params, domain.TrackedField{Present: false}, prevField)
 			for _, c := range changes {
@@ -420,6 +422,7 @@ func (p *Poller) pollFile(ctx context.Context, logger *slog.Logger, t domain.Tra
 			Author:      snap.Author,
 			CommittedAt: snap.CommittedAt,
 			Facets:      facets,
+			IssueRefs:   issueref.Parse(snap.Message),
 		}
 
 		changes := diffFields(params, prevField, newField)

@@ -62,6 +62,7 @@ type changesetBody struct {
 	CommitSha   string       `json:"commitSha"`
 	Author      string       `json:"author"`
 	CommittedAt time.Time    `json:"committedAt"`
+	IssueRefs   []string     `json:"issueRefs,omitempty"`
 	Changes     []changeBody `json:"changes"`
 	Risk        []string     `json:"risk"`
 }
@@ -929,6 +930,70 @@ func TestChangesetsAPI_UnknownFacetParam_SilentlyIgnored(t *testing.T) {
 	body := decodeChangesetsBody(t, rr)
 	if len(body.Changesets) != 1 {
 		t.Fatalf("Changesets len = %d, want 1", len(body.Changesets))
+	}
+}
+
+// TestChangesetsAPI_SurfacesIssueRefs verifies the feed representation
+// (GET /api/changesets JSON) carries each Changeset's issue/PR references —
+// a commit whose message contains references surfaces them, and a commit
+// with none surfaces an empty/absent issueRefs, never a false link.
+func TestChangesetsAPI_SurfacesIssueRefs(t *testing.T) {
+	t.Parallel()
+
+	st := newTestStore(t)
+	base := time.Now().Add(-2 * time.Hour)
+
+	withRefs := domain.Change{
+		Repo: "apps-repo", FilePath: "versions.tf", Field: "google-provider-version",
+		ChangeType: domain.ChangeTypeModified, OldValue: ptr("5.0.0"), NewValue: ptr("5.10.0"),
+		CommitSha:   "commit-with-refs",
+		Author:      "alice",
+		CommittedAt: base,
+		IssueRefs:   []string{"#123", "ABC-456"},
+	}
+	withoutRefs := domain.Change{
+		Repo: "apps-repo", FilePath: "versions.tf", Field: "google-provider-version",
+		ChangeType: domain.ChangeTypeModified, OldValue: ptr("5.10.0"), NewValue: ptr("5.11.0"),
+		CommitSha:   "commit-without-refs",
+		Author:      "bob",
+		CommittedAt: base.Add(time.Hour),
+	}
+	if err := st.SaveChange(withRefs); err != nil {
+		t.Fatalf("SaveChange (withRefs): %v", err)
+	}
+	if err := st.SaveChange(withoutRefs); err != nil {
+		t.Fatalf("SaveChange (withoutRefs): %v", err)
+	}
+
+	h := web.NewChangesetsHandler(st)
+	req := httptest.NewRequest(http.MethodGet, "/api/changesets", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+
+	body := decodeChangesetsBody(t, rr)
+	if len(body.Changesets) != 2 {
+		t.Fatalf("Changesets len = %d, want 2", len(body.Changesets))
+	}
+
+	// Most-recent-first: commit-without-refs (later) is first.
+	if got := body.Changesets[0].CommitSha; got != "commit-without-refs" {
+		t.Fatalf("Changesets[0].CommitSha = %q, want commit-without-refs", got)
+	}
+	if got := body.Changesets[0].IssueRefs; len(got) != 0 {
+		t.Errorf("Changesets[0].IssueRefs = %#v, want empty (no false link)", got)
+	}
+
+	if got := body.Changesets[1].CommitSha; got != "commit-with-refs" {
+		t.Fatalf("Changesets[1].CommitSha = %q, want commit-with-refs", got)
+	}
+	want := []string{"#123", "ABC-456"}
+	got := body.Changesets[1].IssueRefs
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("Changesets[1].IssueRefs = %#v, want %#v", got, want)
 	}
 }
 

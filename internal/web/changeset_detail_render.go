@@ -44,6 +44,7 @@ var changesetDetailTemplateSource = fmt.Sprintf(`
     <span class="changeset-detail-author">{{.Author}}</span>
     <time class="changeset-detail-committed-at">{{.CommittedAt.Format "2006-01-02 15:04"}}</time>
     {{range .Risks}}<span class="risk-badge risk-{{.Slug}}" data-risk="{{.Label}}">{{.Label}}</span>{{end}}
+    {{if .IssueRefs}}<span class="changeset-detail-issue-refs">{{range .IssueRefs}}<span class="changeset-detail-issue-ref">{{.}}</span>{{end}}</span>{{end}}
   </header>
   <ul class="changeset-detail-changes">
     {{range .Changes}}
@@ -146,6 +147,7 @@ type changesetView struct {
 	CommitURL   string // web URL to the commit, empty for non-URL (local-path) repos
 	Author      string
 	CommittedAt time.Time
+	IssueRefs   []string // issue/PR references linked to this commit; empty when none
 	Changes     []changeView
 	// Risks is cs's risk class(es) (R12, R24), classified fresh on every
 	// render via changeset.ClassifyRisk — never stored, mirroring how Kind
@@ -204,6 +206,7 @@ func newChangesetView(cs changeset.Changeset) changesetView {
 		CommitURL:   commitURL(cs.Repo, cs.CommitSha),
 		Author:      cs.Author,
 		CommittedAt: cs.CommittedAt,
+		IssueRefs:   cs.IssueRefs,
 		Changes:     changes,
 		Risks:       newRiskBadgeViews(cs),
 	}

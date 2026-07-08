@@ -167,7 +167,7 @@ func (s *Store) queryChangesForChangesets(asOf time.Time, spec filter.FilterSpec
   LIMIT ?
 )
 SELECT c.repo, c.file_path, c.field, c.key_val, c.change_type,
-       c.old_value, c.new_value, c.facets_json, c.commit_sha, c.author, c.committed_at
+       c.old_value, c.new_value, c.facets_json, c.commit_sha, c.author, c.committed_at, c.issue_refs_json
 FROM changes c
 JOIN page_commits p ON p.committed_at = c.committed_at AND p.commit_sha = c.commit_sha
 %s
@@ -206,7 +206,7 @@ ORDER BY c.committed_at DESC, c.commit_sha ASC`, cteWhere.String(), outerWhereCl
 func (s *Store) GetChangeset(repo, commitSha string) (changeset.Changeset, bool, error) {
 	const query = `
 SELECT repo, file_path, field, key_val, change_type,
-       old_value, new_value, facets_json, commit_sha, author, committed_at
+       old_value, new_value, facets_json, commit_sha, author, committed_at, issue_refs_json
 FROM changes
 WHERE repo = ? AND commit_sha = ?
 ORDER BY id ASC`

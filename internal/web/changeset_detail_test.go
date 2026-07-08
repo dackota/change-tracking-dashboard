@@ -390,3 +390,77 @@ func TestChangesetDetail_ValueContainingHTML_IsEscapedNotInjected(t *testing.T) 
 		t.Errorf("expected the malicious value to be HTML-escaped; got:\n%s", body)
 	}
 }
+
+// TestChangesetDetail_SurfacesIssueRefs verifies the detail representation
+// shows the commit's linked issue/PR references (parsed from its commit
+// message) when present, and shows no issue-ref markup at all when the
+// commit had none — no false link.
+func TestChangesetDetail_SurfacesIssueRefs(t *testing.T) {
+	t.Parallel()
+
+	st := newTestStore(t)
+	c := domain.Change{
+		Repo:        "apps-repo",
+		FilePath:    "versions.tf",
+		Field:       "google-provider-version",
+		ChangeType:  domain.ChangeTypeModified,
+		OldValue:    ptr("5.0.0"),
+		NewValue:    ptr("5.10.0"),
+		CommitSha:   "commit-with-refs",
+		Author:      "alice",
+		CommittedAt: time.Now().Add(-time.Hour),
+		IssueRefs:   []string{"#123", "ABC-456"},
+	}
+	if err := st.SaveChange(c); err != nil {
+		t.Fatalf("SaveChange: %v", err)
+	}
+
+	h := web.NewChangesetDetailHandler(st)
+	req := httptest.NewRequest(http.MethodGet, "/api/changesets/detail?repo=apps-repo&commitSha=commit-with-refs", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "#123") || !strings.Contains(body, "ABC-456") {
+		t.Errorf("body missing linked issue refs #123/ABC-456; got:\n%s", body)
+	}
+}
+
+// TestChangesetDetail_NoIssueRefs_ShowsNoIssueRefMarkup verifies that a
+// commit with no issue reference renders no issue-ref markup at all — no
+// false link.
+func TestChangesetDetail_NoIssueRefs_ShowsNoIssueRefMarkup(t *testing.T) {
+	t.Parallel()
+
+	st := newTestStore(t)
+	c := domain.Change{
+		Repo:        "apps-repo",
+		FilePath:    "versions.tf",
+		Field:       "google-provider-version",
+		ChangeType:  domain.ChangeTypeModified,
+		OldValue:    ptr("5.0.0"),
+		NewValue:    ptr("5.10.0"),
+		CommitSha:   "commit-no-refs",
+		Author:      "alice",
+		CommittedAt: time.Now().Add(-time.Hour),
+	}
+	if err := st.SaveChange(c); err != nil {
+		t.Fatalf("SaveChange: %v", err)
+	}
+
+	h := web.NewChangesetDetailHandler(st)
+	req := httptest.NewRequest(http.MethodGet, "/api/changesets/detail?repo=apps-repo&commitSha=commit-no-refs", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if strings.Contains(body, "changeset-detail-issue-ref") {
+		t.Errorf("no-reference commit rendered issue-ref markup (false link); got:\n%s", body)
+	}
+}

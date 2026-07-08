@@ -250,6 +250,7 @@ func (s *Source) WalkCommits(ctx context.Context, filePath, sinceCommitSha strin
 			CommittedAt: commit.Author.When,
 			FilePath:    filePath,
 			Content:     content,
+			Message:     commit.Message,
 		})
 
 		if len(raw) >= maxCommitsPerWalk {

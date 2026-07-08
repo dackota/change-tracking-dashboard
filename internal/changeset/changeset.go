@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dackota/change-tracking-dashboard/internal/domain"
+	"github.com/dackota/change-tracking-dashboard/internal/issueref"
 )
 
 // Change is a domain.Change projected with its classified Kind. It embeds
@@ -26,7 +27,13 @@ type Changeset struct {
 	CommitSha   string
 	Author      string
 	CommittedAt time.Time
-	Changes     []Change
+	// IssueRefs is the issue/PR references parsed from this commit's message
+	// (see internal/issueref), hoisted here from the constituent Changes'
+	// IssueRefs the same way Author/CommittedAt are hoisted — every Change in
+	// a Changeset comes from the same commit and so carries the same
+	// IssueRefs. Nil/empty when the commit message had no reference.
+	IssueRefs []string
+	Changes   []Change
 }
 
 // commitKey identifies the commit that produced a Change. A CommitSha alone
@@ -56,6 +63,7 @@ func Assemble(changes []domain.Change) []Changeset {
 				CommitSha:   c.CommitSha,
 				Author:      c.Author,
 				CommittedAt: c.CommittedAt,
+				IssueRefs:   issueref.Copy(c.IssueRefs),
 			}
 			grouped[key] = cs
 			order = append(order, key)
@@ -92,6 +100,7 @@ func newChange(c domain.Change) Change {
 		facets[k] = v
 	}
 	c.Facets = facets
+	c.IssueRefs = issueref.Copy(c.IssueRefs)
 
 	return Change{Change: c, Kind: ClassifyKind(c.FilePath)}
 }
