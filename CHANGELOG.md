@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.9.0...app-v0.9.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* migrate existing databases missing the issue_refs_json column ([#80](https://github.com/dackota/change-tracking-dashboard/issues/80)) ([31f38e4](https://github.com/dackota/change-tracking-dashboard/commit/31f38e47cdd132110fc4d2e58e910ac510ee3280))
+
 ## [0.9.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.8.0...app-v0.9.0) (2026-07-08)
 
 
