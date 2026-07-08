@@ -1,26 +1,18 @@
 name: Publish
 
-# Builds and publishes the multi-arch container image and the Helm chart to
-# GitHub's free registry (ghcr.io) once release-please (release-please.yml)
-# has cut an actual release -- i.e. merged a release PR and tagged the repo.
-# This workflow no longer runs on every push to main (release-please.yml
-# already owns that trigger); it only reacts to the release tag itself, so
-# it never races a tag that hasn't been created yet and never repeats work
-# on a push that isn't a release.
+# Builds and publishes the multi-arch container image to GitHub's free
+# registry (ghcr.io) once release-please (release-please.yml) has cut an
+# actual release -- i.e. merged the release PR and tagged the repo. This
+# workflow no longer runs on every push to main (release-please.yml already
+# owns that trigger); it only reacts to the release tag itself, so it never
+# races a tag that hasn't been created yet and never repeats work on a push
+# that isn't a release.
 #
 # - Image  -> ghcr.io/<owner>/change-tracking-dashboard
-# - Chart  -> oci://ghcr.io/<owner>/charts/change-tracking-dashboard
 #
-# Two independent version streams (see release-please-config.json) tag
-# differently, and this workflow keeps them fully separate -- an app release
-# never runs the chart steps and vice versa:
-#   - app-v<version>   -> publish-app job: build + scan + push the image,
-#     tagged with <version> taken directly from the tag (github.ref_name),
-#     NOT re-read from Chart.yaml -- the tag IS the version being released.
-#   - chart-v<version> -> publish-chart job: package + push the chart. The
-#     chart version comes from Chart.yaml (already bumped by release-please
-#     for this release); the tag itself only selects this job, nothing is
-#     parsed out of it.
+# publish-app runs on an app-v<version> tag: build + scan + push the image,
+# tagged with <version> taken directly from the tag (github.ref_name), NOT
+# re-read from any file -- the tag IS the version being released.
 #
 # Auth uses the built-in GITHUB_TOKEN (packages: write) -- no secrets to
 # manage for the build/push itself.
@@ -49,12 +41,11 @@ name: Publish
 
 on:
   push:
-    tags: ["app-v*", "chart-v*"]
+    tags: ["app-v*"]
   workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
-  CHART_DIR: deploy/helm/change-tracking-dashboard
 
 permissions:
   contents: read
@@ -182,55 +173,4 @@ jobs:
             echo "package visibility set to public"
           else
             echo "::warning::could not set ghcr image visibility via API (expected on a personal-account package -- see the step comment); complete the one-time manual visibility toggle in the package's GitHub settings"
-          fi
-
-  publish-chart:
-    name: Publish chart (chart-v tag)
-    if: startsWith(github.ref_name, 'chart-v')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-
-      # CHART_OCI_REPO is exported to $GITHUB_ENV for the package step below
-      # (env: can't reference a step output). The chart's package version is
-      # read by `helm package` directly from Chart.yaml -- already bumped by
-      # release-please for this release -- so nothing needs to be parsed
-      # from the tag itself; it only selects this job.
-      - name: Compute chart OCI ref
-        run: |
-          set -euo pipefail
-          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          echo "CHART_OCI_REPO=oci://${REGISTRY}/${owner}/charts" >> "$GITHUB_ENV"
-
-      - name: Set up Helm
-        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
-
-      - name: Package + push chart
-        # Token stays an env var — never interpolated into the script text,
-        # so it isn't written verbatim into the generated shell script on
-        # disk.
-        env:
-          HELM_REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          echo "$HELM_REGISTRY_PASSWORD" | helm registry login "$REGISTRY" -u "${{ github.actor }}" --password-stdin
-          helm package "$CHART_DIR" --destination /tmp/chart
-          helm push /tmp/chart/change-tracking-dashboard-*.tgz "$CHART_OCI_REPO"
-
-      - name: Attempt to set chart visibility to public (best effort)
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -uo pipefail
-          # Same limitation as the image job's equivalent step (see its
-          # comment for the full explanation): expected to fail with
-          # GITHUB_TOKEN on a personal-account package. The chart's package
-          # name is path-qualified ("charts/change-tracking-dashboard"), so
-          # the "/" must be percent-encoded in the API path.
-          if gh api --method PATCH "/user/packages/container/charts%2Fchange-tracking-dashboard" -f visibility=public; then
-            echo "package visibility set to public"
-          else
-            echo "::warning::could not set ghcr chart visibility via API (expected on a personal-account package -- see the image job's equivalent step for why); complete the one-time manual visibility toggle in the package's GitHub settings"
           fi

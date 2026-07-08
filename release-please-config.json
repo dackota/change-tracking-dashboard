@@ -8,18 +8,7 @@
   "packages": {
     ".": {
       "release-type": "simple",
-      "component": "app",
-      "exclude-paths": ["deploy/helm/change-tracking-dashboard"],
-      "extra-files": [
-        {
-          "type": "generic",
-          "path": "deploy/helm/change-tracking-dashboard/Chart.yaml"
-        }
-      ]
-    },
-    "deploy/helm/change-tracking-dashboard": {
-      "release-type": "helm",
-      "component": "chart"
+      "component": "app"
     }
   }
 }

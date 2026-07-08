@@ -17,8 +17,8 @@ name: PR Title Lint
 #   1. Under General > Pull Requests, disable "Allow merge commits" and
 #      "Allow rebase merging", leaving only "Allow squash merging", with
 #      "Default to PR title for squash merge commits" checked.
-#   2. Register `go-verify`, `trivy-fs-scan`, `helm-unittest` (from
-#      pr-ci.yml) and `lint-pr-title` (this workflow) as required checks —
+#   2. Register `go-verify`, `trivy-fs-scan` (from pr-ci.yml) and
+#      `lint-pr-title` (this workflow) as required checks —
 #      via branch protection/rulesets if the plan allows it, or as a
 #      standing team convention otherwise.
 # Until that's done, these workflows still run and report pass/fail on every

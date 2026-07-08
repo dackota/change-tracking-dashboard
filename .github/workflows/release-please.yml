@@ -1,19 +1,16 @@
 name: Release Please
 
-# Two-component release-please for this repo, running in manifest mode from
-# release-please-config.json / .release-please-manifest.json at the repo
-# root:
-#   - app   (path ".", tagged app-v*)   -> cmd/, internal/, go.mod, go.sum,
-#     Dockerfile; its release writes appVersion in the chart's Chart.yaml
-#     via an `extra-files` annotation updater.
-#   - chart (path deploy/helm/change-tracking-dashboard, tagged chart-v*)
-#     -> its release writes the package `version` in the same Chart.yaml.
+# Single-component release-please for this repo, running in manifest mode
+# from release-please-config.json / .release-please-manifest.json at the
+# repo root:
+#   - app (path ".", tagged app-v*) -> cmd/, internal/, go.mod, go.sum,
+#     Dockerfile.
 #
-# On every push to main, release-please-action opens/updates a release PR
-# per component (separate-pull-requests: true in the config) whose squash
-# commit becomes that component's release. Once it has created/updated a
-# release PR, this workflow waits for that PR's required CI (pr-ci.yml,
-# pr-title-lint.yml) to go green and merges it itself.
+# On every push to main, release-please-action opens/updates the app's
+# release PR (separate-pull-requests: true in the config) whose squash
+# commit becomes the release. Once it has created/updated the release PR,
+# this workflow waits for that PR's required CI (pr-ci.yml, pr-title-lint.yml)
+# to go green and merges it itself.
 #
 # Why a self-driven merge instead of GitHub's native auto-merge: this repo
 # is private on the free plan, so there is no branch protection to hang
@@ -36,23 +33,6 @@ name: Release Please
 #     this `on: push` workflow, so release-please-action would never get a
 #     chance to notice the release PR was merged and cut the tag + GitHub
 #     Release that the publish workflow (next slice) listens for.
-#
-# The app/chart loop (the crux this two-component setup has to get right):
-# the app component's release touches only Chart.yaml (its appVersion line)
-# -- a file that physically lives under the chart component's path -- so
-# without care that commit would look, by path, like a chart-affecting
-# commit too. Two things prevent an actual loop:
-#   - the app ("." ) package config excludes the chart's directory
-#     (`exclude-paths`) so a chart-only commit never counts toward app's own
-#     version -- release-please's root/"." package would otherwise pick up
-#     every commit in the repo regardless of path;
-#   - release-please's own release commits are `chore(...)`-typed, and
-#     `chore` is a hidden changelog section by default, so a lone chore
-#     commit produces no visible changelog entry for whichever *other*
-#     component's path it happens to touch -- release-please skips opening
-#     a release PR when there is nothing user-facing to show. This is
-#     already the tool's default behavior; don't override
-#     `changelog-sections` to un-hide `chore`, or this protection breaks.
 #
 # Labeling is left on. `skip-labeling: true` was tried initially to avoid
 # widening the App's permission set, but release-please-action also uses
