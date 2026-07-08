@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/dackota/change-tracking-dashboard/internal/domain"
@@ -76,6 +77,56 @@ func (s *Store) migrate() error {
 	}
 	if _, err := s.db.Exec(schemaHWM); err != nil {
 		return fmt.Errorf("create high_water_marks table: %w", err)
+	}
+	// Additive column migrations for databases created before a column
+	// existed. CREATE TABLE IF NOT EXISTS never alters an already-present
+	// table, so a pre-0.9.0 volume is missing issue_refs_json and every
+	// changeset query fails with "no such column" until we add it here.
+	if err := s.ensureColumn("changes", "issue_refs_json", "TEXT NOT NULL DEFAULT '[]'"); err != nil {
+		return fmt.Errorf("add changes.issue_refs_json column: %w", err)
+	}
+	return nil
+}
+
+// ensureColumn adds column to table when it is not already present, and is a
+// no-op when it is. It lets the schema evolve on an existing database without a
+// full migration framework: a fresh DB gets the column from schemaChanges, an
+// older one gets it via ALTER TABLE on the next boot. table and column are
+// trusted internal identifiers (never user input), which is required because
+// SQLite cannot parameterize identifiers in PRAGMA/ALTER statements.
+//
+// The store assumes a single writer per database file (the deployment backs it
+// with a ReadWriteOnce volume attached to one pod). The check-then-ALTER below
+// is therefore not synchronized; as defense-in-depth against a transient
+// double-open during a rolling restart, a losing racer's "duplicate column"
+// error is treated as success — the column exists, which is all we require.
+func (s *Store) ensureColumn(table, column, decl string) error {
+	rows, err := s.db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return fmt.Errorf("inspect %s: %w", table, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			cid, notnull, pk int
+			name, ctype      string
+			dflt             sql.NullString
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return fmt.Errorf("scan %s columns: %w", table, err)
+		}
+		if name == column {
+			return nil // already present — nothing to do
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate %s columns: %w", table, err)
+	}
+	if _, err := s.db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, decl)); err != nil {
+		if strings.Contains(err.Error(), "duplicate column name") {
+			return nil // a concurrent opener already added it
+		}
+		return fmt.Errorf("alter %s add %s: %w", table, column, err)
 	}
 	return nil
 }
