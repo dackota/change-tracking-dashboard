@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.8.0...app-v0.9.0) (2026-07-08)
+
+
+### Features
+
+* add static credential-free plan-diff engine for Terraform ([#76](https://github.com/dackota/change-tracking-dashboard/issues/76)) ([fba4087](https://github.com/dackota/change-tracking-dashboard/commit/fba40878488e624f136f9591285b04e5f7929e4a))
+* link changesets to referenced issues from commit messages ([#77](https://github.com/dackota/change-tracking-dashboard/issues/77)) ([e1344c0](https://github.com/dackota/change-tracking-dashboard/commit/e1344c0d3158567012a83ea0ee8a5b06195a0904))
+
 ## [0.8.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.7.0...app-v0.8.0) (2026-07-08)
 
 
