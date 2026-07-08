@@ -65,7 +65,7 @@
   var MIN_DRAG_PX = 4; // below this a drag is treated as a click, not a select
 
   var BACKDROP_LIMIT = 100;
-  var FEED_COLUMN_COUNT = 5; // When, Repository, Commit, Author, Changes — matches the thead
+  var FEED_COLUMN_COUNT = 6; // When, Repository, Commit, Author, Changes, Risk — matches the thead
   var DIFF_CONTEXT = 3;
   var AXIS_TICKS = 6;
   var MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -153,6 +153,15 @@
   }
   function repoColor(repo) {
     return REPO_COLORS[repo] || REPO_COLORS[repoShortName(repo)] || DEFAULT_COLOR;
+  }
+
+  // riskSlug reduces a risk class's human-readable label (e.g. "cost
+  // tripwire") to the same CSS-class-safe token the server-rendered
+  // changeset-detail badge uses (see web's riskSlug in
+  // changeset_detail_render.go): lowercased, every run of non-alphanumeric
+  // characters collapsed to one hyphen, leading/trailing hyphens trimmed.
+  function riskSlug(risk) {
+    return risk.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   }
 
   // changesetKey returns the (repo, commitSha) identity string a Changeset
@@ -671,6 +680,17 @@
     changesCell.className = 'feed-cell-changes';
     changesCell.textContent = n + (n === 1 ? ' change' : ' changes');
     tr.appendChild(changesCell);
+
+    var riskCell = document.createElement('td');
+    riskCell.className = 'feed-cell-risk';
+    (cs.risk || []).forEach(function (risk) {
+      var badge = document.createElement('span');
+      badge.className = 'risk-badge risk-' + riskSlug(risk);
+      badge.setAttribute('data-risk', risk);
+      badge.textContent = risk;
+      riskCell.appendChild(badge);
+    });
+    tr.appendChild(riskCell);
 
     return tr;
   }

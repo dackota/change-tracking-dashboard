@@ -1,29 +1,26 @@
 name: PR CI
 
-# Required checks for every pull request targeting main: Go build/vet/test,
-# a Trivy filesystem/dependency scan, and the chart's helm-unittest suite.
+# Required checks for every pull request targeting main: Go build/vet/test
+# and a Trivy filesystem/dependency scan.
 #
 # - changes     -> dorny/paths-filter computes which path groups this PR
 #                  touches, so go-verify can skip cleanly (a "skipped"
-#                  check-run, not an absent one) on a chart-only or
-#                  CI-only PR -- release-please.yml's auto-merge check-runs
-#                  poll already treats "skipped" as passing.
+#                  check-run, not an absent one) on a CI-only PR --
+#                  release-please.yml's auto-merge check-runs poll already
+#                  treats "skipped" as passing.
 # - go-verify   -> go build ./..., go vet ./..., go test ./... (fails the
 #                  check on the first failing step). Only runs when the PR
-#                  touches Go source or module files -- a chart-only or
-#                  workflow-only PR has nothing for it to verify.
+#                  touches Go source or module files -- a workflow-only PR
+#                  has nothing for it to verify.
 # - trivy-fs    -> scans the working tree's dependency graph (go.sum, etc.)
 #                  the same way publish.yml scans the built image: HIGH/CRITICAL,
 #                  fixed-only findings fail the check before anything merges.
-# - helm-unittest -> runs the existing helm-unittest suite
-#                  (deploy/helm/change-tracking-dashboard/tests/) so a chart
-#                  regression is caught on the PR, not after it merges.
 #
 # Hardening (same posture as publish.yml):
 #   - every `uses:` is pinned to a full commit SHA (trailing comment records
 #     the version tag);
 #   - permissions default to `contents: read` — no job needs more, since none
-#     of them push an image, package a chart, or write PR content, except
+#     of them push an image or write PR content, except
 #     `changes`, which reads `pull-requests: read` because paths-filter
 #     always lists a PR's changed files via the GitHub API on a pull_request
 #     trigger (confirmed against its docs — a checkout doesn't change this,
@@ -104,30 +101,3 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
           severity: HIGH,CRITICAL
-
-  helm-unittest:
-    name: Helm chart unit tests
-    runs-on: ubuntu-latest
-    env:
-      CHART_DIR: deploy/helm/change-tracking-dashboard
-      # Pinned helm-unittest plugin release; bump deliberately alongside a
-      # verification run (Dependabot doesn't track helm plugins).
-      HELM_UNITTEST_VERSION: v1.1.1
-    steps:
-      - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-
-      - name: Set up Helm
-        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
-
-      - name: Install helm-unittest plugin
-        run: |
-          set -euo pipefail
-          # --verify=false: the plugin is installed from its git repo (no
-          # .tgz/.prov signature to verify), which recent Helm releases
-          # otherwise refuse outright.
-          helm plugin install https://github.com/helm-unittest/helm-unittest \
-            --version "$HELM_UNITTEST_VERSION" --verify=false
-
-      - name: Run helm-unittest
-        run: helm unittest "$CHART_DIR"

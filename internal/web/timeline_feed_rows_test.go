@@ -52,17 +52,18 @@ func TestTimelineJS_BuildFeedRow_CreatesTableRowNotListItem(t *testing.T) {
 	}
 
 	tdCount := strings.Count(fn, "document.createElement('td')")
-	if tdCount != 5 {
-		t.Errorf("buildFeedRow creates %d <td> cells, want 5 (When, Repository, Commit, Author, Changes):\n%s", tdCount, fn)
+	if tdCount != 6 {
+		t.Errorf("buildFeedRow creates %d <td> cells, want 6 (When, Repository, Commit, Author, Changes, Risk):\n%s", tdCount, fn)
 	}
 }
 
-// TestTimelineJS_BuildFeedRow_CellsCarryTheFiveRequiredFields verifies R10:
-// each row's cells are sourced from the day/time stamp, short repository
-// name, commit sha/URL, author, and per-Changeset change count — the same
-// data the old <li> rendering used, now distributed across <td> cells in the
-// order the thead declares (When, Repository, Commit, Author, Changes).
-func TestTimelineJS_BuildFeedRow_CellsCarryTheFiveRequiredFields(t *testing.T) {
+// TestTimelineJS_BuildFeedRow_CellsCarryTheRequiredFields verifies R10 (and
+// R24's feed-badge wiring): each row's cells are sourced from the day/time
+// stamp, short repository name, commit sha/URL, author, per-Changeset change
+// count, and risk class(es) — the same data the old <li> rendering used (plus
+// the risk badge this slice adds), now distributed across <td> cells in the
+// order the thead declares (When, Repository, Commit, Author, Changes, Risk).
+func TestTimelineJS_BuildFeedRow_CellsCarryTheRequiredFields(t *testing.T) {
 	t.Parallel()
 
 	body := servedTimelineJS(t)
@@ -74,6 +75,7 @@ func TestTimelineJS_BuildFeedRow_CellsCarryTheFiveRequiredFields(t *testing.T) {
 		"commitURL(cs.repo, cs.commitSha)", // Commit
 		"cs.author",                        // Author
 		"cs.changes",                       // Changes (count)
+		"cs.risk",                          // Risk badge(s)
 	} {
 		if !strings.Contains(fn, want) {
 			t.Errorf("buildFeedRow missing expected data source %q:\n%s", want, fn)
@@ -174,7 +176,7 @@ func TestTimelineJS_BuildFeedRow_PreservesClickToDetailAndLinkStopPropagation(t 
 // TestTimelineJS_RenderFeed_LoadingAndEmptyStatesRenderAsFullWidthTableRows
 // verifies R16 in its new "table form": the loading, nothing-recorded-yet,
 // and nothing-in-window/filters states are each rendered as a single
-// full-width row (one <td colspan="5"> spanning every column) appended
+// full-width row (one <td colspan="6"> spanning every column) appended
 // directly into the <tbody id="feed-list"> — not a bare table (headers with
 // nothing sensible under them) and not a mechanism that only worked by
 // accident for a <ul>-shaped feed.

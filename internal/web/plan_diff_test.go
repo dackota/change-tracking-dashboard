@@ -52,7 +52,7 @@ const defaultPlanDiffURL = "/api/changesets/detail/plan-diff?repo=r&commitSha=sh
 
 func alwaysFoundTerraformChecker() *fakeChangesetExistenceChecker {
 	cs := changeset.Changeset{Changes: []changeset.Change{
-		{Change: domain.Change{FilePath: "envs/prod/main.tf"}, Kind: changeset.KindTerraform},
+		{Change: domain.Change{FilePath: "envs/prod/main.tf"}, Kind: changeset.KindResource},
 	}}
 	return &fakeChangesetExistenceChecker{fn: func(string, string) (changeset.Changeset, bool, error) {
 		return cs, true, nil
@@ -141,7 +141,7 @@ func TestPlanDiffHandler_PathNotTerraformKind_RejectsWithoutReachingResolverOrEn
 	rr := servePlanDiff(h, defaultPlanDiffURL)
 
 	if resolver.called || engine.called {
-		t.Error("resolver/engine invoked for a path with no KindTerraform Change — security gate bypassed")
+		t.Error("resolver/engine invoked for a path with no Terraform-kind Change — security gate bypassed")
 	}
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", rr.Code)

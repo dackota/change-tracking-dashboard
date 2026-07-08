@@ -46,9 +46,9 @@ type PlanDiffHandler struct {
 // NewPlanDiffHandler creates a PlanDiffHandler backed by engine, resolver,
 // and checker. checker gates every request: resolver/engine only ever run
 // for a (repo, commitSha) pair checker confirms is an already-ingested
-// Changeset that also carries a KindTerraform Change at path — mirroring
-// ChartDiffHandler's identical two-part security gate (existence +
-// path-scoped Kind match) for the sibling endpoint.
+// Changeset that also carries a Terraform-kind Change (Kind.IsTerraform())
+// at path — mirroring ChartDiffHandler's identical two-part security gate
+// (existence + path-scoped Kind match) for the sibling endpoint.
 func NewPlanDiffHandler(engine PlanDiffEngine, resolver PlanRepoResolver, checker ChangesetExistenceChecker) *PlanDiffHandler {
 	return &PlanDiffHandler{engine: engine, resolver: resolver, checker: checker}
 }
@@ -72,7 +72,7 @@ func (h *PlanDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// input — see ChartDiffHandler.ServeHTTP's identical rationale. Only
 	// proceed to ResolvePlanRepo (and the git clone/fetch/PlainOpen it can
 	// trigger) once (repo, commitSha) is confirmed a real, already-ingested
-	// Changeset carrying a KindTerraform Change whose own directory is path.
+	// Changeset carrying a Terraform-kind Change whose own directory is path.
 	var cs changeset.Changeset
 	var found bool
 	err := telemetry.WithSpan(r.Context(), tracer, "store.get_changeset", func(context.Context) error {
@@ -139,12 +139,12 @@ func planDiffSpanError(kind plandiff.Kind) error {
 }
 
 // hasTerraformChangeAt reports whether cs contains at least one
-// Terraform-kind Change (Kind == changeset.KindTerraform) whose own source
-// file directory equals path. Mirrors hasChartChangeAt's identical
-// authorization role for the sibling chart-diff endpoint.
+// Terraform-kind Change (c.Kind.IsTerraform()) whose own source file
+// directory equals path. Mirrors hasChartChangeAt's identical authorization
+// role for the sibling chart-diff endpoint.
 func hasTerraformChangeAt(cs changeset.Changeset, path string) bool {
 	for _, c := range cs.Changes {
-		if c.Kind == changeset.KindTerraform && filepath.Dir(c.FilePath) == path {
+		if c.Kind.IsTerraform() && filepath.Dir(c.FilePath) == path {
 			return true
 		}
 	}

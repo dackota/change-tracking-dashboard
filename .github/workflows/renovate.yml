@@ -8,11 +8,6 @@ name: Renovate
 # (this repo has no branch protection on the free plan, so auto-merge has to
 # go through App-authored PRs, not a protection gate).
 #
-# Helm is installed in the runner per R32, symmetric with the gitops repo's
-# Renovate runner — this repo's own chart has no subchart dependencies today,
-# so nothing here re-vendors yet, but keeping both runners identical avoids a
-# second, divergent scaffold to maintain.
-#
 # Hardening:
 #   - every `uses:` is pinned to a full commit SHA (trailing comment records
 #     the version tag);
@@ -40,9 +35,6 @@ jobs:
         with:
           app-id: ${{ secrets.CI_APP_ID }}
           private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
-
-      - name: Set up Helm
-        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
 
       - name: Run Renovate
         uses: renovatebot/github-action@b50d2ba2bd928235abdcc14d06dfafc217f1c565 # v46.1.18

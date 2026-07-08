@@ -3,9 +3,9 @@
 // Package web (this file): the R11-R15 preserved-interaction regression
 // harness for the visual-system-regression slice. It is deliberately gated
 // behind the "regression" build tag — this project's CI (go build/test/vet +
-// Trivy fs scan + helm-unittest; see .github/workflows/pr-ci.yml) has no
-// Node/Chrome toolchain, and `go test ./...` (no tags) must never depend on
-// one. This file only compiles, and TestUIRegression_PreservedInteractions
+// Trivy fs scan; see .github/workflows/pr-ci.yml) has no Node/Chrome
+// toolchain, and `go test ./...` (no tags) must never depend on one. This
+// file only compiles, and TestUIRegression_PreservedInteractions
 // only runs, when a human explicitly opts in:
 //
 //	npm install --no-save playwright-core   # one-time; writes only
