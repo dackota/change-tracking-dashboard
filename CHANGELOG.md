@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.9.1...app-v0.10.0) (2026-07-08)
+
+
+### Features
+
+* react to Renovate dashboard/PR checkboxes, swap Trivy for Grype ([#82](https://github.com/dackota/change-tracking-dashboard/issues/82)) ([127e584](https://github.com/dackota/change-tracking-dashboard/commit/127e584f00765c5a8da1acbcb2447dd1669a3dbe))
+
 ## [0.9.1](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.9.0...app-v0.9.1) (2026-07-08)
 
 
