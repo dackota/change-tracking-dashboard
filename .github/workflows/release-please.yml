@@ -9,16 +9,17 @@ name: Release Please
 # On every push to main, release-please-action opens/updates the app's
 # release PR (separate-pull-requests: true in the config) whose squash
 # commit becomes the release. Once it has created/updated the release PR,
-# this workflow waits for that PR's required CI (pr-ci.yml, pr-title-lint.yml)
-# to go green and merges it itself.
+# this workflow turns on GitHub-native auto-merge for it and lets GitHub
+# merge it once CI is green.
 #
-# Why a self-driven merge instead of GitHub's native auto-merge: this repo
-# is private on the free plan, so there is no branch protection to hang
-# `gh pr merge --auto`/platform auto-merge off of -- native auto-merge only
-# actually waits for checks that branch protection has marked required, and
-# without branch protection it would just merge immediately instead of
-# waiting (R33). So the workflow watches the checks itself and performs a
-# real, immediate `gh pr merge` once they pass.
+# Native auto-merge only actually waits for checks that a branch rule has
+# marked required -- without such a gate it would merge immediately instead
+# of waiting (R33). This repo is public, so the "main: require CI
+# (auto-merge gate)" ruleset supplies that gate: `gh pr merge --auto`
+# enables auto-merge and GitHub holds the PR until pr-ci.yml /
+# pr-title-lint.yml pass. (An earlier revision polled the check-runs API and
+# merged by hand, because the repo was then private with no branch
+# protection to gate on; the ruleset replaces that polling.)
 #
 # Both steps authenticate as the dk-renovate-bot GitHub App, not
 # GITHUB_TOKEN, because GitHub does not let actions performed by the
@@ -28,11 +29,12 @@ name: Release Please
 #     is App-authored and its `pull_request` event actually dispatches
 #     pr-ci.yml / pr-title-lint.yml -- with GITHUB_TOKEN those required
 #     checks would simply never run;
-#   - the merge step needs the App token for the same reason on the other
-#     end: a GITHUB_TOKEN-authored merge-to-main push would not re-trigger
-#     this `on: push` workflow, so release-please-action would never get a
-#     chance to notice the release PR was merged and cut the tag + GitHub
-#     Release that the publish workflow (next slice) listens for.
+#   - enabling auto-merge needs the App token for the same reason on the
+#     other end: native auto-merge attributes the eventual merge-to-main push
+#     to whoever enabled it, and a GITHUB_TOKEN-authored push would not
+#     re-trigger this `on: push` workflow, so release-please-action would
+#     never get a chance to notice the release PR was merged and cut the tag
+#     + GitHub Release that the publish workflow (next slice) listens for.
 #
 # Labeling is left on. `skip-labeling: true` was tried initially to avoid
 # widening the App's permission set, but release-please-action also uses
@@ -44,24 +46,16 @@ name: Release Please
 # ever ran (observed on `dackota/change-tracking-dashboard` PR #37). Fixed by
 # granting the App `issues: write` and dropping `skip-labeling`.
 #
-# Checks are polled via the REST check-runs API, not `gh pr checks`.
-# `gh pr checks` resolves each check through a GraphQL field
-# (`checkSuite.workflowRun`) that requires the App's `actions: read`
-# permission, which this App does not have -- observed live as "Resource not
-# accessible by integration" on PR #38, silently swallowed by the script's
-# `if` as "checks didn't pass". Rather than grant a third permission for a
-# third gh-CLI quirk, poll `GET .../commits/{sha}/check-runs` instead, which
-# only needs the `checks: read` permission the App already has.
-#
 # Hardening:
 #   - every `uses:` is pinned to a full commit SHA (trailing comment records
 #     the version tag);
 #   - permissions default to `contents: read` -- both release-please-action
 #     and the merge step authenticate with the minted App token, so the
 #     workflow's own GITHUB_TOKEN never needs write access;
-#   - the merge step always squashes explicitly (`--squash`) rather than
-#     relying on the repo's merge-strategy setting, since branch-protection
-#     enforcement of squash-only isn't available on this plan (see
+#   - the merge is always an explicit squash (`--squash`) rather than
+#     relying on the repo's merge-strategy setting: the auto-merge ruleset
+#     requires checks but does not pin the merge method, so passing
+#     `--squash` keeps every release a single squash commit (see
 #     pr-title-lint.yml's note).
 
 on:
@@ -92,11 +86,13 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-      # Merge each release PR this run touched once its checks are green.
-      # `steps.release.outputs.prs` is a JSON array of PullRequest objects
-      # (unset/"[]" when nothing was created or updated this run, guarded
-      # by the `if:` below and re-checked in-script for defense in depth).
-      - name: Auto-merge release PR(s) once CI is green
+      # Turn on GitHub-native auto-merge for each release PR this run
+      # touched; the auto-merge ruleset holds the PR until pr-ci.yml /
+      # pr-title-lint.yml pass, then GitHub merges it -- no polling here,
+      # GitHub owns the wait. `steps.release.outputs.prs` is a JSON array of
+      # PullRequest objects (unset/"[]" when nothing was created or updated
+      # this run, guarded by the `if:` below and re-checked in-script).
+      - name: Enable auto-merge on release PR(s)
         if: steps.release.outputs.prs_created == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -104,66 +100,29 @@ jobs:
         run: |
           set -euo pipefail
 
-          # This job never runs actions/checkout, so there is no local git
-          # repo for `gh` to infer the target from. The `gh api` calls below
-          # embed the full "repos/{owner}/{repo}/..." path, so they need no
-          # --repo flag; `gh pr merge` isn't a raw API path, so it still
-          # needs --repo pinned or it fails with "fatal: not a git
-          # repository".
+          # This job never runs actions/checkout, so `gh pr merge` has no
+          # local repo to infer the target from -- pin it with --repo or it
+          # fails with "fatal: not a git repository".
 
           if [ -z "$PRS_JSON" ] || [ "$PRS_JSON" = "[]" ]; then
             echo "No release PRs created or updated this run; nothing to merge."
             exit 0
           fi
 
-          echo "$PRS_JSON" | jq -c '.[]' | while read -r pr; do
-            number=$(echo "$pr" | jq -r '.number')
-            title=$(echo "$pr" | jq -r '.title')
-            echo "::group::release PR #$number -- $title"
-
-            # pr-ci.yml/pr-title-lint.yml trigger off the `pull_request`
-            # event this push just raised; give GitHub a moment to queue
-            # them before the first poll observes an empty check-run list.
-            sleep 15
-
-            sha=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number" --jq '.head.sha')
-
-            result="timeout"
-            for _ in $(seq 1 40); do
-              # A transient API error (rate limit, 5xx) must retry, not abort
-              # the whole step under set -e -- fall through as "not ready".
-              runs=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha/check-runs" --jq '.check_runs' 2>/dev/null || echo "")
-              if [ -z "$runs" ]; then
-                sleep 20
-                continue
-              fi
-              total=$(echo "$runs" | jq 'length')
-              if [ "$total" -eq 0 ]; then
-                sleep 20
-                continue
-              fi
-              pending=$(echo "$runs" | jq '[.[] | select(.status != "completed")] | length')
-              if [ "$pending" -gt 0 ]; then
-                sleep 20
-                continue
-              fi
-              failed=$(echo "$runs" | jq '[.[] | select(.conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral")] | length')
-              if [ "$failed" -eq 0 ]; then
-                result="pass"
-              else
-                result="fail"
-              fi
-              break
-            done
-
-            if [ "$result" = "pass" ]; then
-              echo "checks green -- merging #$number"
-              if ! gh pr merge "$number" --repo "$GITHUB_REPOSITORY" --squash --delete-branch; then
-                echo "::error::merge failed for release PR #$number"
-              fi
+          echo "$PRS_JSON" | jq -r '.[].number' | while read -r number; do
+            echo "::group::release PR #$number"
+            # --squash is required because the repo allows more than one merge
+            # method; --auto enables native auto-merge so GitHub merges once
+            # the required checks pass.
+            if gh pr merge "$number" --repo "$GITHUB_REPOSITORY" --auto --squash --delete-branch; then
+              echo "auto-merge enabled for #$number"
             else
-              echo "::warning::checks did not pass, failed, or timed out ($result) for release PR #$number -- leaving it open; a later push or manual merge will pick it up"
+              # `--auto` is rejected when the PR is already mergeable (checks
+              # already green, nothing left to wait on) -- fall back to
+              # merging it now.
+              echo "auto-merge not enabled for #$number; attempting a direct squash merge"
+              gh pr merge "$number" --repo "$GITHUB_REPOSITORY" --squash --delete-branch \
+                || echo "::warning::could not merge release PR #$number -- leaving it open for a later run or manual merge"
             fi
-
             echo "::endgroup::"
           done

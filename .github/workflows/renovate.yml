@@ -3,10 +3,14 @@ name: Renovate
 # Scheduled self-hosted Renovate runner, replacing Dependabot (see
 # renovate.json at the repo root for the base config). Mints a short-lived
 # GitHub App (dk-renovate-bot) installation token so Renovate's commits/PRs
-# are attributed to the App — not GITHUB_TOKEN — which lets its PRs trigger
-# downstream workflows and be auto-merged by the App later in the pipeline
-# (this repo has no branch protection on the free plan, so auto-merge has to
-# go through App-authored PRs, not a protection gate).
+# are attributed to the App — not GITHUB_TOKEN — which is what lets its PRs
+# trigger downstream workflows (GITHUB_TOKEN-authored events don't, by
+# GitHub's anti-recursion rule). Renovate enables GitHub-native auto-merge
+# on the PRs it opens (platformAutomerge, on by default); the "main: require
+# CI (auto-merge gate)" ruleset makes GitHub hold each PR until pr-ci.yml's
+# required checks pass, then merge it — so auto-merge no longer waits for the
+# next Renovate run. Only patch/minor/digest updates opt in (automerge in
+# renovate.json); major bumps stay manual.
 #
 # Hardening:
 #   - every `uses:` is pinned to a full commit SHA (trailing comment records
