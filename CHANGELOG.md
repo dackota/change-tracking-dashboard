@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.8](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.10.7...app-v0.10.8) (2026-07-20)
+
+
+### Bug Fixes
+
+* **poller:** key high-water-mark by field so every field on a file backfills ([#109](https://github.com/dackota/change-tracking-dashboard/issues/109)) ([e8fd33d](https://github.com/dackota/change-tracking-dashboard/commit/e8fd33d539de8d10424795a4ce604a5035600188)), closes [#108](https://github.com/dackota/change-tracking-dashboard/issues/108)
+
 ## [0.10.7](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.10.6...app-v0.10.7) (2026-07-20)
 
 
