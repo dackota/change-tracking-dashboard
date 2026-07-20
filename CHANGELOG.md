@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.2](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.10.1...app-v0.10.2) (2026-07-20)
+
+
+### Bug Fixes
+
+* **deps:** update golang:1.26-alpine docker digest to 0178a64 ([#92](https://github.com/dackota/change-tracking-dashboard/issues/92)) ([dfffac4](https://github.com/dackota/change-tracking-dashboard/commit/dfffac46eb46429bd58de71640f35f25fc358188))
+
 ## [0.10.1](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.10.0...app-v0.10.1) (2026-07-20)
 
 
