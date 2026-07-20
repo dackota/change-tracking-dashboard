@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1@sha256:87999aa3d42bdc6bea60565083ee17e86d1f3339802f543c0d03998580f9cb89
 
 # Stage 1: build
 # Use the same Go version as go.mod (go 1.25.6 maps to toolchain 1.25.x).
