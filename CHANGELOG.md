@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.4](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.10.3...app-v0.10.4) (2026-07-20)
+
+
+### Bug Fixes
+
+* **deps:** update module golang.org/x/sync to v0.22.0 ([#98](https://github.com/dackota/change-tracking-dashboard/issues/98)) ([e0c62c7](https://github.com/dackota/change-tracking-dashboard/commit/e0c62c7887ede67f75286e46fbd0a746f05cd081))
+* **deps:** update module modernc.org/sqlite to v1.54.0 ([#99](https://github.com/dackota/change-tracking-dashboard/issues/99)) ([8ef9a03](https://github.com/dackota/change-tracking-dashboard/commit/8ef9a0388c5981a455cae3ee8fa1588ac4636d93))
+
 ## [0.10.3](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.10.2...app-v0.10.3) (2026-07-20)
 
 
