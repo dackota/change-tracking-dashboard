@@ -5,6 +5,9 @@
   "automerge": false,
   "semanticCommits": "enabled",
   "minimumReleaseAge": "5 days",
+  "statusCheckNames": {
+    "minimumReleaseAge": null
+  },
   "packageRules": [
     {
       "description": "Go modules and the Dockerfile base image are runtime-affecting: commit as fix: so release-please cuts a patch release and the update deploys.",
