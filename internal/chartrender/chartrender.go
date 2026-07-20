@@ -1,5 +1,5 @@
 // Package chartrender renders a Helm chart to Kubernetes manifests in-process
-// via the embedded Helm v3 SDK. It is the seam that encapsulates ALL Helm v3
+// via the embedded Helm v4 SDK. It is the seam that encapsulates ALL Helm v4
 // SDK usage (see ADR 0002): render is always client-only and fully offline —
 // no Kubernetes API contact, no chart-registry pull. The chart must be fully
 // vendored: every dependency declared in Chart.yaml must have a corresponding
@@ -17,10 +17,12 @@ package chartrender
 
 import (
 	"fmt"
+	"log/slog"
 
-	"helm.sh/helm/v3/pkg/action"
-	"helm.sh/helm/v3/pkg/chart"
-	"helm.sh/helm/v3/pkg/chart/loader"
+	"helm.sh/helm/v4/pkg/action"
+	chart "helm.sh/helm/v4/pkg/chart/v2"
+	"helm.sh/helm/v4/pkg/chart/v2/loader"
+	"helm.sh/helm/v4/pkg/release"
 )
 
 // FailureReason classifies why a chart could not be rendered, so a caller can
@@ -97,9 +99,14 @@ func Render(chartDir string, values map[string]interface{}) (*Result, error) {
 		return nil, &Failure{Reason: ReasonDependencyNotVendored, ChartDir: chartDir, Missing: missing}
 	}
 
-	install := action.NewInstall(&action.Configuration{Log: func(string, ...interface{}) {}})
-	install.ClientOnly = true
-	install.DryRun = true
+	// Helm v4 replaced v3's separate ClientOnly+DryRun booleans with a single
+	// DryRunStrategy; DryRunClient is the "render locally, never touch a
+	// cluster or registry" mode this seam requires. The logger is discarded so
+	// Helm's internal debug output never reaches our process's stderr (v4's
+	// Configuration dropped v3's per-call Log func for an embedded slog logger).
+	cfg := action.NewConfiguration(action.ConfigurationSetLogger(slog.DiscardHandler))
+	install := action.NewInstall(cfg)
+	install.DryRunStrategy = action.DryRunClient
 	install.ReleaseName = "chartrender"
 	install.Namespace = "default"
 	install.Replace = true
@@ -109,7 +116,15 @@ func Render(chartDir string, values map[string]interface{}) (*Result, error) {
 		return nil, &Failure{Reason: ReasonMalformedChart, ChartDir: chartDir, Cause: fmt.Errorf("render chart: %w", err)}
 	}
 
-	manifests, err := normalize(rel.Manifest)
+	// v4's Install.Run returns a release.Releaser (an `any`); the rendered
+	// manifest is read through the release accessor rather than v3's direct
+	// rel.Manifest struct field.
+	rac, err := release.NewAccessor(rel)
+	if err != nil {
+		return nil, &Failure{Reason: ReasonMalformedChart, ChartDir: chartDir, Cause: fmt.Errorf("read rendered release: %w", err)}
+	}
+
+	manifests, err := normalize(rac.Manifest())
 	if err != nil {
 		return nil, &Failure{Reason: ReasonMalformedChart, ChartDir: chartDir, Cause: err}
 	}

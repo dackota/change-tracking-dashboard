@@ -16,8 +16,8 @@ import (
 	"github.com/dackota/change-tracking-dashboard/internal/web"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
-	"helm.sh/helm/v3/pkg/chart/loader"
-	"helm.sh/helm/v3/pkg/chartutil"
+	"helm.sh/helm/v4/pkg/chart/v2/loader"
+	chartutil "helm.sh/helm/v4/pkg/chart/v2/util"
 )
 
 // realTestWriteFile writes content to path, creating parent directories as

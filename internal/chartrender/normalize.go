@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
-	"helm.sh/helm/v3/pkg/releaseutil"
+	releaseutil "helm.sh/helm/v4/pkg/release/v1/util"
 )
 
 // canonicalIndent is the indentation width used when re-serializing a

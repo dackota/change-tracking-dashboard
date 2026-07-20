@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/dackota/change-tracking-dashboard/internal/chartrender"
-	"helm.sh/helm/v3/pkg/chart/loader"
-	"helm.sh/helm/v3/pkg/chartutil"
+	"helm.sh/helm/v4/pkg/chart/v2/loader"
+	chartutil "helm.sh/helm/v4/pkg/chart/v2/util"
 )
 
 // blockNetworkAndCluster makes it impossible for a wayward code path to reach
