@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.5](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.10.4...app-v0.10.5) (2026-07-20)
+
+
+### Bug Fixes
+
+* **deps:** pin docker/dockerfile docker tag to 87999aa ([#87](https://github.com/dackota/change-tracking-dashboard/issues/87)) ([cf90f87](https://github.com/dackota/change-tracking-dashboard/commit/cf90f87408d7c76530c71bf7e6321b5b8657a668))
+* **deps:** update module helm.sh/helm/v3 to v4 ([#101](https://github.com/dackota/change-tracking-dashboard/issues/101)) ([cd30f47](https://github.com/dackota/change-tracking-dashboard/commit/cd30f4702c700782507e6cd1147e04d0225dc6c0))
+
 ## [0.10.4](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.10.3...app-v0.10.4) (2026-07-20)
 
 
