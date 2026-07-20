@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.3](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.10.2...app-v0.10.3) (2026-07-20)
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/zclconf/go-cty to v1.19.0 ([#97](https://github.com/dackota/change-tracking-dashboard/issues/97)) ([2daadda](https://github.com/dackota/change-tracking-dashboard/commit/2daaddafac6074e280dea8db411b17c0e4cb6a7b))
+* **deps:** update module helm.sh/helm/v3 to v3.21.3 ([#96](https://github.com/dackota/change-tracking-dashboard/issues/96)) ([e046133](https://github.com/dackota/change-tracking-dashboard/commit/e046133863a146f0b9a2189a65784dc8a9b179a5))
+
 ## [0.10.2](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.10.1...app-v0.10.2) (2026-07-20)
 
 
