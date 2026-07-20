@@ -66,6 +66,8 @@ jobs:
         uses: renovatebot/github-action@b50d2ba2bd928235abdcc14d06dfafc217f1c565 # v46.1.18
         env:
           RENOVATE_REPOSITORIES: ${{ github.repository }}
+          LOG_LEVEL: debug
+          LOG_FORMAT: json
           # Attribute Renovate's commits/PRs to the App bot instead of the
           # action's default "renovate-bot" identity. The email must use the
           # App bot's numeric user id (resolved via
