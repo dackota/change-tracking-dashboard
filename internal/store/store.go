@@ -58,22 +58,48 @@ CREATE TABLE IF NOT EXISTS changes (
     issue_refs_json TEXT  NOT NULL DEFAULT '[]'
 );`
 
-// high_water_marks is keyed by (repo, file_path), not repo alone: a glob
-// tracker fans out across many files in the same repo, and each walked file
-// must resume from its own cursor — sharing one repo-level cursor would let
-// files clobber each other's resume point and either skip or re-process
-// commits depending on walk order.
+// high_water_marks is keyed by (repo, file_path, field), not repo or
+// (repo, file_path): a glob tracker fans out across many files, AND several
+// trackers can extract different fields from the same file. Each
+// (file, field) must resume from its own cursor. Keying only by file path let
+// whichever field polled a file first advance the shared cursor to HEAD, so
+// every other field on that file saw a non-empty cursor, skipped its first-run
+// backfill, and silently never recorded its history — see the per-field
+// backfill regression test.
 const schemaHWM = `
 CREATE TABLE IF NOT EXISTS high_water_marks (
     repo      TEXT NOT NULL,
     file_path TEXT NOT NULL,
+    field     TEXT NOT NULL,
     sha       TEXT NOT NULL,
-    PRIMARY KEY (repo, file_path)
+    PRIMARY KEY (repo, file_path, field)
 );`
+
+// indexChangesIdentity makes SaveChange idempotent: a change is uniquely
+// identified by where it happened (repo, file_path, field, key) and when
+// (commit_sha). COALESCE folds the nullable scalar key to an empty string so
+// scalar-field rows dedupe too — SQLite treats every NULL as distinct in a
+// UNIQUE index, so
+// a bare key_val column would never collide for scalar fields. Idempotency lets
+// a one-time cursor rebuild (see migrate) re-walk history without duplicating
+// rows that were already recorded.
+const indexChangesIdentity = `
+CREATE UNIQUE INDEX IF NOT EXISTS ux_changes_identity
+ON changes (repo, file_path, field, COALESCE(key_val, ''), commit_sha);`
 
 func (s *Store) migrate() error {
 	if _, err := s.db.Exec(schemaChanges); err != nil {
 		return fmt.Errorf("create changes table: %w", err)
+	}
+	// A pre-per-field database has a high_water_marks table keyed by
+	// (repo, file_path) with no `field` column. SQLite cannot ALTER a table's
+	// PRIMARY KEY, so drop the stale table; schemaHWM below recreates it with
+	// the per-field key. Cursors are discarded on purpose — the old key
+	// clobbered per-field cursors, so a one-time re-backfill is exactly what
+	// heals the fields it silently dropped. The re-backfill is duplicate-safe
+	// because ux_changes_identity + INSERT OR IGNORE make SaveChange idempotent.
+	if err := s.dropLegacyHighWaterMarks(); err != nil {
+		return fmt.Errorf("drop legacy high_water_marks table: %w", err)
 	}
 	if _, err := s.db.Exec(schemaHWM); err != nil {
 		return fmt.Errorf("create high_water_marks table: %w", err)
@@ -84,6 +110,71 @@ func (s *Store) migrate() error {
 	// changeset query fails with "no such column" until we add it here.
 	if err := s.ensureColumn("changes", "issue_refs_json", "TEXT NOT NULL DEFAULT '[]'"); err != nil {
 		return fmt.Errorf("add changes.issue_refs_json column: %w", err)
+	}
+	// Collapse any duplicate change rows a prior (non-idempotent) re-backfill
+	// may have left, keeping the earliest id per identity, before enforcing the
+	// uniqueness the idempotent write path now relies on.
+	if err := s.dedupeChanges(); err != nil {
+		return fmt.Errorf("dedupe changes: %w", err)
+	}
+	if _, err := s.db.Exec(indexChangesIdentity); err != nil {
+		return fmt.Errorf("create changes identity index: %w", err)
+	}
+	return nil
+}
+
+// dropLegacyHighWaterMarks drops a pre-per-field high_water_marks table (one
+// with no `field` column) so migrate can recreate it with the per-field key. It
+// is a no-op when the table is absent (fresh DB) or already per-field, so it is
+// safe to run on every boot. The store assumes a single writer per database
+// file (a ReadWriteOnce volume on one pod), so the inspect-then-drop is not
+// synchronized.
+func (s *Store) dropLegacyHighWaterMarks() error {
+	rows, err := s.db.Query("PRAGMA table_info(high_water_marks)")
+	if err != nil {
+		return fmt.Errorf("inspect high_water_marks: %w", err)
+	}
+	defer rows.Close()
+	var exists, hasField bool
+	for rows.Next() {
+		var (
+			cid, notnull, pk int
+			name, ctype      string
+			dflt             sql.NullString
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return fmt.Errorf("scan high_water_marks columns: %w", err)
+		}
+		exists = true
+		if name == "field" {
+			hasField = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate high_water_marks columns: %w", err)
+	}
+	if exists && !hasField {
+		if _, err := s.db.Exec("DROP TABLE high_water_marks"); err != nil {
+			return fmt.Errorf("drop high_water_marks: %w", err)
+		}
+	}
+	return nil
+}
+
+// dedupeChanges removes duplicate change rows that share an identity
+// (repo, file_path, field, key, commit_sha), keeping the earliest-inserted
+// (min id). It runs before ux_changes_identity is created so the unique index
+// can be built even on a database that accumulated duplicates before the
+// idempotent write path existed. On a clean database it deletes nothing.
+func (s *Store) dedupeChanges() error {
+	const query = `
+DELETE FROM changes
+WHERE id NOT IN (
+    SELECT MIN(id) FROM changes
+    GROUP BY repo, file_path, field, COALESCE(key_val, ''), commit_sha
+)`
+	if _, err := s.db.Exec(query); err != nil {
+		return fmt.Errorf("delete duplicate changes: %w", err)
 	}
 	return nil
 }
@@ -142,8 +233,11 @@ func (s *Store) SaveChange(c domain.Change) error {
 		return fmt.Errorf("store: marshal issue refs: %w", err)
 	}
 
+	// OR IGNORE makes the write idempotent against ux_changes_identity: a change
+	// already recorded (same repo/file/field/key/commit) is silently skipped, so
+	// re-walking history (e.g. after a cursor rebuild) never duplicates rows.
 	const query = `
-INSERT INTO changes (repo, file_path, field, key_val, change_type,
+INSERT OR IGNORE INTO changes (repo, file_path, field, key_val, change_type,
                      old_value, new_value, facets_json, commit_sha, author, committed_at, issue_refs_json)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
@@ -197,30 +291,31 @@ LIMIT ?`
 }
 
 // GetHighWaterMark returns the last persisted commit SHA for the given
-// (repo, filePath) pair, or an empty string if none has been set yet. Keying
-// by file path (not just repo) lets a glob tracker's fanned-out files each
-// resume independently.
-func (s *Store) GetHighWaterMark(repo, filePath string) (string, error) {
-	const query = `SELECT sha FROM high_water_marks WHERE repo = ? AND file_path = ?`
+// (repo, filePath, field) triple, or an empty string if none has been set yet.
+// Keying by field (not just repo+path) lets multiple trackers extracting
+// different fields from the same file each resume — and, on first run,
+// backfill — independently.
+func (s *Store) GetHighWaterMark(repo, filePath, field string) (string, error) {
+	const query = `SELECT sha FROM high_water_marks WHERE repo = ? AND file_path = ? AND field = ?`
 	var sha string
-	err := s.db.QueryRow(query, repo, filePath).Scan(&sha)
+	err := s.db.QueryRow(query, repo, filePath, field).Scan(&sha)
 	if err == sql.ErrNoRows {
 		return "", nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("store: get high water mark for %q/%q: %w", repo, filePath, err)
+		return "", fmt.Errorf("store: get high water mark for %q/%q/%q: %w", repo, filePath, field, err)
 	}
 	return sha, nil
 }
 
 // SetHighWaterMark records or overwrites the high-water-mark commit SHA for
-// the given (repo, filePath) pair.
-func (s *Store) SetHighWaterMark(repo, filePath, sha string) error {
+// the given (repo, filePath, field) triple.
+func (s *Store) SetHighWaterMark(repo, filePath, field, sha string) error {
 	const query = `
-INSERT INTO high_water_marks (repo, file_path, sha) VALUES (?, ?, ?)
-ON CONFLICT(repo, file_path) DO UPDATE SET sha = excluded.sha`
-	if _, err := s.db.Exec(query, repo, filePath, sha); err != nil {
-		return fmt.Errorf("store: set high water mark for %q/%q: %w", repo, filePath, err)
+INSERT INTO high_water_marks (repo, file_path, field, sha) VALUES (?, ?, ?, ?)
+ON CONFLICT(repo, file_path, field) DO UPDATE SET sha = excluded.sha`
+	if _, err := s.db.Exec(query, repo, filePath, field, sha); err != nil {
+		return fmt.Errorf("store: set high water mark for %q/%q/%q: %w", repo, filePath, field, err)
 	}
 	return nil
 }
