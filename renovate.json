@@ -9,6 +9,8 @@
     "minimumReleaseAge": null
   },
   "automergeStrategy": "squash",
+  "prHourlyLimit": 0,
+  "prConcurrentLimit": 0,
   "packageRules": [
     {
       "description": "Go modules and the Dockerfile base image are runtime-affecting: commit as fix: so release-please cuts a patch release and the update deploys.",
