@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.10.0...app-v0.10.1) (2026-07-20)
+
+
+### Bug Fixes
+
+* **deps:** update gcr.io/distroless/static:nonroot docker digest to f7f8f72 ([#88](https://github.com/dackota/change-tracking-dashboard/issues/88)) ([76e8093](https://github.com/dackota/change-tracking-dashboard/commit/76e8093ec3d44d5cb423b42f9d3de4a45f0ea955))
+
 ## [0.10.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.9.1...app-v0.10.0) (2026-07-08)
 
 
