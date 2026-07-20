@@ -319,7 +319,7 @@ func TestPoller_ResumesFromHighWaterMark(t *testing.T) {
 	st := newTestStore(t)
 
 	// Pre-seed the high-water mark to sha1, simulating a prior run that stopped there.
-	if err := st.SetHighWaterMark(repoPath, "Chart.yaml", sha1); err != nil {
+	if err := st.SetHighWaterMark(repoPath, "Chart.yaml", "chart-version", sha1); err != nil {
 		t.Fatalf("SetHighWaterMark: %v", err)
 	}
 
@@ -457,7 +457,7 @@ func TestPoller_FirstRun_BackfillWindowExcludesOldCommits(t *testing.T) {
 	}
 
 	// HWM should be sha3 (the last commit walked).
-	hwm, err := st.GetHighWaterMark(repoPath, "Chart.yaml")
+	hwm, err := st.GetHighWaterMark(repoPath, "Chart.yaml", "chart-version")
 	if err != nil {
 		t.Fatalf("GetHighWaterMark: %v", err)
 	}
@@ -488,7 +488,7 @@ func TestPoller_IncrementalRun_UnaffectedByBackfillWindow(t *testing.T) {
 	}
 
 	st := newTestStore(t)
-	if err := st.SetHighWaterMark(repoPath, "Chart.yaml", sha1); err != nil {
+	if err := st.SetHighWaterMark(repoPath, "Chart.yaml", "chart-version", sha1); err != nil {
 		t.Fatalf("SetHighWaterMark: %v", err)
 	}
 
@@ -526,7 +526,7 @@ func TestPoller_IncrementalRun_UnaffectedByBackfillWindow(t *testing.T) {
 		t.Errorf("feed[1] = %v→%v, want 1.0.0→1.1.0 (sha2, dated before the cutoff)", got.OldValue, got.NewValue)
 	}
 
-	hwm, err := st.GetHighWaterMark(repoPath, "Chart.yaml")
+	hwm, err := st.GetHighWaterMark(repoPath, "Chart.yaml", "chart-version")
 	if err != nil {
 		t.Fatalf("GetHighWaterMark: %v", err)
 	}
@@ -553,7 +553,7 @@ func TestPoller_HWMContentLookup_WorksForOutOfWindowHWM(t *testing.T) {
 	}
 
 	st := newTestStore(t)
-	if err := st.SetHighWaterMark(repoPath, "Chart.yaml", sha1); err != nil {
+	if err := st.SetHighWaterMark(repoPath, "Chart.yaml", "chart-version", sha1); err != nil {
 		t.Fatalf("SetHighWaterMark: %v", err)
 	}
 
@@ -583,7 +583,7 @@ func TestPoller_HWMContentLookup_WorksForOutOfWindowHWM(t *testing.T) {
 		t.Fatalf("got %d changes, want 2", len(feed))
 	}
 
-	hwm, err := st.GetHighWaterMark(repoPath, "Chart.yaml")
+	hwm, err := st.GetHighWaterMark(repoPath, "Chart.yaml", "chart-version")
 	if err != nil {
 		t.Fatalf("GetHighWaterMark: %v", err)
 	}
@@ -1084,7 +1084,7 @@ func TestPoller_GlobFanOut_ResumePerFile(t *testing.T) {
 
 	// y's HWM must be untouched: GetHighWaterMark(repo, a/y/Chart.yaml) still
 	// resolves to its own last-processed commit, independent of x's advance.
-	hwmY, err := st.GetHighWaterMark(repoPath, "a/y/Chart.yaml")
+	hwmY, err := st.GetHighWaterMark(repoPath, "a/y/Chart.yaml", "chart-version")
 	if err != nil {
 		t.Fatalf("GetHighWaterMark (y): %v", err)
 	}
@@ -1092,11 +1092,118 @@ func TestPoller_GlobFanOut_ResumePerFile(t *testing.T) {
 		t.Error("HWM for a/y/Chart.yaml is empty after polls — per-file HWM not being set")
 	}
 
-	hwmX, err := st.GetHighWaterMark(repoPath, "a/x/Chart.yaml")
+	hwmX, err := st.GetHighWaterMark(repoPath, "a/x/Chart.yaml", "chart-version")
 	if err != nil {
 		t.Fatalf("GetHighWaterMark (x): %v", err)
 	}
 	if hwmX == hwmY {
 		t.Errorf("HWM for x (%q) and y (%q) must differ — they are independent per-file cursors", hwmX, hwmY)
+	}
+}
+
+// buildTwoFieldRepo creates a repo with a single file that carries TWO tracked
+// fields (a, b), each transitioning in a different commit:
+//
+//	c1 (init): a=1, b=1
+//	c2:        a=2, b=1   (only a changes)
+//	c3:        a=2, b=2   (only b changes)
+func buildTwoFieldRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	repo, err := git.PlainInit(dir, false)
+	if err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("worktree: %v", err)
+	}
+	path := filepath.Join(dir, "config.yaml")
+	commit := func(a, b, msg string, when time.Time) {
+		if err := os.WriteFile(path, []byte("a: "+a+"\nb: "+b+"\n"), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		if _, err := wt.Add("config.yaml"); err != nil {
+			t.Fatalf("git add: %v", err)
+		}
+		if _, err := wt.Commit(msg, &git.CommitOptions{
+			Author: &object.Signature{Name: "dev", Email: "d@x.com", When: when},
+		}); err != nil {
+			t.Fatalf("commit %q: %v", msg, err)
+		}
+	}
+	commit("1", "1", "init", time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+	commit("2", "1", "bump a", time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC))
+	commit("2", "2", "bump b", time.Date(2024, 1, 3, 0, 0, 0, 0, time.UTC))
+	return dir
+}
+
+// TestPoller_BackfillsAllFieldsSharingOneFile is the regression test for the
+// per-file-shared high-water-mark bug: when several trackers extract different
+// fields from the SAME file, each must run its own first-run backfill. Before
+// the fix the HWM was keyed by (repo, file_path) only, so whichever field was
+// polled first advanced the shared cursor and every other field on that file
+// skipped its backfill and never recorded its history. The invariant — every
+// field's transition is captured — must hold regardless of poll order.
+func TestPoller_BackfillsAllFieldsSharingOneFile(t *testing.T) {
+	t.Parallel()
+	repoPath := buildTwoFieldRepo(t)
+
+	trackerA := domain.Tracker{
+		Repo: repoPath, FileGlob: "config.yaml", Field: "field-a",
+		ExtractorExpr: ".a", BackfillDays: 3650,
+	}
+	trackerB := domain.Tracker{
+		Repo: repoPath, FileGlob: "config.yaml", Field: "field-b",
+		ExtractorExpr: ".b", BackfillDays: 3650,
+	}
+
+	orders := []struct {
+		name     string
+		trackers []domain.Tracker
+	}{
+		{"a-then-b", []domain.Tracker{trackerA, trackerB}},
+		{"b-then-a", []domain.Tracker{trackerB, trackerA}},
+	}
+
+	for _, tc := range orders {
+		t.Run(tc.name, func(t *testing.T) {
+			src, err := gitsource.Open(repoPath)
+			if err != nil {
+				t.Fatalf("gitsource.Open: %v", err)
+			}
+			st := newTestStore(t)
+			p := poller.New(src, st)
+			for _, tr := range tc.trackers {
+				if err := p.Poll(tr); err != nil {
+					t.Fatalf("Poll(%s): %v", tr.Field, err)
+				}
+			}
+
+			feed, err := st.QueryFeed(100)
+			if err != nil {
+				t.Fatalf("QueryFeed: %v", err)
+			}
+			byField := map[string]domain.Change{}
+			for _, c := range feed {
+				byField[c.Field] = c
+			}
+
+			ca, ok := byField["field-a"]
+			if !ok {
+				t.Fatalf("no change recorded for field-a — its backfill was skipped (feed has %d changes: %+v)", len(feed), feed)
+			}
+			if ca.OldValue == nil || *ca.OldValue != "1" || ca.NewValue == nil || *ca.NewValue != "2" {
+				t.Errorf("field-a change = %v→%v, want 1→2", ca.OldValue, ca.NewValue)
+			}
+
+			cb, ok := byField["field-b"]
+			if !ok {
+				t.Fatalf("no change recorded for field-b — its backfill was skipped (feed has %d changes: %+v)", len(feed), feed)
+			}
+			if cb.OldValue == nil || *cb.OldValue != "1" || cb.NewValue == nil || *cb.NewValue != "2" {
+				t.Errorf("field-b change = %v→%v, want 1→2", cb.OldValue, cb.NewValue)
+			}
+		})
 	}
 }

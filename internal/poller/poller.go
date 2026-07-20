@@ -316,7 +316,7 @@ func (p *Poller) resolveFilePaths(ctx context.Context, glob string) ([]string, e
 func (p *Poller) pollFile(ctx context.Context, logger *slog.Logger, t domain.Tracker, filePath, engine string, ex extractor.FieldExtractor, fe *facet.Extractor) error {
 	var hwm string
 	err := telemetry.WithSpan(ctx, p.tracer, "store.get_high_water_mark", func(context.Context) error {
-		v, err := p.st.GetHighWaterMark(t.Repo, filePath)
+		v, err := p.st.GetHighWaterMark(t.Repo, filePath, t.Field)
 		hwm = v
 		return err
 	})
@@ -481,7 +481,7 @@ func (p *Poller) saveChange(ctx context.Context, logger *slog.Logger, t domain.T
 // setHighWaterMark wraps one store.SetHighWaterMark call in its own span.
 func (p *Poller) setHighWaterMark(ctx context.Context, logger *slog.Logger, t domain.Tracker, filePath, sha string) error {
 	err := telemetry.WithSpan(ctx, p.tracer, "store.set_high_water_mark", func(context.Context) error {
-		return p.st.SetHighWaterMark(t.Repo, filePath, sha)
+		return p.st.SetHighWaterMark(t.Repo, filePath, t.Field, sha)
 	})
 	if err != nil {
 		logger.Error("poller: set high-water mark failed", slog.String("repo", t.Repo), slog.String("filePath", filePath), slog.Any("error", err))

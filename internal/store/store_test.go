@@ -94,9 +94,10 @@ func TestHighWaterMark(t *testing.T) {
 	s := newTestStore(t)
 
 	const filePath = "apps/tenant-zero/dev/us-west-2/Chart.yaml"
+	const field = "chart-version"
 
 	// Reading before any write returns empty string.
-	sha, err := s.GetHighWaterMark("apps-repo", filePath)
+	sha, err := s.GetHighWaterMark("apps-repo", filePath, field)
 	if err != nil {
 		t.Fatalf("GetHighWaterMark (empty): %v", err)
 	}
@@ -105,12 +106,12 @@ func TestHighWaterMark(t *testing.T) {
 	}
 
 	// Write a mark.
-	if err := s.SetHighWaterMark("apps-repo", filePath, "abc123"); err != nil {
+	if err := s.SetHighWaterMark("apps-repo", filePath, field, "abc123"); err != nil {
 		t.Fatalf("SetHighWaterMark: %v", err)
 	}
 
 	// Read it back.
-	sha, err = s.GetHighWaterMark("apps-repo", filePath)
+	sha, err = s.GetHighWaterMark("apps-repo", filePath, field)
 	if err != nil {
 		t.Fatalf("GetHighWaterMark (after set): %v", err)
 	}
@@ -119,10 +120,10 @@ func TestHighWaterMark(t *testing.T) {
 	}
 
 	// Overwrite the mark.
-	if err := s.SetHighWaterMark("apps-repo", filePath, "def456"); err != nil {
+	if err := s.SetHighWaterMark("apps-repo", filePath, field, "def456"); err != nil {
 		t.Fatalf("SetHighWaterMark (overwrite): %v", err)
 	}
-	sha, err = s.GetHighWaterMark("apps-repo", filePath)
+	sha, err = s.GetHighWaterMark("apps-repo", filePath, field)
 	if err != nil {
 		t.Fatalf("GetHighWaterMark (overwrite): %v", err)
 	}
@@ -143,15 +144,16 @@ func TestHighWaterMark_PerFileGranularity(t *testing.T) {
 	const repo = "apps-repo"
 	const fileA = "a/x/Chart.yaml"
 	const fileB = "a/y/Chart.yaml"
+	const field = "chart-version"
 
-	if err := s.SetHighWaterMark(repo, fileA, "sha-a-1"); err != nil {
+	if err := s.SetHighWaterMark(repo, fileA, field, "sha-a-1"); err != nil {
 		t.Fatalf("SetHighWaterMark (fileA): %v", err)
 	}
-	if err := s.SetHighWaterMark(repo, fileB, "sha-b-1"); err != nil {
+	if err := s.SetHighWaterMark(repo, fileB, field, "sha-b-1"); err != nil {
 		t.Fatalf("SetHighWaterMark (fileB): %v", err)
 	}
 
-	gotA, err := s.GetHighWaterMark(repo, fileA)
+	gotA, err := s.GetHighWaterMark(repo, fileA, field)
 	if err != nil {
 		t.Fatalf("GetHighWaterMark (fileA): %v", err)
 	}
@@ -159,7 +161,7 @@ func TestHighWaterMark_PerFileGranularity(t *testing.T) {
 		t.Errorf("GetHighWaterMark(fileA) = %q, want sha-a-1 (must not be clobbered by fileB)", gotA)
 	}
 
-	gotB, err := s.GetHighWaterMark(repo, fileB)
+	gotB, err := s.GetHighWaterMark(repo, fileB, field)
 	if err != nil {
 		t.Fatalf("GetHighWaterMark (fileB): %v", err)
 	}
@@ -168,15 +170,108 @@ func TestHighWaterMark_PerFileGranularity(t *testing.T) {
 	}
 
 	// Advancing fileA's mark must not affect fileB's.
-	if err := s.SetHighWaterMark(repo, fileA, "sha-a-2"); err != nil {
+	if err := s.SetHighWaterMark(repo, fileA, field, "sha-a-2"); err != nil {
 		t.Fatalf("SetHighWaterMark (fileA advance): %v", err)
 	}
-	gotB2, err := s.GetHighWaterMark(repo, fileB)
+	gotB2, err := s.GetHighWaterMark(repo, fileB, field)
 	if err != nil {
 		t.Fatalf("GetHighWaterMark (fileB after fileA advance): %v", err)
 	}
 	if gotB2 != "sha-b-1" {
 		t.Errorf("GetHighWaterMark(fileB) after advancing fileA = %q, want unchanged sha-b-1", gotB2)
+	}
+}
+
+// TestHighWaterMark_PerFieldGranularity verifies that the HWM is keyed by
+// (repo, filePath, field): two fields tracked from the SAME file each resume
+// from their own cursor and never clobber each other. This is the property the
+// per-file-shared-cursor bug violated — the first field polled advanced the
+// shared mark, silently starving every other field's backfill.
+func TestHighWaterMark_PerFieldGranularity(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+
+	const repo = "infra-repo"
+	const file = "terraform/versions.tf"
+	const fieldA = "kubernetes-version"
+	const fieldB = "oci-provider-version"
+
+	if err := s.SetHighWaterMark(repo, file, fieldA, "sha-a-1"); err != nil {
+		t.Fatalf("SetHighWaterMark (fieldA): %v", err)
+	}
+	if err := s.SetHighWaterMark(repo, file, fieldB, "sha-b-1"); err != nil {
+		t.Fatalf("SetHighWaterMark (fieldB): %v", err)
+	}
+
+	gotA, err := s.GetHighWaterMark(repo, file, fieldA)
+	if err != nil {
+		t.Fatalf("GetHighWaterMark (fieldA): %v", err)
+	}
+	if gotA != "sha-a-1" {
+		t.Errorf("GetHighWaterMark(fieldA) = %q, want sha-a-1 (must not be clobbered by fieldB on the same file)", gotA)
+	}
+
+	gotB, err := s.GetHighWaterMark(repo, file, fieldB)
+	if err != nil {
+		t.Fatalf("GetHighWaterMark (fieldB): %v", err)
+	}
+	if gotB != "sha-b-1" {
+		t.Errorf("GetHighWaterMark(fieldB) = %q, want sha-b-1", gotB)
+	}
+
+	// Advancing fieldA's mark on the shared file must not touch fieldB's.
+	if err := s.SetHighWaterMark(repo, file, fieldA, "sha-a-2"); err != nil {
+		t.Fatalf("SetHighWaterMark (fieldA advance): %v", err)
+	}
+	gotB2, err := s.GetHighWaterMark(repo, file, fieldB)
+	if err != nil {
+		t.Fatalf("GetHighWaterMark (fieldB after fieldA advance): %v", err)
+	}
+	if gotB2 != "sha-b-1" {
+		t.Errorf("GetHighWaterMark(fieldB) after advancing fieldA on the same file = %q, want unchanged sha-b-1", gotB2)
+	}
+}
+
+// TestSaveChange_Idempotent verifies that saving the same change twice — same
+// (repo, file_path, field, key, commit_sha) identity — records it once. This is
+// what lets a one-time cursor rebuild re-walk history without duplicating rows
+// already in the feed. Covers both a scalar-key (nil) change and a keyed one,
+// since SQLite's NULL-distinct rule would otherwise let nil-key rows duplicate.
+func TestSaveChange_Idempotent(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	key := "argo-cd"
+	scalar := domain.Change{
+		Repo: "infra-repo", FilePath: "terraform/oci-containerengine-cluster.tf",
+		Field: "kubernetes-version", Key: nil, ChangeType: domain.ChangeTypeModified,
+		OldValue: ptr("v1.35.1"), NewValue: ptr("v1.36.1"),
+		CommitSha: "sha-k8s", Author: "dev", CommittedAt: base,
+	}
+	keyed := domain.Change{
+		Repo: "apps-repo", FilePath: "gitops/platform/argocd/Chart.yaml",
+		Field: "chartDependencies", Key: &key, ChangeType: domain.ChangeTypeModified,
+		OldValue: ptr("10.1.2"), NewValue: ptr("10.1.3"),
+		CommitSha: "sha-argo", Author: "dev", CommittedAt: base.Add(time.Hour),
+	}
+
+	for _, c := range []domain.Change{scalar, keyed} {
+		// Save each change twice — the second write must be a no-op.
+		if err := s.SaveChange(c); err != nil {
+			t.Fatalf("SaveChange (first): %v", err)
+		}
+		if err := s.SaveChange(c); err != nil {
+			t.Fatalf("SaveChange (duplicate): %v", err)
+		}
+	}
+
+	feed, err := s.QueryFeed(100)
+	if err != nil {
+		t.Fatalf("QueryFeed: %v", err)
+	}
+	if len(feed) != 2 {
+		t.Fatalf("QueryFeed returned %d changes, want 2 (each saved-twice change recorded once)", len(feed))
 	}
 }
 
