@@ -173,6 +173,91 @@ func TestTimelineJS_BuildFeedRow_PreservesClickToDetailAndLinkStopPropagation(t 
 	}
 }
 
+// TestTimelineJS_BuildFeedRow_ShowsSubjectAboveShaWhenPresent verifies #85:
+// the commit cell renders the Changeset's subject as a distinct, tooltip-
+// bearing label (so a long subject can truncate via CSS while the full text
+// stays available on hover), sourced from cs.subject and set via textContent
+// (never innerHTML) before the sha element it never replaces — see the sha-
+// always-rendered test below for the fallback contract.
+func TestTimelineJS_BuildFeedRow_ShowsSubjectAboveShaWhenPresent(t *testing.T) {
+	t.Parallel()
+
+	body := servedTimelineJS(t)
+	fn := extractFunctionBody(t, body, "buildFeedRow")
+
+	if !strings.Contains(fn, "cs.subject") {
+		t.Fatalf("buildFeedRow does not read cs.subject:\n%s", fn)
+	}
+	if !strings.Contains(fn, "feed-commit-subject") {
+		t.Errorf("buildFeedRow does not create a feed-commit-subject element:\n%s", fn)
+	}
+	if !strings.Contains(fn, "subjectEl.textContent = cs.subject") {
+		t.Errorf("buildFeedRow does not set the subject label's textContent from cs.subject:\n%s", fn)
+	}
+	if !strings.Contains(fn, "subjectEl.title = cs.subject") {
+		t.Errorf("buildFeedRow does not set a title tooltip on the subject label (needed for truncated long subjects):\n%s", fn)
+	}
+
+	subjectIdx := strings.Index(fn, "feed-commit-subject")
+	urlIdx := strings.Index(fn, "if (url)")
+	if subjectIdx == -1 || urlIdx == -1 || subjectIdx > urlIdx {
+		t.Errorf("subject label must be built before the sha link/plain-text branch:\n%s", fn)
+	}
+}
+
+// TestTimelineJS_BuildFeedRow_ShaAlwaysRendered_FallsBackWhenNoSubject
+// verifies #85's acceptance criterion "rows with no stored subject fall
+// back to the SHA": the sha element (link or plain text) is built
+// unconditionally — it is never nested inside an `if (cs.subject)` guard —
+// so a Changeset with no recorded subject still shows its sha exactly as
+// before this slice.
+func TestTimelineJS_BuildFeedRow_ShaAlwaysRendered_FallsBackWhenNoSubject(t *testing.T) {
+	t.Parallel()
+
+	body := servedTimelineJS(t)
+	fn := extractFunctionBody(t, body, "buildFeedRow")
+
+	if !strings.Contains(fn, "if (cs.subject)") {
+		t.Fatalf("buildFeedRow does not guard the subject label behind if (cs.subject):\n%s", fn)
+	}
+
+	// The subject guard's own block must not be where the sha gets built —
+	// isolate it by depth-counted brace span and assert the sha assignments
+	// live outside of it.
+	guardIdx := strings.Index(fn, "if (cs.subject)")
+	braceIdx := strings.Index(fn[guardIdx:], "{")
+	if braceIdx == -1 {
+		t.Fatalf("if (cs.subject) has no block:\n%s", fn)
+	}
+	depth := 0
+	end := -1
+	for i := guardIdx + braceIdx; i < len(fn); i++ {
+		switch fn[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				end = i + 1
+			}
+		}
+		if end != -1 {
+			break
+		}
+	}
+	if end == -1 {
+		t.Fatalf("could not find matching closing brace for if (cs.subject):\n%s", fn)
+	}
+	subjectGuardBlock := fn[guardIdx:end]
+
+	if strings.Contains(subjectGuardBlock, "a.textContent = sha") || strings.Contains(subjectGuardBlock, "shaEl.textContent = sha") {
+		t.Errorf("sha rendering must live outside the if (cs.subject) guard — it must render even with no subject:\n%s", subjectGuardBlock)
+	}
+	if !strings.Contains(fn, "a.textContent = sha") || !strings.Contains(fn, "shaEl.textContent = sha") {
+		t.Errorf("buildFeedRow must still render the sha (link and plain-text arms) unconditionally:\n%s", fn)
+	}
+}
+
 // TestTimelineJS_RenderFeed_LoadingAndEmptyStatesRenderAsFullWidthTableRows
 // verifies R16 in its new "table form": the loading, nothing-recorded-yet,
 // and nothing-in-window/filters states are each rendered as a single

@@ -81,8 +81,11 @@ type changesetJSON struct {
 	Author      string       `json:"author"`
 	CommittedAt string       `json:"committedAt"`
 	IssueRefs   []string     `json:"issueRefs,omitempty"`
-	Changes     []changeJSON `json:"changes"`
-	Risk        []string     `json:"risk"`
+	// Subject is the commit message's first line (#85), omitted when empty
+	// (pre-#85 rows) so the client falls back to the SHA.
+	Subject string       `json:"subject,omitempty"`
+	Changes []changeJSON `json:"changes"`
+	Risk    []string     `json:"risk"`
 }
 
 // changeJSON is the explicit JSON shape for one Change within a Changeset.
@@ -271,6 +274,7 @@ func toChangesetJSON(cs changeset.Changeset) changesetJSON {
 		Author:      cs.Author,
 		CommittedAt: cs.CommittedAt.UTC().Format(time.RFC3339Nano),
 		IssueRefs:   cs.IssueRefs,
+		Subject:     cs.Subject,
 		Changes:     changes,
 		Risk:        toRiskStrings(changeset.ClassifyRisk(cs, changeset.DefaultRiskRules())),
 	}

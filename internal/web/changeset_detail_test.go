@@ -464,3 +464,83 @@ func TestChangesetDetail_NoIssueRefs_ShowsNoIssueRefMarkup(t *testing.T) {
 		t.Errorf("no-reference commit rendered issue-ref markup (false link); got:\n%s", body)
 	}
 }
+
+// TestChangesetDetail_SurfacesSubject verifies the detail header (#85) shows
+// the commit's subject alongside its existing metadata.
+func TestChangesetDetail_SurfacesSubject(t *testing.T) {
+	t.Parallel()
+
+	st := newTestStore(t)
+	c := domain.Change{
+		Repo:        "apps-repo",
+		FilePath:    "versions.tf",
+		Field:       "google-provider-version",
+		ChangeType:  domain.ChangeTypeModified,
+		OldValue:    ptr("5.0.0"),
+		NewValue:    ptr("5.10.0"),
+		CommitSha:   "commit-with-subject",
+		Author:      "alice",
+		CommittedAt: time.Now().Add(-time.Hour),
+		Subject:     "bump google provider to 5.10.0",
+	}
+	if err := st.SaveChange(c); err != nil {
+		t.Fatalf("SaveChange: %v", err)
+	}
+
+	h := web.NewChangesetDetailHandler(st)
+	req := httptest.NewRequest(http.MethodGet, "/api/changesets/detail?repo=apps-repo&commitSha=commit-with-subject", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "bump google provider to 5.10.0") {
+		t.Errorf("body missing commit subject; got:\n%s", body)
+	}
+	if !strings.Contains(body, "changeset-detail-subject") {
+		t.Errorf("body missing changeset-detail-subject markup; got:\n%s", body)
+	}
+}
+
+// TestChangesetDetail_NoSubject_ShowsNoSubjectMarkupButStillShowsSha
+// verifies that a pre-#85 commit with no recorded subject renders no
+// subject markup at all — the short SHA link (already always rendered)
+// remains the only commit label, matching the "fall back to SHA" acceptance
+// criterion.
+func TestChangesetDetail_NoSubject_ShowsNoSubjectMarkupButStillShowsSha(t *testing.T) {
+	t.Parallel()
+
+	st := newTestStore(t)
+	c := domain.Change{
+		Repo:        "apps-repo",
+		FilePath:    "versions.tf",
+		Field:       "google-provider-version",
+		ChangeType:  domain.ChangeTypeModified,
+		OldValue:    ptr("5.0.0"),
+		NewValue:    ptr("5.10.0"),
+		CommitSha:   "commit-no-subject",
+		Author:      "alice",
+		CommittedAt: time.Now().Add(-time.Hour),
+	}
+	if err := st.SaveChange(c); err != nil {
+		t.Fatalf("SaveChange: %v", err)
+	}
+
+	h := web.NewChangesetDetailHandler(st)
+	req := httptest.NewRequest(http.MethodGet, "/api/changesets/detail?repo=apps-repo&commitSha=commit-no-subject", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if strings.Contains(body, "changeset-detail-subject") {
+		t.Errorf("no-subject commit rendered subject markup; got:\n%s", body)
+	}
+	if !strings.Contains(body, "commit-n") { // short sha (first 8 chars) prefix still present
+		t.Errorf("no-subject commit should still show its short SHA; got:\n%s", body)
+	}
+}

@@ -55,7 +55,8 @@ CREATE TABLE IF NOT EXISTS changes (
     commit_sha    TEXT    NOT NULL,
     author        TEXT    NOT NULL,
     committed_at  TEXT    NOT NULL,
-    issue_refs_json TEXT  NOT NULL DEFAULT '[]'
+    issue_refs_json TEXT  NOT NULL DEFAULT '[]',
+    commit_subject TEXT   NOT NULL DEFAULT ''
 );`
 
 // high_water_marks is keyed by (repo, file_path, field), not repo or
@@ -110,6 +111,11 @@ func (s *Store) migrate() error {
 	// changeset query fails with "no such column" until we add it here.
 	if err := s.ensureColumn("changes", "issue_refs_json", "TEXT NOT NULL DEFAULT '[]'"); err != nil {
 		return fmt.Errorf("add changes.issue_refs_json column: %w", err)
+	}
+	// See #85: pre-existing rows lack a commit subject and fall back to
+	// the empty-string default (the web layer falls back to the SHA).
+	if err := s.ensureColumn("changes", "commit_subject", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return fmt.Errorf("add changes.commit_subject column: %w", err)
 	}
 	// Collapse any duplicate change rows a prior (non-idempotent) re-backfill
 	// may have left, keeping the earliest id per identity, before enforcing the
@@ -238,8 +244,8 @@ func (s *Store) SaveChange(c domain.Change) error {
 	// re-walking history (e.g. after a cursor rebuild) never duplicates rows.
 	const query = `
 INSERT OR IGNORE INTO changes (repo, file_path, field, key_val, change_type,
-                     old_value, new_value, facets_json, commit_sha, author, committed_at, issue_refs_json)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                     old_value, new_value, facets_json, commit_sha, author, committed_at, issue_refs_json, commit_subject)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err = s.db.Exec(query,
 		c.Repo,
@@ -254,6 +260,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		c.Author,
 		c.CommittedAt.UTC().Format(time.RFC3339Nano),
 		string(issueRefsJSON),
+		c.Subject,
 	)
 	if err != nil {
 		return fmt.Errorf("store: insert change: %w", err)
@@ -265,7 +272,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 func (s *Store) QueryFeed(limit int) ([]domain.Change, error) {
 	const query = `
 SELECT repo, file_path, field, key_val, change_type,
-       old_value, new_value, facets_json, commit_sha, author, committed_at, issue_refs_json
+       old_value, new_value, facets_json, commit_sha, author, committed_at, issue_refs_json, commit_subject
 FROM changes
 ORDER BY committed_at DESC
 LIMIT ?`
@@ -335,11 +342,12 @@ func scanChange(rows *sql.Rows) (domain.Change, error) {
 		author        string
 		committedAt   string
 		issueRefsJSON string
+		subject       string
 	)
 
 	if err := rows.Scan(
 		&repo, &filePath, &field, &keyVal, &changeType,
-		&oldValue, &newValue, &facetsJSON, &commitSha, &author, &committedAt, &issueRefsJSON,
+		&oldValue, &newValue, &facetsJSON, &commitSha, &author, &committedAt, &issueRefsJSON, &subject,
 	); err != nil {
 		return domain.Change{}, err
 	}
@@ -369,6 +377,7 @@ func scanChange(rows *sql.Rows) (domain.Change, error) {
 		Author:      author,
 		CommittedAt: ts,
 		IssueRefs:   issueRefs,
+		Subject:     subject,
 	}
 	if keyVal.Valid {
 		c.Key = &keyVal.String

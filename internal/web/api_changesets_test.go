@@ -63,6 +63,7 @@ type changesetBody struct {
 	Author      string       `json:"author"`
 	CommittedAt time.Time    `json:"committedAt"`
 	IssueRefs   []string     `json:"issueRefs,omitempty"`
+	Subject     string       `json:"subject,omitempty"`
 	Changes     []changeBody `json:"changes"`
 	Risk        []string     `json:"risk"`
 }
@@ -994,6 +995,68 @@ func TestChangesetsAPI_SurfacesIssueRefs(t *testing.T) {
 	got := body.Changesets[1].IssueRefs
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Errorf("Changesets[1].IssueRefs = %#v, want %#v", got, want)
+	}
+}
+
+// TestChangesetsAPI_SurfacesSubject verifies the feed representation
+// (GET /api/changesets JSON) carries each Changeset's commit subject (#85) —
+// a commit with a recorded subject surfaces it, and a commit with none
+// (pre-#85 row) surfaces an empty/absent subject, never a fabricated one.
+func TestChangesetsAPI_SurfacesSubject(t *testing.T) {
+	t.Parallel()
+
+	st := newTestStore(t)
+	base := time.Now().Add(-2 * time.Hour)
+
+	withSubject := domain.Change{
+		Repo: "apps-repo", FilePath: "versions.tf", Field: "google-provider-version",
+		ChangeType: domain.ChangeTypeModified, OldValue: ptr("5.0.0"), NewValue: ptr("5.10.0"),
+		CommitSha:   "commit-with-subject",
+		Author:      "alice",
+		CommittedAt: base,
+		Subject:     "bump google provider to 5.10.0",
+	}
+	withoutSubject := domain.Change{
+		Repo: "apps-repo", FilePath: "versions.tf", Field: "google-provider-version",
+		ChangeType: domain.ChangeTypeModified, OldValue: ptr("5.10.0"), NewValue: ptr("5.11.0"),
+		CommitSha:   "commit-without-subject",
+		Author:      "bob",
+		CommittedAt: base.Add(time.Hour),
+	}
+	if err := st.SaveChange(withSubject); err != nil {
+		t.Fatalf("SaveChange (withSubject): %v", err)
+	}
+	if err := st.SaveChange(withoutSubject); err != nil {
+		t.Fatalf("SaveChange (withoutSubject): %v", err)
+	}
+
+	h := web.NewChangesetsHandler(st)
+	req := httptest.NewRequest(http.MethodGet, "/api/changesets", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+
+	body := decodeChangesetsBody(t, rr)
+	if len(body.Changesets) != 2 {
+		t.Fatalf("Changesets len = %d, want 2", len(body.Changesets))
+	}
+
+	// Most-recent-first: commit-without-subject (later) is first.
+	if got := body.Changesets[0].CommitSha; got != "commit-without-subject" {
+		t.Fatalf("Changesets[0].CommitSha = %q, want commit-without-subject", got)
+	}
+	if got := body.Changesets[0].Subject; got != "" {
+		t.Errorf("Changesets[0].Subject = %q, want empty", got)
+	}
+
+	if got := body.Changesets[1].CommitSha; got != "commit-with-subject" {
+		t.Fatalf("Changesets[1].CommitSha = %q, want commit-with-subject", got)
+	}
+	if want := "bump google provider to 5.10.0"; body.Changesets[1].Subject != want {
+		t.Errorf("Changesets[1].Subject = %q, want %q", body.Changesets[1].Subject, want)
 	}
 }
 

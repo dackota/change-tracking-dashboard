@@ -397,6 +397,62 @@ func TestAssemble_DoesNotMutateInputIssueRefs(t *testing.T) {
 	}
 }
 
+// TestAssemble_HoistsSubjectFromCommit verifies that a Changeset carries its
+// commit's Subject (the commit message's first line, see #85) at the top
+// level, mirroring how Author/CommittedAt/IssueRefs are hoisted from the
+// group's Changes — every Change in a Changeset comes from the same commit,
+// so they all carry the same Subject.
+func TestAssemble_HoistsSubjectFromCommit(t *testing.T) {
+	t.Parallel()
+
+	commitTime := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	changes := []domain.Change{
+		{
+			Repo:        "apps-repo",
+			FilePath:    "versions.tf",
+			Field:       "google-provider-version",
+			ChangeType:  domain.ChangeTypeModified,
+			OldValue:    ptr("5.0.0"),
+			NewValue:    ptr("5.10.0"),
+			CommitSha:   "commit-with-subject",
+			Author:      "alice",
+			CommittedAt: commitTime,
+			Subject:     "bump google provider to 5.10.0",
+		},
+		{
+			Repo:        "apps-repo",
+			FilePath:    "versions.tf",
+			Field:       "google-provider-version",
+			ChangeType:  domain.ChangeTypeModified,
+			OldValue:    ptr("5.10.0"),
+			NewValue:    ptr("5.11.0"),
+			CommitSha:   "commit-no-subject",
+			Author:      "bob",
+			CommittedAt: commitTime.Add(time.Hour),
+		},
+	}
+
+	got := changeset.Assemble(changes)
+	if len(got) != 2 {
+		t.Fatalf("Assemble() returned %d Changesets, want 2", len(got))
+	}
+
+	// Most-recent-first: commit-no-subject (later) is first.
+	if got[0].CommitSha != "commit-no-subject" {
+		t.Fatalf("Changesets[0].CommitSha = %q, want commit-no-subject", got[0].CommitSha)
+	}
+	if got[0].Subject != "" {
+		t.Errorf("Changesets[0].Subject = %q, want empty", got[0].Subject)
+	}
+
+	if got[1].CommitSha != "commit-with-subject" {
+		t.Fatalf("Changesets[1].CommitSha = %q, want commit-with-subject", got[1].CommitSha)
+	}
+	if want := "bump google provider to 5.10.0"; got[1].Subject != want {
+		t.Errorf("Changesets[1].Subject = %q, want %q", got[1].Subject, want)
+	}
+}
+
 func TestAssemble_EmptyInputYieldsEmptyOutput(t *testing.T) {
 	t.Parallel()
 

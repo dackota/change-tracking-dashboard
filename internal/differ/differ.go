@@ -29,6 +29,7 @@ type ScalarParams struct {
 	CommittedAt time.Time
 	Facets      map[string]string // caller attaches facets after extraction
 	IssueRefs   []string          // issue/PR references parsed from the triggering commit's message (see internal/issueref); nil when none
+	Subject     string            // first line of the triggering commit's message; empty when unavailable
 }
 
 // DiffScalar compares an old and new scalar TrackedField for the same tracked
@@ -158,5 +159,6 @@ func newChange(p ScalarParams, ct domain.ChangeType, oldVal, newVal *string) dom
 		Author:      p.Author,
 		CommittedAt: p.CommittedAt,
 		IssueRefs:   issueRefs,
+		Subject:     p.Subject,
 	}
 }
