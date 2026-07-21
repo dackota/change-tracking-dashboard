@@ -653,18 +653,25 @@
 
     var commitCell = document.createElement('td');
     commitCell.className = 'feed-cell-commit';
+    if (cs.subject) {
+      var subjectEl = document.createElement('span');
+      subjectEl.className = 'feed-commit-subject';
+      subjectEl.textContent = cs.subject;
+      subjectEl.title = cs.subject;
+      commitCell.appendChild(subjectEl);
+    }
     var url = commitURL(cs.repo, cs.commitSha);
     var sha = cs.commitSha.slice(0, 8);
     if (url) {
       var a = document.createElement('a');
-      a.className = 'feed-commit';
+      a.className = 'feed-commit' + (cs.subject ? ' feed-commit-sha' : '');
       a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
       a.textContent = sha; a.title = cs.commitSha;
       a.addEventListener('click', function (e) { e.stopPropagation(); });
       commitCell.appendChild(a);
     } else {
       var shaEl = document.createElement('span');
-      shaEl.className = 'feed-commit feed-commit-plain';
+      shaEl.className = 'feed-commit feed-commit-plain' + (cs.subject ? ' feed-commit-sha' : '');
       shaEl.textContent = sha; shaEl.title = cs.commitSha;
       commitCell.appendChild(shaEl);
     }

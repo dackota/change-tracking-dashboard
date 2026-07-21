@@ -66,6 +66,13 @@ func diffFields(p differ.ScalarParams, old, new domain.TrackedField) []domain.Ch
 	return differ.DiffScalar(p, old, new)
 }
 
+// commitSubject returns the first line of a commit message (see #85), with
+// surrounding whitespace trimmed. An empty message yields an empty subject.
+func commitSubject(message string) string {
+	subject, _, _ := strings.Cut(message, "\n")
+	return strings.TrimSpace(subject)
+}
+
 // ExtractFailureRecorder is the seam through which Poll reports a
 // FieldExtractor.Extract failure (e.g. an unparseable HCL file) to the
 // poll-health/status surface, tagged by engine (e.g. "hcl", "jq") so one
@@ -370,6 +377,7 @@ func (p *Poller) pollFile(ctx context.Context, logger *slog.Logger, t domain.Tra
 				CommittedAt: snapshots[0].CommittedAt,
 				Facets:      facets,
 				IssueRefs:   issueref.Parse(snapshots[0].Message),
+				Subject:     commitSubject(snapshots[0].Message),
 			}
 			changes := diffFields(params, domain.TrackedField{Present: false}, prevField)
 			for _, c := range changes {
@@ -423,6 +431,7 @@ func (p *Poller) pollFile(ctx context.Context, logger *slog.Logger, t domain.Tra
 			CommittedAt: snap.CommittedAt,
 			Facets:      facets,
 			IssueRefs:   issueref.Parse(snap.Message),
+			Subject:     commitSubject(snap.Message),
 		}
 
 		changes := diffFields(params, prevField, newField)

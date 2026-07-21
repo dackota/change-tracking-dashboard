@@ -40,6 +40,7 @@ var changesetDetailTemplateSource = fmt.Sprintf(`
 <section class="changeset-detail" data-commit-sha="{{.CommitSha}}">
   <header class="changeset-detail-header">
     <span class="changeset-detail-repo" title="{{.Repo}}">{{.RepoName}}</span>
+    {{if .Subject}}<span class="changeset-detail-subject" title="{{.Subject}}">{{.Subject}}</span>{{end}}
     {{if .CommitURL}}<a class="changeset-detail-commit" href="{{.CommitURL}}" target="_blank" rel="noopener noreferrer" title="{{.CommitSha}}">{{.ShortSha}}</a>{{else}}<span class="changeset-detail-commit" title="{{.CommitSha}}">{{.ShortSha}}</span>{{end}}
     <span class="changeset-detail-author">{{.Author}}</span>
     <time class="changeset-detail-committed-at">{{.CommittedAt.Format "2006-01-02 15:04"}}</time>
@@ -148,7 +149,11 @@ type changesetView struct {
 	Author      string
 	CommittedAt time.Time
 	IssueRefs   []string // issue/PR references linked to this commit; empty when none
-	Changes     []changeView
+	// Subject is the commit message's first line (#85), empty when the
+	// commit predates #85 or otherwise has no recorded subject — the header
+	// falls back to showing just the SHA in that case.
+	Subject string
+	Changes []changeView
 	// Risks is cs's risk class(es) (R12, R24), classified fresh on every
 	// render via changeset.ClassifyRisk — never stored, mirroring how Kind
 	// is already a query-time projection. Empty when cs trips no risk rule
@@ -207,6 +212,7 @@ func newChangesetView(cs changeset.Changeset) changesetView {
 		Author:      cs.Author,
 		CommittedAt: cs.CommittedAt,
 		IssueRefs:   cs.IssueRefs,
+		Subject:     cs.Subject,
 		Changes:     changes,
 		Risks:       newRiskBadgeViews(cs),
 	}

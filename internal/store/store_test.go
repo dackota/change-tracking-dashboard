@@ -407,3 +407,61 @@ func TestIssueRefsRoundTrip(t *testing.T) {
 		t.Errorf("feed[1] (sha-with-refs) IssueRefs = %#v, want [\"#123\", \"ABC-456\"]", got)
 	}
 }
+
+// TestSubjectRoundTrip confirms that a Change's Subject (the commit
+// message's first line, see issue #85) persists and reads back intact
+// through SaveChange -> QueryFeed, and that a Change with no subject
+// round-trips to an empty string — mirrors the IssueRefs and Facets
+// round-trip contracts already proven above.
+func TestSubjectRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+
+	withSubject := domain.Change{
+		Repo:        "apps-repo",
+		FilePath:    "versions.tf",
+		Field:       "google-provider-version",
+		ChangeType:  domain.ChangeTypeModified,
+		OldValue:    ptr("5.0.0"),
+		NewValue:    ptr("5.10.0"),
+		CommitSha:   "sha-with-subject",
+		Author:      "alice",
+		CommittedAt: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+		Subject:     "bump google provider to 5.10.0",
+	}
+	withoutSubject := domain.Change{
+		Repo:        "apps-repo",
+		FilePath:    "versions.tf",
+		Field:       "google-provider-version",
+		ChangeType:  domain.ChangeTypeModified,
+		OldValue:    ptr("5.10.0"),
+		NewValue:    ptr("5.11.0"),
+		CommitSha:   "sha-without-subject",
+		Author:      "bob",
+		CommittedAt: time.Date(2024, 1, 1, 1, 0, 0, 0, time.UTC),
+	}
+
+	if err := s.SaveChange(withSubject); err != nil {
+		t.Fatalf("SaveChange (withSubject): %v", err)
+	}
+	if err := s.SaveChange(withoutSubject); err != nil {
+		t.Fatalf("SaveChange (withoutSubject): %v", err)
+	}
+
+	feed, err := s.QueryFeed(100)
+	if err != nil {
+		t.Fatalf("QueryFeed: %v", err)
+	}
+	if len(feed) != 2 {
+		t.Fatalf("QueryFeed returned %d changes, want 2", len(feed))
+	}
+
+	// Newest first: sha-without-subject (later CommittedAt) is feed[0].
+	if got := feed[0].Subject; got != "" {
+		t.Errorf("feed[0] (sha-without-subject) Subject = %q, want empty", got)
+	}
+	if got := feed[1].Subject; got != "bump google provider to 5.10.0" {
+		t.Errorf("feed[1] (sha-with-subject) Subject = %q, want %q", got, "bump google provider to 5.10.0")
+	}
+}

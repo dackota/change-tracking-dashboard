@@ -33,7 +33,12 @@ type Changeset struct {
 	// a Changeset comes from the same commit and so carries the same
 	// IssueRefs. Nil/empty when the commit message had no reference.
 	IssueRefs []string
-	Changes   []Change
+	// Subject is the commit message's first line, hoisted here the same way
+	// Author/CommittedAt/IssueRefs are hoisted — every Change in a Changeset
+	// shares one commit. Empty when the commit predates #85 or otherwise has
+	// no recorded subject; callers fall back to the SHA in that case.
+	Subject string
+	Changes []Change
 }
 
 // commitKey identifies the commit that produced a Change. A CommitSha alone
@@ -64,6 +69,7 @@ func Assemble(changes []domain.Change) []Changeset {
 				Author:      c.Author,
 				CommittedAt: c.CommittedAt,
 				IssueRefs:   issueref.Copy(c.IssueRefs),
+				Subject:     c.Subject,
 			}
 			grouped[key] = cs
 			order = append(order, key)
