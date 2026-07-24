@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.11.0...app-v0.11.1) (2026-07-24)
+
+
+### Bug Fixes
+
+* **deps:** replace abandoned yaml.v3, golang-lru, and go-diff modules ([#118](https://github.com/dackota/change-tracking-dashboard/issues/118)) ([20ba093](https://github.com/dackota/change-tracking-dashboard/commit/20ba093aa3692e9efde07c4c373d2aae61160287))
+
 ## [0.11.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.10.8...app-v0.11.0) (2026-07-21)
 
 
