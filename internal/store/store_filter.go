@@ -55,7 +55,7 @@ func (s *Store) QueryFilteredFeed(limit int, filters map[string]string) ([]domai
 	// separate ? parameter so the driver handles escaping — no string injection.
 	const baseQuery = `
 SELECT repo, file_path, field, key_val, change_type,
-       old_value, new_value, facets_json, commit_sha, author, committed_at, issue_refs_json
+       old_value, new_value, facets_json, commit_sha, author, committed_at, issue_refs_json, commit_subject
 FROM changes`
 
 	var (

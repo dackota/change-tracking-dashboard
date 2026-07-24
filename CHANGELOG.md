@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.10.8...app-v0.11.0) (2026-07-21)
+
+
+### Features
+
+* **feed:** show commit subject in the change feed and detail header ([#111](https://github.com/dackota/change-tracking-dashboard/issues/111)) ([36d85ff](https://github.com/dackota/change-tracking-dashboard/commit/36d85ff62890929760585c906c7f6db8ce6a792a))
+
 ## [0.10.8](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.10.7...app-v0.10.8) (2026-07-20)
 
 
