@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // maxConfigBytes caps how much of the config file is read into memory, both on
