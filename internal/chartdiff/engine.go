@@ -17,13 +17,13 @@ import (
 	"errors"
 	"fmt"
 
-	lru "github.com/hashicorp/golang-lru/v2"
 	"golang.org/x/sync/singleflight"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/dackota/change-tracking-dashboard/internal/gitsource"
+	"github.com/dackota/change-tracking-dashboard/internal/lru"
 	"github.com/dackota/change-tracking-dashboard/internal/manifestdiff"
 	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
 )

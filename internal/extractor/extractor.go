@@ -9,7 +9,7 @@ import (
 
 	"github.com/dackota/change-tracking-dashboard/internal/domain"
 	"github.com/itchyny/gojq"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // Extractor holds a compiled gojq query and runs it against file content to
@@ -85,7 +85,7 @@ func buildKeyedField(m map[string]any) domain.TrackedField {
 	return domain.TrackedField{Present: true, Map: result}
 }
 
-// normalizeYAML converts map[any]any (what gopkg.in/yaml.v3 can produce for
+// normalizeYAML converts map[any]any (what go.yaml.in/yaml/v3 can produce for
 // some edge cases) into map[string]any so gojq can process it. In practice
 // yaml.v3 unmarshals to map[string]any directly for string keys, but we keep
 // this helper for safety and correctness.

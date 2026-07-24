@@ -4,7 +4,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/sergi/go-diff/diffmatchpatch"
+	"github.com/aymanbagabas/go-udiff"
 )
 
 // renderPairs renders the assembled Unified diff across all identity pairs,
@@ -83,11 +83,10 @@ func renderWhole(text, prefix string) (block string, lineCount int) {
 	return b.String(), lineCount
 }
 
-// lineDiff computes the line-level diff between oldText and newText using
-// diffmatchpatch's line-mode technique (DiffLinesToChars → DiffMain →
-// DiffCharsToLines: each line is hashed to a single rune so the underlying
-// character-level diff algorithm operates on whole lines), then renders it
-// as a unified +/- diff and returns the true added/removed line counts.
+// lineDiff computes the line-level diff between oldText and newText with
+// go-udiff (udiff.Lines aligns the edit script to whole-line boundaries),
+// then renders it as a unified +/- diff and returns the true added/removed
+// line counts.
 //
 // When the two texts are identical, lineDiff short-circuits to an empty
 // result rather than rendering the whole text as context: a "diff" with
@@ -98,44 +97,52 @@ func lineDiff(oldText, newText string) (unified string, added, removed int) {
 		return "", 0, 0
 	}
 
-	dmp := diffmatchpatch.New()
+	edits := udiff.Lines(oldText, newText)
+	// ToUnifiedDiff includes up to contextLines of unchanged lines around each
+	// change. Sizing the context to the combined line count guarantees every
+	// unchanged line is within reach of some change, so the whole diff renders
+	// as a single full-context hunk (no @@ headers, no elided regions) — the
+	// rendering this package has always produced. It is bounded to the actual
+	// text size rather than a huge constant because ToUnifiedDiff does work
+	// proportional to the context value.
+	context := strings.Count(oldText, "\n") + strings.Count(newText, "\n") + 2
+	diff, err := udiff.ToUnifiedDiff("old", "new", oldText, edits, context)
+	if err != nil {
+		// ToUnifiedDiff only errors when an edit is out of bounds for content,
+		// which udiff.Lines never produces from oldText itself. Fall back to a
+		// whole-file replacement so a changed pair still yields a diff rather
+		// than silently vanishing.
+		removedBlock, r := renderWhole(oldText, "-")
+		addedBlock, a := renderWhole(newText, "+")
+		return removedBlock + addedBlock, a, r
+	}
 
-	charsOld, charsNew, lineArray := dmp.DiffLinesToChars(oldText, newText)
-	diffs := dmp.DiffMain(charsOld, charsNew, false)
-	diffs = dmp.DiffCharsToLines(diffs, lineArray)
-
-	return renderUnified(diffs)
+	return renderUnified(diff)
 }
 
-// renderUnified turns diffmatchpatch's insert/delete/equal ops into a
-// unified +/- diff: each line of an insert op is "+"-prefixed, each line of
-// a delete op is "-"-prefixed, and each line of an equal op is " "-prefixed
-// context — the familiar git diff / helm diff style.
+// renderUnified turns go-udiff's per-line ops into a unified +/- diff: each
+// inserted line is "+"-prefixed, each deleted line is "-"-prefixed, and each
+// equal line is " "-prefixed context — the familiar git diff / helm diff
+// style.
 //
-// diffmatchpatch orders ops delete-before-insert, so the op whose text lacks
-// a trailing newline (whichever side — old or new — didn't end in one) is
-// often not the last op rendered; every line still goes through
-// writeDiffLine, so that op's line is terminated before the next op's lines
-// are written, regardless of op order.
-func renderUnified(diffs []diffmatchpatch.Diff) (unified string, added, removed int) {
+// Every line goes through writeDiffLine, so a line whose Content lacks a
+// trailing newline (whichever side — old or new — didn't end in one) is
+// terminated before the next line is written and can never fuse onto it,
+// regardless of the order go-udiff emits deletes and inserts in.
+func renderUnified(diff udiff.UnifiedDiff) (unified string, added, removed int) {
 	var b strings.Builder
-	for _, d := range diffs {
-		prefix := " " // diffmatchpatch.DiffEqual: context
-		switch d.Type {
-		case diffmatchpatch.DiffInsert:
-			prefix = "+"
-		case diffmatchpatch.DiffDelete:
-			prefix = "-"
-		}
-
-		for _, line := range splitPreservingNewlines(d.Text) {
-			writeDiffLine(&b, prefix, line)
-			switch d.Type {
-			case diffmatchpatch.DiffInsert:
+	for _, h := range diff.Hunks {
+		for _, ln := range h.Lines {
+			prefix := " " // udiff.Equal: context
+			switch ln.Kind {
+			case udiff.Insert:
+				prefix = "+"
 				added++
-			case diffmatchpatch.DiffDelete:
+			case udiff.Delete:
+				prefix = "-"
 				removed++
 			}
+			writeDiffLine(&b, prefix, ln.Content)
 		}
 	}
 	return b.String(), added, removed
