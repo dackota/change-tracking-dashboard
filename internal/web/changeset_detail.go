@@ -18,13 +18,28 @@ import (
 
 // ChangesetDetailHandler serves GET /api/changesets/detail as rendered HTML.
 type ChangesetDetailHandler struct {
-	st *store.Store
+	st   *store.Store
+	risk RiskRulesSource
+}
+
+// ChangesetDetailOption configures a ChangesetDetailHandler at construction.
+type ChangesetDetailOption func(*ChangesetDetailHandler)
+
+// WithDetailRiskRules sets the source of risk rules the detail view classifies
+// its changeset against. When unset, the handler falls back to the built-in
+// changeset.DefaultRiskRules (see riskRulesOrDefault).
+func WithDetailRiskRules(src RiskRulesSource) ChangesetDetailOption {
+	return func(h *ChangesetDetailHandler) { h.risk = src }
 }
 
 // NewChangesetDetailHandler creates a ChangesetDetailHandler backed by the
 // given store.
-func NewChangesetDetailHandler(st *store.Store) *ChangesetDetailHandler {
-	return &ChangesetDetailHandler{st: st}
+func NewChangesetDetailHandler(st *store.Store, opts ...ChangesetDetailOption) *ChangesetDetailHandler {
+	h := &ChangesetDetailHandler{st: st}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
 }
 
 // ServeHTTP satisfies http.Handler.
@@ -58,7 +73,7 @@ func (h *ChangesetDetailHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := renderChangesetDetail(w, cs); err != nil {
+	if err := renderChangesetDetail(w, cs, riskRulesOrDefault(h.risk)); err != nil {
 		logger.Error("web: render changeset detail", "error", err)
 	}
 }

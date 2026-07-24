@@ -183,8 +183,8 @@ func riskSlug(r changeset.Risk) string {
 // newRiskBadgeViews classifies cs's risk and projects the result into the
 // template's badge view model, in the same stable/sorted order
 // changeset.ClassifyRisk already returns.
-func newRiskBadgeViews(cs changeset.Changeset) []riskBadgeView {
-	risks := changeset.ClassifyRisk(cs, changeset.DefaultRiskRules())
+func newRiskBadgeViews(cs changeset.Changeset, rules []changeset.RiskRule) []riskBadgeView {
+	risks := changeset.ClassifyRisk(cs, rules)
 	views := make([]riskBadgeView, 0, len(risks))
 	for _, r := range risks {
 		views = append(views, riskBadgeView{Label: string(r), Slug: riskSlug(r)})
@@ -192,8 +192,9 @@ func newRiskBadgeViews(cs changeset.Changeset) []riskBadgeView {
 	return views
 }
 
-// newChangesetView builds the template view model for cs.
-func newChangesetView(cs changeset.Changeset) changesetView {
+// newChangesetView builds the template view model for cs, classifying its risk
+// against rules.
+func newChangesetView(cs changeset.Changeset, rules []changeset.RiskRule) changesetView {
 	changes := make([]changeView, 0, len(cs.Changes))
 	for _, c := range cs.Changes {
 		changes = append(changes, changeView{Change: c, TenantPath: filepath.Dir(c.FilePath), IsTerraformKind: c.Kind.IsTerraform()})
@@ -208,7 +209,7 @@ func newChangesetView(cs changeset.Changeset) changesetView {
 		CommittedAt: cs.CommittedAt,
 		IssueRefs:   cs.IssueRefs,
 		Changes:     changes,
-		Risks:       newRiskBadgeViews(cs),
+		Risks:       newRiskBadgeViews(cs, rules),
 	}
 }
 
@@ -262,7 +263,8 @@ func shortSha(sha string) string {
 	return sha[:8]
 }
 
-// renderChangesetDetail writes the rendered HTML detail view for cs to w.
-func renderChangesetDetail(w io.Writer, cs changeset.Changeset) error {
-	return changesetDetailTemplate.Execute(w, newChangesetView(cs))
+// renderChangesetDetail writes the rendered HTML detail view for cs to w,
+// classifying its risk badges against rules.
+func renderChangesetDetail(w io.Writer, cs changeset.Changeset, rules []changeset.RiskRule) error {
+	return changesetDetailTemplate.Execute(w, newChangesetView(cs, rules))
 }

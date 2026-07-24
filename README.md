@@ -34,8 +34,9 @@ questions that a plain `git log` can't:
   actual rendered-manifest delta between the old and new version.
 - **Terraform plan diffs** — a static, credential-free resource-change view for
   HCL changes, classified by kind and risk.
-- **Risk badges** — replace/destroy, security, and cost-tripwire signals surfaced
-  on the feed.
+- **Risk badges** — replace/destroy, security, cost-tripwire, and major-version-bump
+  signals surfaced on the feed. The rule set is configurable (see
+  [Risk rules](#risk-rules)).
 - **Issue/PR links** — changesets link back to the issues referenced in their
   commit messages.
 - **Repositories & Trackers views** — per-repo rollups and a live view of your
@@ -149,6 +150,56 @@ Field reference:
   the tracked value from the parsed file.
 - `trackers[].engine` — extractor backend: `jq`, `hcl` (for Terraform/HCL files),
   or omit to auto-detect from the file glob.
+
+### Risk rules
+
+Every changeset is classified into zero or more **risk** classes at read time and
+badged in the feed. Classification is data-driven: a rule fires when *all* of its
+predicates match a change in the changeset.
+
+The dashboard ships a built-in default rule set (replace/destroy, security,
+cost-tripwire tuned to the OCI dogfood conventions, plus a provider-agnostic
+**major version bump** rule that flags any tracked field whose old and new values
+are both semantic versions and whose major component increases — e.g. a Helm
+chart or image going `1.x` → `2.x`). Bare integers (a node count `2` → `3`) are
+treated as quantities, not versions, and never trip the semver rule.
+
+An optional top-level `riskRules:` block adds your own rules. Configured rules
+**augment** the built-ins (they don't replace them) and are hot-reloaded with the
+rest of the config. Each rule supports these predicate fields — every one is
+optional, and an omitted field matches anything along that dimension:
+
+```yaml
+riskRules:
+  # Flag a MAJOR version jump only for Helm chart dependencies.
+  - name: chart-major-bump
+    risk: major version bump        # badge label (any non-empty string)
+    kinds: [chart]                  # chart | value | provider | module | resource | variable
+    changeTypes: [modified]         # added | removed | modified
+    fieldPattern: chartDependencies # Go regexp matched against the field name
+    semverBump: major               # fires only on a major-version increase
+
+  # Flag any change that opens a firewall to the world.
+  - name: open-to-world
+    risk: security
+    valuePattern: '0\.0\.0\.0/0'    # Go regexp matched against the new (or, if
+                                    # removed, old) value
+```
+
+Field reference:
+
+- `name` — documents the rule; not matched against anything.
+- `risk` — the badge label emitted when the rule fires (required, non-empty).
+- `kinds` / `changeTypes` — restrict to those change kinds / types; unknown values
+  are rejected at load.
+- `filePathPattern` / `fieldPattern` / `valuePattern` — Go [regexp](https://pkg.go.dev/regexp/syntax)
+  matched (substring, unless anchored) against the change's file path, field name,
+  and value respectively; an invalid pattern is rejected at load.
+- `semverBump` — `major` fires only when the old and new values are both valid
+  semver and the major component increases. Omit for no version constraint.
+
+An invalid rule (bad regexp, unknown kind/changeType/semverBump, missing `risk`)
+fails config load with an actionable error rather than silently never firing.
 
 ## HTTP endpoints
 

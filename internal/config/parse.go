@@ -23,6 +23,7 @@ type rawConfig struct {
 	Defaults      Defaults      `yaml:"defaults"`
 	Trackers      []TrackerRaw  `yaml:"trackers"`
 	Observability Observability `yaml:"observability"`
+	RiskRules     []RiskRuleRaw `yaml:"riskRules"`
 }
 
 // readConfigFile reads at most maxConfigBytes from path, rejecting anything
@@ -89,11 +90,17 @@ func parseBytes(data []byte) (*Config, error) {
 		domainTrackers = append(domainTrackers, flat...)
 	}
 
+	riskRules, err := resolveRiskRules(raw.RiskRules)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Config{
 		Defaults:       raw.Defaults,
 		TrackerConfigs: resolved,
 		Trackers:       domainTrackers,
 		Observability:  raw.Observability,
+		RiskRules:      riskRules,
 	}, nil
 }
 

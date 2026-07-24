@@ -73,6 +73,7 @@ const detailStyles = `
     .risk-badge.risk-replace-destroy { background: rgba(220, 53, 69, 0.14); color: var(--oc-danger); }
     .risk-badge.risk-security { background: rgba(220, 53, 69, 0.14); color: var(--oc-danger); }
     .risk-badge.risk-cost-tripwire { background: rgba(184, 134, 11, 0.16); color: #8a6200; }
+    .risk-badge.risk-major-version-bump { background: rgba(111, 66, 193, 0.14); color: #6f42c1; }
 
     /* Chart diff summary + color-coded hunks */
     .chart-diff-summary { display: flex; gap: 0.6rem; align-items: center; font-size: 0.82rem; margin-bottom: 0.5rem; }

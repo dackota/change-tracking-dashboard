@@ -213,8 +213,8 @@ func run(configPath, dbPath, listenAddr string, logger *slog.Logger) error {
 	// --- HTTP ---
 	timelineHandler := web.NewTimelineHandler(st, pollStatus)
 	staticHandler := web.NewStaticHandler()
-	changesetsHandler := web.NewChangesetsHandler(st)
-	changesetDetailHandler := web.NewChangesetDetailHandler(st)
+	changesetsHandler := web.NewChangesetsHandler(st, web.WithChangesetsRiskRules(cfgWatcher))
+	changesetDetailHandler := web.NewChangesetDetailHandler(st, web.WithDetailRiskRules(cfgWatcher))
 	chartDiffHandler := web.NewChartDiffHandler(chartDiffEngine, sources, st)
 	planDiffHandler := web.NewPlanDiffHandler(planDiffEngine, sources, st)
 	trackersHandler := web.NewTrackersHandler(cfgWatcher, pollStatus)

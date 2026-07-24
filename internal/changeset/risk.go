@@ -11,7 +11,9 @@ package changeset
 import (
 	"regexp"
 	"sort"
+	"strings"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/dackota/change-tracking-dashboard/internal/domain"
 )
 
@@ -28,6 +30,25 @@ const (
 	// RiskCostTripwire marks a change to a cost-relevant attribute (node
 	// count/size, OCPU, memory, boot-volume size, budget amount, …).
 	RiskCostTripwire Risk = "cost tripwire"
+	// RiskMajorVersionBump marks a change whose old and new values are both
+	// semantic versions and whose major component increases (e.g. a Helm chart
+	// or container image going 1.x → 2.x) — a provider-agnostic "breaking
+	// upgrade" signal, unlike the OCI-specific rules above.
+	RiskMajorVersionBump Risk = "major version bump"
+)
+
+// SemverBumpLevel names how large a semantic-version increase a rule requires
+// before it fires. It is the one relational predicate on RiskRule: every other
+// predicate inspects a single Change field in isolation, but a version "bump"
+// is defined by the relationship between a Change's old and new values.
+type SemverBumpLevel string
+
+const (
+	// SemverBumpMajor fires only when both the old and new value parse as
+	// semantic versions and the new major component is greater than the old
+	// (e.g. 1.9.0 → 2.0.0). A minor/patch-only change, an add/remove (one side
+	// absent), or a value that is not valid semver does not qualify.
+	SemverBumpMajor SemverBumpLevel = "major"
 )
 
 // RiskRule is one config-driven rule: a Change matching every non-empty
@@ -71,6 +92,14 @@ type RiskRule struct {
 	// the value content itself (e.g. "0.0.0.0/0"). Empty matches any value,
 	// including a Change with neither value set.
 	ValuePattern string
+
+	// SemverBump, when non-empty, restricts the rule to a Change whose old and
+	// new values are both semantic versions differing by at least the named
+	// level (today only SemverBumpMajor). It is the sole relational predicate:
+	// unlike the pattern fields above, it compares OldValue against NewValue
+	// rather than matching a single value against a regex. Empty imposes no
+	// semver constraint (matches any change along this dimension).
+	SemverBump SemverBumpLevel
 }
 
 // ClassifyRisk evaluates rules against every Change in cs and returns the
@@ -114,7 +143,48 @@ func ruleMatches(rule RiskRule, c Change) bool {
 	if !matchesPattern(rule.ValuePattern, changeValue(c)) {
 		return false
 	}
+	if !matchesSemverBump(rule.SemverBump, c) {
+		return false
+	}
 	return true
+}
+
+// matchesSemverBump reports whether Change c satisfies the semver-bump level.
+// An empty level is unconstrained (always matches). A non-empty level requires
+// c to be a modification carrying both an old and a new value that each parse
+// as a semantic version, with the increase reaching the named level — today
+// only SemverBumpMajor (new.Major() > old.Major()). A Change missing either
+// value (an add or a remove) or carrying a value that is not valid semver
+// (e.g. a Terraform constraint like "~>8.0", or a floating tag like "latest")
+// never matches — keeping the predicate a total function like the others.
+func matchesSemverBump(level SemverBumpLevel, c Change) bool {
+	if level == "" {
+		return true
+	}
+	if c.OldValue == nil || c.NewValue == nil {
+		return false
+	}
+	// A bare integer parses as a valid semver ("3" → 3.0.0), but it is a scalar
+	// quantity (a node count, memory GBs, a budget), not a version. Require at
+	// least a MAJOR.MINOR shape (a dot) on both sides so raising such a
+	// quantity is never mistaken for a version bump.
+	if !strings.Contains(*c.OldValue, ".") || !strings.Contains(*c.NewValue, ".") {
+		return false
+	}
+	oldV, err := semver.NewVersion(*c.OldValue)
+	if err != nil {
+		return false
+	}
+	newV, err := semver.NewVersion(*c.NewValue)
+	if err != nil {
+		return false
+	}
+	switch level {
+	case SemverBumpMajor:
+		return newV.Major() > oldV.Major()
+	default:
+		return false
+	}
 }
 
 // changeValue returns the Change's NewValue, falling back to OldValue when
@@ -179,13 +249,30 @@ func sortedRisks(found map[Risk]struct{}) []Risk {
 	return out
 }
 
-// ValidateRiskRules compiles every non-empty pattern in rules and returns an
-// error naming the first invalid one. Callers that load RiskRules from an
-// external source (e.g. a YAML config file) should call this once at load
-// time to fail fast on a typo'd regex, rather than have ClassifyRisk quietly
-// treat it as "never matches" forever.
+// ValidateRiskRules checks every rule and returns an error naming the first
+// invalid one. It rejects an empty Risk, an unknown Kind/ChangeType/SemverBump
+// predicate, and a pattern that fails to compile. Callers that load RiskRules
+// from an external source (e.g. a YAML config file) should call this once at
+// load time to fail fast on a typo, rather than have ClassifyRisk quietly treat
+// the rule as "never matches" forever.
 func ValidateRiskRules(rules []RiskRule) error {
 	for _, rule := range rules {
+		if rule.Risk == "" {
+			return &RiskRuleError{RuleName: rule.Name, Problem: "risk is required"}
+		}
+		for _, k := range rule.Kinds {
+			if !isKnownKind(k) {
+				return &RiskRuleError{RuleName: rule.Name, Problem: "unknown kind " + string(k)}
+			}
+		}
+		for _, ct := range rule.ChangeTypes {
+			if !isKnownChangeType(ct) {
+				return &RiskRuleError{RuleName: rule.Name, Problem: "unknown changeType " + string(ct)}
+			}
+		}
+		if !isKnownSemverBump(rule.SemverBump) {
+			return &RiskRuleError{RuleName: rule.Name, Problem: "unknown semverBump level " + string(rule.SemverBump)}
+		}
 		for _, pattern := range []string{rule.FilePathPattern, rule.FieldPattern, rule.ValuePattern} {
 			if pattern == "" {
 				continue
@@ -196,6 +283,40 @@ func ValidateRiskRules(rules []RiskRule) error {
 		}
 	}
 	return nil
+}
+
+// isKnownSemverBump reports whether level is one this classifier understands.
+// The empty level (no semver constraint) is always valid; every other value
+// must be one of the SemverBumpLevel constants.
+func isKnownSemverBump(level SemverBumpLevel) bool {
+	switch level {
+	case "", SemverBumpMajor:
+		return true
+	default:
+		return false
+	}
+}
+
+// isKnownChangeType reports whether t is one of the domain ChangeType values.
+func isKnownChangeType(t domain.ChangeType) bool {
+	switch t {
+	case domain.ChangeTypeAdded, domain.ChangeTypeRemoved, domain.ChangeTypeModified:
+		return true
+	default:
+		return false
+	}
+}
+
+// RiskRuleError reports a risk rule whose non-pattern predicate is invalid (an
+// empty risk, or an unknown kind/changeType/semverBump value), naming the rule
+// and the problem so a config-load failure is actionable.
+type RiskRuleError struct {
+	RuleName string
+	Problem  string
+}
+
+func (e *RiskRuleError) Error() string {
+	return "changeset: risk rule " + e.RuleName + ": " + e.Problem
 }
 
 // InvalidRiskRuleError names the rule and pattern that failed to compile, so
