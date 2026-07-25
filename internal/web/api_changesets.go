@@ -90,6 +90,12 @@ type changesetsResponse struct {
 // Marshaled as "risk": [] (never omitted, never null) so a changeset with no
 // risk classes still renders as an explicit empty list, matching
 // ClassifyRisk's own "empty set is a valid result" contract.
+//
+// Impact is a Changeset-level, query-time projection (changeset.ClassifyImpact)
+// — computed on read like Risk and Kind, never stored. Unlike Risk it is
+// always exactly one of the tier strings, never omitted/empty/null, so a
+// changeset with no comparable version change still carries "other" rather
+// than a blank field.
 type changesetJSON struct {
 	Repo        string       `json:"repo"`
 	CommitSha   string       `json:"commitSha"`
@@ -101,6 +107,7 @@ type changesetJSON struct {
 	Subject string       `json:"subject,omitempty"`
 	Changes []changeJSON `json:"changes"`
 	Risk    []string     `json:"risk"`
+	Impact  string       `json:"impact"`
 }
 
 // changeJSON is the explicit JSON shape for one Change within a Changeset.
@@ -292,6 +299,7 @@ func toChangesetJSON(cs changeset.Changeset, rules []changeset.RiskRule) changes
 		Subject:     cs.Subject,
 		Changes:     changes,
 		Risk:        toRiskStrings(changeset.ClassifyRisk(cs, rules)),
+		Impact:      string(changeset.ClassifyImpact(cs)),
 	}
 }
 

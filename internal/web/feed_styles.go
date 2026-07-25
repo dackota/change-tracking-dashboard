@@ -83,6 +83,18 @@ const detailStyles = `
     .risk-badge.risk-cost-tripwire { background: rgba(184, 134, 11, 0.16); color: #8a6200; }
     .risk-badge.risk-major-version-bump { background: rgba(111, 66, 193, 0.14); color: #6f42c1; }
 
+    /* Impact badges: one always-present tier per Changeset (R122), rendered
+       into the same cell as the risk badges above, before them. Each tier
+       gets its own colour; a tier the CSS doesn't recognize (a future
+       addition) still renders via the neutral .impact-badge base rather than
+       disappearing, mirroring the .risk-badge/.risk-{slug} fallback pattern. */
+    .impact-badge { display: inline-block; font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; padding: 0.15rem 0.5rem; border-radius: 999px; background: var(--oc-line-soft); color: #495057; }
+    .impact-badge.impact-major { background: rgba(220, 53, 69, 0.14); color: var(--oc-danger); }
+    .impact-badge.impact-minor { background: rgba(13, 110, 253, 0.14); color: #0d6efd; }
+    .impact-badge.impact-patch { background: rgba(25, 135, 84, 0.14); color: #198754; }
+    .impact-badge.impact-downgrade { background: rgba(184, 134, 11, 0.16); color: #8a6200; }
+    .impact-badge.impact-other { background: var(--oc-line-soft); color: #495057; }
+
     /* Chart diff summary + color-coded hunks */
     .chart-diff-summary { display: flex; gap: 0.6rem; align-items: center; font-size: 0.82rem; margin-bottom: 0.5rem; }
     .chart-diff-manifests-changed { font-weight: 600; color: var(--oc-ink); }
