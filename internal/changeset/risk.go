@@ -11,10 +11,9 @@ package changeset
 import (
 	"regexp"
 	"sort"
-	"strings"
 
-	"github.com/Masterminds/semver/v3"
 	"github.com/dackota/change-tracking-dashboard/internal/domain"
+	"github.com/dackota/change-tracking-dashboard/internal/versiondelta"
 )
 
 // Risk is a risk classification derived for a Changeset.
@@ -153,10 +152,12 @@ func ruleMatches(rule RiskRule, c Change) bool {
 // An empty level is unconstrained (always matches). A non-empty level requires
 // c to be a modification carrying both an old and a new value that each parse
 // as a semantic version, with the increase reaching the named level — today
-// only SemverBumpMajor (new.Major() > old.Major()). A Change missing either
-// value (an add or a remove) or carrying a value that is not valid semver
-// (e.g. a Terraform constraint like "~>8.0", or a floating tag like "latest")
-// never matches — keeping the predicate a total function like the others.
+// only SemverBumpMajor. Delegates entirely to versiondelta.Compare for what
+// counts as a version (v-prefix tolerance, the bare-integer scalar-quantity
+// guard, non-semver rejection) so this predicate and impact classification
+// can never disagree about the definition of a version bump. A Change
+// missing either value (an add or a remove) or carrying a non-comparable
+// value never matches — keeping the predicate a total function.
 func matchesSemverBump(level SemverBumpLevel, c Change) bool {
 	if level == "" {
 		return true
@@ -164,24 +165,13 @@ func matchesSemverBump(level SemverBumpLevel, c Change) bool {
 	if c.OldValue == nil || c.NewValue == nil {
 		return false
 	}
-	// A bare integer parses as a valid semver ("3" → 3.0.0), but it is a scalar
-	// quantity (a node count, memory GBs, a budget), not a version. Require at
-	// least a MAJOR.MINOR shape (a dot) on both sides so raising such a
-	// quantity is never mistaken for a version bump.
-	if !strings.Contains(*c.OldValue, ".") || !strings.Contains(*c.NewValue, ".") {
-		return false
-	}
-	oldV, err := semver.NewVersion(*c.OldValue)
-	if err != nil {
-		return false
-	}
-	newV, err := semver.NewVersion(*c.NewValue)
-	if err != nil {
+	delta, ok := versiondelta.Compare(*c.OldValue, *c.NewValue)
+	if !ok {
 		return false
 	}
 	switch level {
 	case SemverBumpMajor:
-		return newV.Major() > oldV.Major()
+		return delta == versiondelta.Major
 	default:
 		return false
 	}
