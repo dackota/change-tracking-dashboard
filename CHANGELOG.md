@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.11.1...app-v0.12.0) (2026-07-25)
+
+
+### Features
+
+* **risk:** config-driven major-version-bump classification ([#120](https://github.com/dackota/change-tracking-dashboard/issues/120)) ([1672c18](https://github.com/dackota/change-tracking-dashboard/commit/1672c181dc1f1dc42bf2b74d0f9a5fa7a33dfbaa))
+
 ## [0.11.1](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.11.0...app-v0.11.1) (2026-07-24)
 
 
