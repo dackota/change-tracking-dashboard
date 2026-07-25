@@ -44,6 +44,7 @@ var changesetDetailTemplateSource = fmt.Sprintf(`
     {{if .CommitURL}}<a class="changeset-detail-commit" href="{{.CommitURL}}" target="_blank" rel="noopener noreferrer" title="{{.CommitSha}}">{{.ShortSha}}</a>{{else}}<span class="changeset-detail-commit" title="{{.CommitSha}}">{{.ShortSha}}</span>{{end}}
     <span class="changeset-detail-author">{{.Author}}</span>
     <time class="changeset-detail-committed-at">{{.CommittedAt.Format "2006-01-02 15:04"}}</time>
+    <span class="impact-badge impact-{{.Impact}}" data-impact="{{.Impact}}">{{.Impact}}</span>
     {{range .Risks}}<span class="risk-badge risk-{{.Slug}}" data-risk="{{.Label}}">{{.Label}}</span>{{end}}
     {{if .IssueRefs}}<span class="changeset-detail-issue-refs">{{range .IssueRefs}}<span class="changeset-detail-issue-ref">{{.}}</span>{{end}}</span>{{end}}
   </header>
@@ -71,6 +72,7 @@ var changesetDetailTemplate = template.Must(template.New("changeset-detail").Par
 var valueChangeTemplate = template.Must(changesetDetailTemplate.New("value-change").Parse(`
 <li class="change change-kind-value" data-kind="value" data-field="{{.Field}}">
   <span class="change-label">Value change</span>
+  <span class="impact-badge impact-{{.Impact}}" data-impact="{{.Impact}}">{{.Impact}}</span>
   <span class="change-field">{{.Field}}{{if .Key}} [{{.Key}}]{{end}}</span>
   <span class="change-old-value">{{if .OldValue}}{{.OldValue}}{{end}}</span>
   <span class="change-arrow">&rarr;</span>
@@ -88,6 +90,7 @@ var valueChangeTemplate = template.Must(changesetDetailTemplate.New("value-chang
 var chartChangeTemplate = template.Must(valueChangeTemplate.New("chart-change").Parse(`
 <li class="change change-kind-chart" data-kind="chart" data-field="{{.Field}}">
   <span class="change-label">Chart change</span>
+  <span class="impact-badge impact-{{.Impact}}" data-impact="{{.Impact}}">{{.Impact}}</span>
   <span class="change-field">{{.Field}}{{if .Key}} [{{.Key}}]{{end}}</span>
   <span class="change-dependency-version-old">{{if .OldValue}}{{.OldValue}}{{end}}</span>
   <span class="change-arrow">&rarr;</span>
@@ -111,6 +114,7 @@ var chartChangeTemplate = template.Must(valueChangeTemplate.New("chart-change").
 var terraformChangeTemplate = template.Must(chartChangeTemplate.New("terraform-change").Parse(`
 <li class="change change-kind-terraform" data-kind="terraform" data-field="{{.Field}}">
   <span class="change-label">Terraform change</span>
+  <span class="impact-badge impact-{{.Impact}}" data-impact="{{.Impact}}">{{.Impact}}</span>
   <span class="change-field">{{.Field}}{{if .Key}} [{{.Key}}]{{end}}</span>
   <span class="change-old-value">{{if .OldValue}}{{.OldValue}}{{end}}</span>
   <span class="change-arrow">&rarr;</span>
@@ -136,6 +140,11 @@ type changeView struct {
 	// the four Terraform sub-Kinds: provider/module/resource/variable) since
 	// html/template's {{eq}} can't express a set membership test.
 	IsTerraformKind bool
+	// Impact is this individual Change's own impact tier (changeset.
+	// ClassifyChangeImpact), distinct from the Changeset-level rollup shown
+	// in the header — the detail view is the one place a bundled
+	// changeset's per-change tiers are visible at all.
+	Impact string
 }
 
 // changesetView is the changeset-detail template's top-level view model:
@@ -160,6 +169,11 @@ type changesetView struct {
 	// (acceptance criterion 6's "zero risk classes" case), which the
 	// template's {{range}} renders as no badge at all.
 	Risks []riskBadgeView
+	// Impact is cs's rolled-up impact tier (changeset.ClassifyImpact),
+	// always present — mirrors the feed's badge so the classification a
+	// viewer saw before clicking through is confirmed, not lost, on
+	// navigation.
+	Impact string
 }
 
 // riskBadgeView is one risk class rendered as a badge: Label is the
@@ -202,7 +216,12 @@ func newRiskBadgeViews(cs changeset.Changeset, rules []changeset.RiskRule) []ris
 func newChangesetView(cs changeset.Changeset, rules []changeset.RiskRule) changesetView {
 	changes := make([]changeView, 0, len(cs.Changes))
 	for _, c := range cs.Changes {
-		changes = append(changes, changeView{Change: c, TenantPath: filepath.Dir(c.FilePath), IsTerraformKind: c.Kind.IsTerraform()})
+		changes = append(changes, changeView{
+			Change:          c,
+			TenantPath:      filepath.Dir(c.FilePath),
+			IsTerraformKind: c.Kind.IsTerraform(),
+			Impact:          string(changeset.ClassifyChangeImpact(c)),
+		})
 	}
 	return changesetView{
 		Repo:        cs.Repo,
@@ -216,6 +235,7 @@ func newChangesetView(cs changeset.Changeset, rules []changeset.RiskRule) change
 		Subject:     cs.Subject,
 		Changes:     changes,
 		Risks:       newRiskBadgeViews(cs, rules),
+		Impact:      string(changeset.ClassifyImpact(cs)),
 	}
 }
 
