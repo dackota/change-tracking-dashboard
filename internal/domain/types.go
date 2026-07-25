@@ -29,6 +29,7 @@ type Change struct {
 	Author      string
 	CommittedAt time.Time // feed ordering key; newest first
 	IssueRefs   []string  // issue/PR references parsed from the commit message, e.g. ["#123", "ABC-456"]; nil when none
+	Subject     string    // first line of the commit message; empty when unavailable (e.g. pre-#85 rows)
 }
 
 // TrackedField is the result an Extractor yields for a single watched value.

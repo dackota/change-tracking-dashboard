@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 	releaseutil "helm.sh/helm/v4/pkg/release/v1/util"
 )
 
@@ -25,7 +25,7 @@ type Manifest struct {
 	Namespace string
 	Name      string
 	// YAML is this object alone, re-serialized with canonical (alphabetical)
-	// key ordering. gopkg.in/yaml.v3's encoder sorts map keys — same as
+	// key ordering. go.yaml.in/yaml/v3's encoder sorts map keys — same as
 	// sigs.k8s.io/yaml's JSON round-trip did — so a chart author reordering
 	// keys in the source template never shows up as a spurious diff
 	// downstream. Unlike a JSON round-trip, decoding through yaml.v3 keeps

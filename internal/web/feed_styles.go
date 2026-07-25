@@ -21,9 +21,16 @@ const feedStyles = `
     .feed-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 0.45rem; vertical-align: middle; }
     .feed-cell-when { font-variant-numeric: tabular-nums; color: #495057; white-space: nowrap; }
     .feed-repo { font-weight: 600; color: var(--oc-ink); display: inline-block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px; vertical-align: middle; }
+    .feed-cell-commit { max-width: 260px; }
+    /* .feed-commit-subject (#85) is the primary, readable label for a feed
+       row's commit — the short sha (below/beside it via .feed-commit-sha)
+       stays the click-through link. Truncated with an ellipsis; the full
+       text survives via its title attribute tooltip (set in timeline.js). */
+    .feed-commit-subject { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; color: var(--oc-ink); }
     .feed-commit { font-family: var(--mono); font-size: 0.8rem; color: var(--oc-accent); text-decoration: none; }
     .feed-commit:hover { text-decoration: underline; }
     .feed-commit-plain { color: var(--oc-muted); }
+    .feed-commit-sha { display: block; font-size: 0.75rem; }
     .feed-cell-author { color: var(--oc-muted); }
     .feed-cell-risk { white-space: nowrap; }
     .feed-empty-row td { text-align: center; color: var(--oc-muted); font-size: 0.9rem; padding: 1.5rem 1rem; }
@@ -48,6 +55,7 @@ const detailStyles = `
     .changeset-detail { border: 1px solid var(--oc-line); border-radius: 10px; background: var(--oc-panel); padding: 0.9rem 1rem; margin-bottom: 1rem; }
     .changeset-detail-header { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap; padding-bottom: 0.6rem; border-bottom: 1px solid var(--oc-line-soft); margin-bottom: 0.6rem; }
     .changeset-detail-repo { font-weight: 700; display: inline-block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; min-width: 0; vertical-align: bottom; }
+    .changeset-detail-subject { font-weight: 600; display: inline-block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 360px; min-width: 0; vertical-align: bottom; }
     .changeset-detail-commit { font-family: var(--mono); font-size: 0.82rem; color: var(--oc-accent); text-decoration: none; }
     .changeset-detail-commit:hover { text-decoration: underline; }
     .changeset-detail-author { color: var(--oc-muted); font-size: 0.85rem; }

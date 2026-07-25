@@ -43,6 +43,75 @@ CREATE TABLE changes (
     committed_at  TEXT    NOT NULL
 );`
 
+// preSubjectChangesSchema is the changes table as it existed BEFORE #85 added
+// commit_subject: it has issue_refs_json (post-#77) but no commit_subject
+// column. A production database created between 0.9.0 and #85 looks exactly
+// like this.
+const preSubjectChangesSchema = `
+CREATE TABLE changes (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    repo          TEXT    NOT NULL,
+    file_path     TEXT    NOT NULL,
+    field         TEXT    NOT NULL,
+    key_val       TEXT,
+    change_type   TEXT    NOT NULL,
+    old_value     TEXT,
+    new_value     TEXT,
+    facets_json   TEXT    NOT NULL DEFAULT '{}',
+    commit_sha    TEXT    NOT NULL,
+    author        TEXT    NOT NULL,
+    committed_at  TEXT    NOT NULL,
+    issue_refs_json TEXT  NOT NULL DEFAULT '[]'
+);`
+
+// TestOpen_MigratesLegacyDBMissingCommitSubjectColumn reproduces a
+// pre-#85 database: the changes table has issue_refs_json but no
+// commit_subject column. CREATE TABLE IF NOT EXISTS never alters an
+// already-present table, so opening the store must ALTER the column in and
+// let a previously-recorded row read back with the empty-string default for
+// Subject (the web layer falls back to the SHA for these rows).
+func TestOpen_MigratesLegacyDBMissingCommitSubjectColumn(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pre-subject.db")
+
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open legacy db: %v", err)
+	}
+	if _, err := legacy.Exec(preSubjectChangesSchema); err != nil {
+		t.Fatalf("create pre-subject changes table: %v", err)
+	}
+	if _, err := legacy.Exec(
+		`INSERT INTO changes (repo, file_path, field, change_type, commit_sha, author, committed_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		"apps-repo", "versions.tf", "google-provider-version", "modified",
+		"sha-pre-subject", "alice", "2024-01-01T00:00:00Z",
+	); err != nil {
+		t.Fatalf("insert pre-subject row: %v", err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatalf("close legacy db: %v", err)
+	}
+
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("store.Open on pre-subject db: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	feed, err := s.QueryFeed(100)
+	if err != nil {
+		t.Fatalf("QueryFeed after migrating pre-subject db: %v", err)
+	}
+	if len(feed) != 1 {
+		t.Fatalf("QueryFeed returned %d rows, want 1", len(feed))
+	}
+	if got := feed[0].Subject; got != "" {
+		t.Errorf("pre-subject row Subject = %q, want empty", got)
+	}
+}
+
 // TestOpen_MigratesLegacyDBMissingIssueRefsColumn reproduces the production
 // outage: a pre-0.9.0 database whose changes table lacks issue_refs_json. The
 // schema is created with CREATE TABLE IF NOT EXISTS, so re-running it against an

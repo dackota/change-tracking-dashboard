@@ -31,6 +31,12 @@
       "description": "Never auto-merge a major bump; always leave it as a manual PR.",
       "matchUpdateTypes": ["major"],
       "automerge": false
+    },
+    {
+      "description": "hashicorp/hcl/v2 is the canonical, still-maintained HCL parser (v2.24.0 released 2025-07); Renovate's release-cadence heuristic flags it as abandoned, but there is no viable drop-in replacement and it is used for deep in-process HCL parsing (hclextract, plandiff). Raise the abandonment threshold so it is not reported as abandoned. See #117.",
+      "matchDatasources": ["go"],
+      "matchPackageNames": ["github.com/hashicorp/hcl/v2"],
+      "abandonmentThreshold": "10 years"
     }
   ]
 }
