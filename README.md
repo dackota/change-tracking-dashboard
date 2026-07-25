@@ -34,9 +34,13 @@ questions that a plain `git log` can't:
   actual rendered-manifest delta between the old and new version.
 - **Terraform plan diffs** — a static, credential-free resource-change view for
   HCL changes, classified by kind and risk.
-- **Risk badges** — replace/destroy, security, cost-tripwire, and major-version-bump
-  signals surfaced on the feed. The rule set is configurable (see
-  [Risk rules](#risk-rules)).
+- **Impact tiers** — every changeset carries an always-present `major` /
+  `minor` / `patch` / `downgrade` / `other` badge derived from the semantic-
+  version delta of its changes — no configuration, no migration (see
+  [Impact tiers](#impact-tiers)).
+- **Risk badges** — replace/destroy, security, and cost-tripwire signals
+  surfaced on the feed, orthogonal to Impact. The rule set is configurable
+  (see [Risk rules](#risk-rules)).
 - **Issue/PR links** — changesets link back to the issues referenced in their
   commit messages.
 - **Repositories & Trackers views** — per-repo rollups and a live view of your
@@ -151,18 +155,66 @@ Field reference:
 - `trackers[].engine` — extractor backend: `jq`, `hcl` (for Terraform/HCL files),
   or omit to auto-detect from the file glob.
 
+### Impact tiers
+
+Every changeset (and every individual change within it) carries an **impact**
+tier, computed at read time from the semantic-version delta of the change's old
+and new values — never stored, never configured, and never blank:
+
+| Tier | Meaning | Example |
+| --- | --- | --- |
+| `major` | Breaking upgrade | `1.9.0 → 2.0.0` |
+| `minor` | New functionality | `1.20.3 → 1.21.0` |
+| `patch` | Fix-level bump | `10.1.2 → 10.1.3` |
+| `downgrade` | Version moved backwards (rollback) | `2.0.0 → 1.9.0` |
+| `other` | Not a comparable version change | add/remove, `~>7.0 → ~>8.0`, node count `2 → 3` |
+
+A changeset's badge is the highest-precedence tier among its changes:
+
+```
+major > downgrade > minor > patch > other
+```
+
+A rollback is more notable than a routine forward minor/patch bump, but a
+major version jump is still the headline for a changeset containing both.
+
+Impact requires **no configuration** — it works out of the box on upgrade,
+with no schema migration and no re-poll, since it's derived fresh on every
+read (the same way `Kind` already is). It is **orthogonal to Risk**: a
+changeset carries one impact tier *and* zero-or-more risk flags — a
+cost-tripwire node-pool resize still shows its risk badge alongside whatever
+impact tier the resize itself carries.
+
+Because Impact now owns the major-version signal, the risk rule set's
+previous `major version bump` default was removed (see [Risk
+rules](#risk-rules) below for how to re-add it explicitly via `riskRules` if
+you relied on that badge specifically).
+
 ### Risk rules
 
 Every changeset is classified into zero or more **risk** classes at read time and
-badged in the feed. Classification is data-driven: a rule fires when *all* of its
-predicates match a change in the changeset.
+badged in the feed, alongside (not instead of) its Impact tier. Classification is
+data-driven: a rule fires when *all* of its predicates match a change in the
+changeset.
 
-The dashboard ships a built-in default rule set (replace/destroy, security,
-cost-tripwire tuned to the OCI dogfood conventions, plus a provider-agnostic
-**major version bump** rule that flags any tracked field whose old and new values
-are both semantic versions and whose major component increases — e.g. a Helm
-chart or image going `1.x` → `2.x`). Bare integers (a node count `2` → `3`) are
-treated as quantities, not versions, and never trip the semver rule.
+The dashboard ships a built-in default rule set: replace/destroy, security, and
+cost-tripwire, tuned to the OCI dogfood conventions. It no longer ships a
+default major-version-bump rule — `impact: major` (see [Impact
+tiers](#impact-tiers) above) carries that signal now, so a major bump earns
+exactly one badge instead of two saying the same thing. The `semverBump`
+predicate itself is still fully supported for a config-authored rule (see
+below) — only the shipped default was removed. Bare integers (a node count `2`
+→ `3`) are treated as quantities, not versions, and never trip the semver
+predicate.
+
+If you relied on the removed default, re-add it explicitly:
+
+```yaml
+riskRules:
+  - name: semver-major-bump
+    risk: major version bump
+    semverBump: major
+```
 
 An optional top-level `riskRules:` block adds your own rules. Configured rules
 **augment** the built-ins (they don't replace them) and are hot-reloaded with the

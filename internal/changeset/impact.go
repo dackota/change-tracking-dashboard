@@ -19,16 +19,24 @@ const (
 	ImpactMinor Impact = "minor"
 	// ImpactPatch is a fix-level bump (e.g. 10.1.2 -> 10.1.3).
 	ImpactPatch Impact = "patch"
-	// ImpactOther is anything that is not a comparable forward version bump:
-	// an add/remove, a non-semver value, a bare-integer quantity, equal
-	// values, or (until the downgrade tier ships) a backwards move. The
-	// catch-all that guarantees the column is never blank.
+	// ImpactDowngrade is a version moving backwards (a rollback), regardless
+	// of which component decreased (e.g. 2.0.0 -> 1.9.0, or 1.9.3 -> 1.9.1).
+	ImpactDowngrade Impact = "downgrade"
+	// ImpactOther is anything that is not a comparable version change at
+	// all: an add/remove, a non-semver value, a bare-integer quantity, or
+	// equal values. The catch-all that guarantees the column is never blank.
 	ImpactOther Impact = "other"
 )
 
 // impactRollupOrder is the rollup precedence, most notable first: a
 // changeset's tier is the highest-precedence tier among its changes.
-var impactRollupOrder = []Impact{ImpactMajor, ImpactMinor, ImpactPatch, ImpactOther}
+//
+// Precedence decision (confirmed): major > downgrade > minor > patch >
+// other. A rollback is more notable than a routine forward minor/patch
+// bump, but a major version jump is still the headline for a changeset that
+// contains both. Cheap to revisit later since Impact is computed at read
+// time, never stored.
+var impactRollupOrder = []Impact{ImpactMajor, ImpactDowngrade, ImpactMinor, ImpactPatch, ImpactOther}
 
 // ClassifyChangeImpact classifies a single Change by the semver delta
 // between its old and new value. A Change missing either value (an add or a
@@ -50,11 +58,9 @@ func ClassifyChangeImpact(c Change) Impact {
 		return ImpactMinor
 	case versiondelta.Patch:
 		return ImpactPatch
+	case versiondelta.Downgrade:
+		return ImpactDowngrade
 	default:
-		// versiondelta.Downgrade, for now: the dedicated downgrade tier
-		// arrives in its own slice. A backwards move is deliberately not
-		// labelled major here, so it lands on the "not a comparable forward
-		// bump" catch-all instead of a misleading intermediate state.
 		return ImpactOther
 	}
 }

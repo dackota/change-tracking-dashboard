@@ -18,6 +18,7 @@ func TestDetailStyles_ImpactBadgeModifiersExist(t *testing.T) {
 		".impact-badge.impact-major",
 		".impact-badge.impact-minor",
 		".impact-badge.impact-patch",
+		".impact-badge.impact-downgrade",
 	} {
 		if !strings.Contains(detailStyles, want) {
 			t.Errorf("detailStyles missing %q", want)

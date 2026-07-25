@@ -79,9 +79,13 @@ func TestLoad_RiskRules_ParsedAndAppendedToDefaults(t *testing.T) {
 	}
 }
 
-// TestLoad_NoRiskRules_UsesDefaults proves omitting the riskRules section (every
-// existing ConfigMap) yields exactly the built-in DefaultRiskRules — including
-// the semver-major-bump rule — so behavior is unchanged when unset.
+// TestLoad_NoRiskRules_UsesDefaults proves omitting the riskRules section
+// (every existing ConfigMap) yields exactly the built-in DefaultRiskRules —
+// so behavior is unchanged when unset. The semver-major-bump rule is no
+// longer among the shipped defaults (impact:major owns that signal now; see
+// #126) — the SemverBump predicate itself remains fully supported for a
+// config-authored rule, which TestLoad_RiskRules_ParsedAndAppendedToDefaults
+// above proves.
 func TestLoad_NoRiskRules_UsesDefaults(t *testing.T) {
 	path := writeTemp(t, minimalValidYAML)
 
@@ -94,8 +98,8 @@ func TestLoad_NoRiskRules_UsesDefaults(t *testing.T) {
 	if len(got) != len(changeset.DefaultRiskRules()) {
 		t.Fatalf("len(RiskRules) = %d, want %d (defaults only)", len(got), len(changeset.DefaultRiskRules()))
 	}
-	if findRule(got, "semver-major-bump") == nil {
-		t.Errorf("default semver-major-bump rule missing from RiskRules when riskRules unset")
+	if findRule(got, "semver-major-bump") != nil {
+		t.Errorf("semver-major-bump rule present in RiskRules, want absent from the shipped defaults")
 	}
 }
 

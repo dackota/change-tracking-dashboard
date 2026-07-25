@@ -22,7 +22,6 @@ import "github.com/dackota/change-tracking-dashboard/internal/domain"
 func DefaultRiskRules() []RiskRule {
 	rules := append(replaceDestroyRiskRules(), securityRiskRules()...)
 	rules = append(rules, costTripwireRiskRules()...)
-	rules = append(rules, majorVersionBumpRiskRules()...)
 	return rules
 }
 
@@ -85,18 +84,3 @@ func costTripwireRiskRules() []RiskRule {
 	}
 }
 
-// majorVersionBumpRiskRules flags a semantic-version major jump on ANY tracked
-// field — a provider-agnostic "breaking upgrade" signal (e.g. a Helm chart or
-// container image going 1.x → 2.x). Unlike the OCI-specific rules above it
-// carries no field/kind/value restriction: the SemverBump predicate alone
-// decides, so it fires only when both the old and new values are valid semver
-// and the major component increases (see matchesSemverBump).
-func majorVersionBumpRiskRules() []RiskRule {
-	return []RiskRule{
-		{
-			Name:       "semver-major-bump",
-			Risk:       RiskMajorVersionBump,
-			SemverBump: SemverBumpMajor,
-		},
-	}
-}
