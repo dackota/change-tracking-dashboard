@@ -690,6 +690,11 @@
 
     var riskCell = document.createElement('td');
     riskCell.className = 'feed-cell-risk';
+    var impactBadge = document.createElement('span');
+    impactBadge.className = 'impact-badge impact-' + cs.impact;
+    impactBadge.setAttribute('data-impact', cs.impact);
+    impactBadge.textContent = cs.impact;
+    riskCell.appendChild(impactBadge);
     (cs.risk || []).forEach(function (risk) {
       var badge = document.createElement('span');
       badge.className = 'risk-badge risk-' + riskSlug(risk);
