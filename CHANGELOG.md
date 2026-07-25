@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.12.0...app-v0.13.0) (2026-07-25)
+
+
+### Features
+
+* **impact:** tracer -- impact tier on every feed row (major/minor/patch/other) ([#131](https://github.com/dackota/change-tracking-dashboard/issues/131)) ([52d32cc](https://github.com/dackota/change-tracking-dashboard/commit/52d32ccf51a80937aa0534308be6d25f698bbe5d)), closes [#125](https://github.com/dackota/change-tracking-dashboard/issues/125)
+
 ## [0.12.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.11.1...app-v0.12.0) (2026-07-25)
 
 
