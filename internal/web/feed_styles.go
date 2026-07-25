@@ -92,6 +92,7 @@ const detailStyles = `
     .impact-badge.impact-major { background: rgba(220, 53, 69, 0.14); color: var(--oc-danger); }
     .impact-badge.impact-minor { background: rgba(13, 110, 253, 0.14); color: #0d6efd; }
     .impact-badge.impact-patch { background: rgba(25, 135, 84, 0.14); color: #198754; }
+    .impact-badge.impact-downgrade { background: rgba(184, 134, 11, 0.16); color: #8a6200; }
     .impact-badge.impact-other { background: var(--oc-line-soft); color: #495057; }
 
     /* Chart diff summary + color-coded hunks */

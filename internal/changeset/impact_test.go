@@ -66,8 +66,23 @@ func TestClassifyChangeImpact_Table(t *testing.T) {
 			want:   changeset.ImpactMajor,
 		},
 		{
-			name:   "downgrade is other for now (dedicated tier ships separately)",
+			name:   "downgrade on major component",
 			change: domain.Change{ChangeType: domain.ChangeTypeModified, OldValue: ptr("2.0.0"), NewValue: ptr("1.0.0")},
+			want:   changeset.ImpactDowngrade,
+		},
+		{
+			name:   "downgrade on minor component",
+			change: domain.Change{ChangeType: domain.ChangeTypeModified, OldValue: ptr("1.9.0"), NewValue: ptr("1.8.0")},
+			want:   changeset.ImpactDowngrade,
+		},
+		{
+			name:   "downgrade on patch component",
+			change: domain.Change{ChangeType: domain.ChangeTypeModified, OldValue: ptr("1.9.3"), NewValue: ptr("1.9.1")},
+			want:   changeset.ImpactDowngrade,
+		},
+		{
+			name:   "non-comparable pair numerically decreasing is other, not downgrade",
+			change: domain.Change{ChangeType: domain.ChangeTypeModified, OldValue: ptr("3"), NewValue: ptr("2")},
 			want:   changeset.ImpactOther,
 		},
 		{
@@ -128,6 +143,7 @@ func TestClassifyImpact_Rollup(t *testing.T) {
 	minorChange := domain.Change{Field: "b", ChangeType: domain.ChangeTypeModified, OldValue: ptr("1.0.0"), NewValue: ptr("1.1.0")}
 	patchChange := domain.Change{Field: "c", ChangeType: domain.ChangeTypeModified, OldValue: ptr("1.0.0"), NewValue: ptr("1.0.1")}
 	otherChange := domain.Change{Field: "d", ChangeType: domain.ChangeTypeModified, OldValue: ptr("stable"), NewValue: ptr("latest")}
+	downgradeChange := domain.Change{Field: "e", ChangeType: domain.ChangeTypeModified, OldValue: ptr("2.0.0"), NewValue: ptr("1.0.0")}
 
 	tests := []struct {
 		name    string
@@ -138,6 +154,7 @@ func TestClassifyImpact_Rollup(t *testing.T) {
 		{name: "single minor", changes: []domain.Change{minorChange}, want: changeset.ImpactMinor},
 		{name: "single patch", changes: []domain.Change{patchChange}, want: changeset.ImpactPatch},
 		{name: "single other", changes: []domain.Change{otherChange}, want: changeset.ImpactOther},
+		{name: "single downgrade", changes: []domain.Change{downgradeChange}, want: changeset.ImpactDowngrade},
 		{name: "major beats minor", changes: []domain.Change{minorChange, majorChange}, want: changeset.ImpactMajor},
 		{name: "major beats patch", changes: []domain.Change{patchChange, majorChange}, want: changeset.ImpactMajor},
 		{name: "major beats other", changes: []domain.Change{otherChange, majorChange}, want: changeset.ImpactMajor},
@@ -145,6 +162,14 @@ func TestClassifyImpact_Rollup(t *testing.T) {
 		{name: "minor beats other", changes: []domain.Change{otherChange, minorChange}, want: changeset.ImpactMinor},
 		{name: "patch beats other", changes: []domain.Change{otherChange, patchChange}, want: changeset.ImpactPatch},
 		{name: "all four present, major wins", changes: []domain.Change{otherChange, patchChange, minorChange, majorChange}, want: changeset.ImpactMajor},
+
+		// downgrade precedence: major > downgrade > minor > patch > other
+		{name: "major beats downgrade", changes: []domain.Change{downgradeChange, majorChange}, want: changeset.ImpactMajor},
+		{name: "downgrade beats minor", changes: []domain.Change{minorChange, downgradeChange}, want: changeset.ImpactDowngrade},
+		{name: "downgrade beats patch", changes: []domain.Change{patchChange, downgradeChange}, want: changeset.ImpactDowngrade},
+		{name: "downgrade beats other", changes: []domain.Change{otherChange, downgradeChange}, want: changeset.ImpactDowngrade},
+		{name: "all five present, major still wins", changes: []domain.Change{otherChange, patchChange, minorChange, downgradeChange, majorChange}, want: changeset.ImpactMajor},
+		{name: "downgrade wins over minor/patch/other together", changes: []domain.Change{otherChange, patchChange, minorChange, downgradeChange}, want: changeset.ImpactDowngrade},
 	}
 
 	for _, tc := range tests {

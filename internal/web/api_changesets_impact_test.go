@@ -88,6 +88,47 @@ func TestChangesetsAPI_ImpactClassified(t *testing.T) {
 	}
 }
 
+// TestChangesetsAPI_ImpactClassified_Downgrade proves the downgrade tier
+// appears on the JSON API with no additional wiring beyond the classifier's
+// new tier value: a rollback (2.0.0 -> 1.0.0) classifies as "downgrade", not
+// "other" or "major".
+func TestChangesetsAPI_ImpactClassified_Downgrade(t *testing.T) {
+	t.Parallel()
+
+	st := newTestStore(t)
+
+	downgradeChange := domain.Change{
+		Repo:        "infra-repo",
+		FilePath:    "workloads/app/values.yaml",
+		Field:       "imageTags",
+		ChangeType:  domain.ChangeTypeModified,
+		OldValue:    ptr("2.0.0"),
+		NewValue:    ptr("1.0.0"),
+		CommitSha:   "commit-downgrade",
+		Author:      "alice",
+		CommittedAt: time.Now().Add(-time.Hour),
+	}
+	if err := st.SaveChange(downgradeChange); err != nil {
+		t.Fatalf("SaveChange: %v", err)
+	}
+
+	h := web.NewChangesetsHandler(st)
+	req := httptest.NewRequest(http.MethodGet, "/api/changesets", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	var body impactChangesetsBody
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v; body: %s", err, rr.Body.String())
+	}
+	if len(body.Changesets) != 1 {
+		t.Fatalf("Changesets len = %d, want 1", len(body.Changesets))
+	}
+	if got := body.Changesets[0].Impact; got != "downgrade" {
+		t.Errorf("impact = %q, want %q", got, "downgrade")
+	}
+}
+
 // TestChangesetsAPI_ImpactCoexistsWithRisk proves impact and risk are
 // orthogonal on the wire: a cost-tripwire change (a bare-integer node-count
 // bump, not a comparable version) still carries its risk flag alongside an
