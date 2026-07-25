@@ -8,7 +8,10 @@
 // file; a bad reload keeps the last-good config and logs a clear error.
 package config
 
-import "github.com/dackota/change-tracking-dashboard/internal/domain"
+import (
+	"github.com/dackota/change-tracking-dashboard/internal/changeset"
+	"github.com/dackota/change-tracking-dashboard/internal/domain"
+)
 
 // Defaults holds the global defaults from the ConfigMap that individual
 // trackers may override.
@@ -90,6 +93,11 @@ type Config struct {
 	// Observability carries telemetry config (currently just the OTLP
 	// endpoint). Zero value is a valid, safe-degrade configuration.
 	Observability Observability
+	// RiskRules is the resolved risk-classification rule set the web layer
+	// evaluates on read: the built-in changeset.DefaultRiskRules followed by
+	// any rules configured under the YAML `riskRules:` block. Hot-reloaded like
+	// the rest of the config, so tuning risk classification needs no restart.
+	RiskRules []changeset.RiskRule
 }
 
 // clone returns a deep copy of the Config: every slice (including the nested
@@ -123,6 +131,22 @@ func (c *Config) clone() *Config {
 				}
 			}
 			cp.TrackerConfigs[i] = rtCopy
+		}
+	}
+
+	if c.RiskRules != nil {
+		cp.RiskRules = make([]changeset.RiskRule, len(c.RiskRules))
+		for i, r := range c.RiskRules {
+			rCopy := r // copies value fields (Name, Risk, patterns, SemverBump)
+			if r.Kinds != nil {
+				rCopy.Kinds = make([]changeset.Kind, len(r.Kinds))
+				copy(rCopy.Kinds, r.Kinds)
+			}
+			if r.ChangeTypes != nil {
+				rCopy.ChangeTypes = make([]domain.ChangeType, len(r.ChangeTypes))
+				copy(rCopy.ChangeTypes, r.ChangeTypes)
+			}
+			cp.RiskRules[i] = rCopy
 		}
 	}
 

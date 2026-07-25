@@ -50,12 +50,27 @@ var reservedChangesetsParams = map[string]struct{}{
 
 // ChangesetsHandler serves GET /api/changesets as JSON.
 type ChangesetsHandler struct {
-	st *store.Store
+	st   *store.Store
+	risk RiskRulesSource
+}
+
+// ChangesetsOption configures a ChangesetsHandler at construction.
+type ChangesetsOption func(*ChangesetsHandler)
+
+// WithChangesetsRiskRules sets the source of risk rules the handler classifies
+// each changeset against. When unset, the handler falls back to the built-in
+// changeset.DefaultRiskRules (see riskRulesOrDefault).
+func WithChangesetsRiskRules(src RiskRulesSource) ChangesetsOption {
+	return func(h *ChangesetsHandler) { h.risk = src }
 }
 
 // NewChangesetsHandler creates a ChangesetsHandler backed by the given store.
-func NewChangesetsHandler(st *store.Store) *ChangesetsHandler {
-	return &ChangesetsHandler{st: st}
+func NewChangesetsHandler(st *store.Store, opts ...ChangesetsOption) *ChangesetsHandler {
+	h := &ChangesetsHandler{st: st}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
 }
 
 // changesetsResponse is the top-level JSON response body.
@@ -164,7 +179,7 @@ func (h *ChangesetsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := changesetsResponse{
-		Changesets: toChangesetsJSON(page.Changesets),
+		Changesets: toChangesetsJSON(page.Changesets, riskRulesOrDefault(h.risk)),
 		NextCursor: page.NextCursor,
 	}
 	writeJSON(r, w, http.StatusOK, resp)
@@ -245,18 +260,18 @@ func parseAsOf(raw string) (time.Time, error) {
 }
 
 // toChangesetsJSON converts a slice of changeset.Changeset to their explicit
-// JSON shape.
-func toChangesetsJSON(sets []changeset.Changeset) []changesetJSON {
+// JSON shape, classifying each against rules.
+func toChangesetsJSON(sets []changeset.Changeset, rules []changeset.RiskRule) []changesetJSON {
 	out := make([]changesetJSON, 0, len(sets))
 	for _, cs := range sets {
-		out = append(out, toChangesetJSON(cs))
+		out = append(out, toChangesetJSON(cs, rules))
 	}
 	return out
 }
 
 // toChangesetJSON converts a single changeset.Changeset to its explicit JSON
-// shape.
-func toChangesetJSON(cs changeset.Changeset) changesetJSON {
+// shape, classifying its risk against rules.
+func toChangesetJSON(cs changeset.Changeset, rules []changeset.RiskRule) changesetJSON {
 	changes := make([]changeJSON, 0, len(cs.Changes))
 	for _, c := range cs.Changes {
 		changes = append(changes, changeJSON{
@@ -276,7 +291,7 @@ func toChangesetJSON(cs changeset.Changeset) changesetJSON {
 		IssueRefs:   cs.IssueRefs,
 		Subject:     cs.Subject,
 		Changes:     changes,
-		Risk:        toRiskStrings(changeset.ClassifyRisk(cs, changeset.DefaultRiskRules())),
+		Risk:        toRiskStrings(changeset.ClassifyRisk(cs, rules)),
 	}
 }
 

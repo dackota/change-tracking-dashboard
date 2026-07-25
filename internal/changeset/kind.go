@@ -34,6 +34,18 @@ const (
 // for the dependency lock file — never a glob, always this exact name.
 const terraformLockfileName = ".terraform.lock.hcl"
 
+// isKnownKind reports whether k is one of the Kind constants this package
+// defines. Used to validate config-supplied risk-rule Kind predicates at load
+// time (see ValidateRiskRules).
+func isKnownKind(k Kind) bool {
+	switch k {
+	case KindChart, KindValue, KindProvider, KindModule, KindResource, KindVariable:
+		return true
+	default:
+		return false
+	}
+}
+
 // IsTerraform reports whether k is one of the Terraform/OpenTofu-sourced
 // Kinds (provider/module/resource/variable) -- the routing basis for the
 // plandiff resource-change view (acceptance criterion 8): a Terraform

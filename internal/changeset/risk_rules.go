@@ -20,7 +20,10 @@ import "github.com/dackota/change-tracking-dashboard/internal/domain"
 // wires its own tracker Field names to match; DefaultRiskRules ships the
 // dogfood repo's conventions as the working example.
 func DefaultRiskRules() []RiskRule {
-	return append(append(replaceDestroyRiskRules(), securityRiskRules()...), costTripwireRiskRules()...)
+	rules := append(replaceDestroyRiskRules(), securityRiskRules()...)
+	rules = append(rules, costTripwireRiskRules()...)
+	rules = append(rules, majorVersionBumpRiskRules()...)
+	return rules
 }
 
 // replaceDestroyRiskRules covers acceptance criterion 2: a change that
@@ -78,6 +81,22 @@ func costTripwireRiskRules() []RiskRule {
 			Name:         "cost-tripwire-attribute",
 			Risk:         RiskCostTripwire,
 			FieldPattern: `(?i)(\bcount\b|\bsize\b|\bocpus?\b|memory[_-]?in[_-]?gbs|boot[_-]?volume|\bbudget\b|\bamount\b)`,
+		},
+	}
+}
+
+// majorVersionBumpRiskRules flags a semantic-version major jump on ANY tracked
+// field — a provider-agnostic "breaking upgrade" signal (e.g. a Helm chart or
+// container image going 1.x → 2.x). Unlike the OCI-specific rules above it
+// carries no field/kind/value restriction: the SemverBump predicate alone
+// decides, so it fires only when both the old and new values are valid semver
+// and the major component increases (see matchesSemverBump).
+func majorVersionBumpRiskRules() []RiskRule {
+	return []RiskRule{
+		{
+			Name:       "semver-major-bump",
+			Risk:       RiskMajorVersionBump,
+			SemverBump: SemverBumpMajor,
 		},
 	}
 }

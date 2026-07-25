@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dackota/change-tracking-dashboard/internal/changeset"
 	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
 )
 
@@ -65,6 +66,15 @@ func (w *Watcher) Current() *Config {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	return w.current.clone()
+}
+
+// RiskRules returns the current resolved risk-rule set (defaults plus any
+// configured `riskRules:`). It satisfies the web layer's RiskRulesSource so the
+// feed and detail handlers classify each changeset against the live, hot-
+// reloaded rules on every request. The returned slice is from a deep copy, so
+// callers may read it without racing the background reload.
+func (w *Watcher) RiskRules() []changeset.RiskRule {
+	return w.Current().RiskRules
 }
 
 // Reload re-reads and re-validates the config file immediately. On success
