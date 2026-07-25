@@ -129,11 +129,13 @@ func TestClassifyRisk_SemverMajorBump_Boundaries(t *testing.T) {
 	}
 }
 
-// TestDefaultRiskRules_FlagMajorVersionBump proves the shipped defaults flag a
-// major version jump on an ordinary tracked field (a container image tag)
-// out of the box — the provider-agnostic signal is on by default, not just an
-// opt-in config rule.
-func TestDefaultRiskRules_FlagMajorVersionBump(t *testing.T) {
+// TestDefaultRiskRules_NoLongerFlagsMajorVersionBump proves the shipped
+// defaults no longer carry the semver-major-bump rule: Impact now owns that
+// signal (impact: major), so a changeset earns exactly one badge for a major
+// version jump, not two saying the same thing. The SemverBump predicate
+// itself remains fully supported for config-authored rules (see
+// majorBumpRules-based tests above) — only the shipped default is gone.
+func TestDefaultRiskRules_NoLongerFlagsMajorVersionBump(t *testing.T) {
 	t.Parallel()
 
 	cs := newChangesetFixture(domain.Change{
@@ -146,7 +148,9 @@ func TestDefaultRiskRules_FlagMajorVersionBump(t *testing.T) {
 
 	got := changeset.ClassifyRisk(cs, changeset.DefaultRiskRules())
 
-	assertRisksEqual(t, got, []changeset.Risk{changeset.RiskMajorVersionBump})
+	if len(got) != 0 {
+		t.Errorf("ClassifyRisk(major bump, DefaultRiskRules()) = %v, want empty (impact:major owns this signal now)", got)
+	}
 }
 
 // TestValidateRiskRules_UnknownSemverBump proves config loaded from an
