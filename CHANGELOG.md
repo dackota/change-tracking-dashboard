@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.2](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.13.1...app-v0.13.2) (2026-07-29)
+
+
+### Performance Improvements
+
+* **poller:** walk each file's history once per glob + quiet /healthz probe logs ([#139](https://github.com/dackota/change-tracking-dashboard/issues/139)) ([5016dfb](https://github.com/dackota/change-tracking-dashboard/commit/5016dfb14f6fbc18d81ad17cb9181e2a4e16d2ea)), closes [#137](https://github.com/dackota/change-tracking-dashboard/issues/137)
+
 ## [0.13.1](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.13.0...app-v0.13.1) (2026-07-29)
 
 
