@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.1](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.13.0...app-v0.13.1) (2026-07-29)
+
+
+### Bug Fixes
+
+* **deps:** bump oras-go to v2.6.2 for GHSA-fxhp-mv3v-67qp ([#135](https://github.com/dackota/change-tracking-dashboard/issues/135)) ([e91003f](https://github.com/dackota/change-tracking-dashboard/commit/e91003fb2ae5075ea56ed3c5d5b670a02490685f))
+
 ## [0.13.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.12.0...app-v0.13.0) (2026-07-25)
 
 
