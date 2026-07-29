@@ -54,6 +54,11 @@ const defaultConfigPath = "/etc/dashboard/config.yaml"
 // metric point, and structured log line this process emits.
 const serviceName = "change-tracking-dashboard"
 
+// healthzRoute is the liveness-probe route pattern. It is a named constant so
+// the mux registration and the request-log suppression below cannot drift
+// apart — telemetry.WithQuietRoutes matches on the pattern ServeMux recorded.
+const healthzRoute = "GET /healthz"
+
 // HTTP server timeouts guard against slow-client (slow-loris) attacks and
 // connections held open indefinitely.
 const (
@@ -160,10 +165,20 @@ func run(configPath, dbPath, listenAddr string, logger *slog.Logger) error {
 	// tracker list from the config watcher each time. Trackers added or removed
 	// by a config reload take effect on the next Tick automatically.
 	// Each tracker fires on its own PollIntervalSeconds cadence.
-	pollFn := func(t domain.Tracker) error {
-		src, err := sources.get(t.Repo)
+	//
+	// The scheduler hands over the due trackers batched by (Repo, FileGlob) so
+	// the poller walks each matched file's history once for the whole group
+	// instead of once per field — every field in a group derives from the same
+	// histories, and that walk is where the poller's CPU goes (#137).
+	pollFn := func(group []domain.Tracker) []error {
+		src, err := sources.get(group[0].Repo)
 		if err != nil {
-			return fmt.Errorf("open git source for %q: %w", t.Repo, err)
+			err = fmt.Errorf("open git source for %q: %w", group[0].Repo, err)
+			errs := make([]error, len(group))
+			for i := range errs {
+				errs[i] = err
+			}
+			return errs
 		}
 		p := poller.New(src, st,
 			poller.WithTracerProvider(sdk.TracerProvider),
@@ -171,10 +186,10 @@ func run(configPath, dbPath, listenAddr string, logger *slog.Logger) error {
 			poller.WithLogger(logger),
 			poller.WithExtractFailureRecorder(pollStatus),
 		)
-		return p.Poll(t)
+		return p.PollGroup(group)
 	}
 
-	sched := scheduler.New(time.Now, scheduler.PollFunc(pollFn), pollStatus)
+	sched := scheduler.New(time.Now, pollFn, pollStatus)
 
 	go func() {
 		ticker := time.NewTicker(scheduler.BaseTickInterval)
@@ -231,7 +246,7 @@ func run(configPath, dbPath, listenAddr string, logger *slog.Logger) error {
 	mux.Handle("GET /trackers", trackersHandler)
 	mux.Handle("GET /repositories", repositoriesHandler)
 	mux.Handle("GET /changes", changesHandler)
-	mux.Handle("GET /healthz", healthzHandler)
+	mux.Handle(healthzRoute, healthzHandler)
 
 	// RED middleware wraps the whole mux, so every route above — present or
 	// future — emits the generic RED signal and correlated structured logs
@@ -240,7 +255,12 @@ func run(configPath, dbPath, listenAddr string, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("create HTTP RED metrics: %w", err)
 	}
-	instrumentedMux := telemetry.Middleware(mux, sdk.TracerProvider.Tracer("http"), httpRed, logger)
+	// /healthz is the Kubernetes probe target: several hits a minute, forever,
+	// carrying no information when they succeed. Its request log line is
+	// suppressed so real entries are not buried; its RED metrics and spans are
+	// not, and a 5xx on it is still logged. See telemetry.WithQuietRoutes.
+	instrumentedMux := telemetry.Middleware(mux, sdk.TracerProvider.Tracer("http"), httpRed, logger,
+		telemetry.WithQuietRoutes(healthzRoute))
 
 	srv := &http.Server{
 		Addr:         listenAddr,

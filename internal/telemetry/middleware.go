@@ -27,6 +27,41 @@ func (w *statusRecordingWriter) WriteHeader(status int) {
 	w.ResponseWriter.WriteHeader(status)
 }
 
+// middlewareConfig holds Middleware's optional behavior. Zero value is the
+// pre-existing behavior: every request is logged.
+type middlewareConfig struct {
+	quietRoutes map[string]struct{}
+}
+
+// MiddlewareOption configures optional Middleware behavior. See
+// WithQuietRoutes.
+type MiddlewareOption func(*middlewareConfig)
+
+// WithQuietRoutes suppresses the "http request handled" log line for the
+// named routes when they succeed. Each route is a bounded-cardinality route
+// label as it appears in the log's "route" field — the pattern ServeMux
+// matched, e.g. "GET /healthz".
+//
+// This exists for high-frequency, zero-information traffic: Kubernetes
+// liveness/readiness probes hit their endpoint several times a minute
+// forever, and at that rate the request log is entirely probe lines with real
+// entries buried among them.
+//
+// Suppression is deliberately narrow. It applies to the request log line
+// only — RED metrics and spans are still recorded, so probe throughput and
+// latency stay observable — and only to non-5xx responses, so a quiet route
+// that actually starts failing is still logged at ERROR.
+func WithQuietRoutes(routes ...string) MiddlewareOption {
+	return func(c *middlewareConfig) {
+		if c.quietRoutes == nil {
+			c.quietRoutes = make(map[string]struct{}, len(routes))
+		}
+		for _, route := range routes {
+			c.quietRoutes[route] = struct{}{}
+		}
+	}
+}
+
 // Middleware wraps next (the top-level mux) with the RED signal (criterion
 // 1) and request/log correlation (criterion 4) every HTTP route must carry.
 // It must wrap the mux, not each handler individually, so the operation
@@ -34,7 +69,12 @@ func (w *statusRecordingWriter) WriteHeader(status int) {
 // bounded-cardinality route template net/http.ServeMux sets on the request
 // once it has matched it (e.g. "GET /trackers", never "/trackers/42") —
 // available only once next.ServeHTTP has returned.
-func Middleware(next http.Handler, tracer trace.Tracer, red *REDMetrics, logger *slog.Logger) http.Handler {
+func Middleware(next http.Handler, tracer trace.Tracer, red *REDMetrics, logger *slog.Logger, opts ...MiddlewareOption) http.Handler {
+	var cfg middlewareConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 
@@ -61,6 +101,12 @@ func Middleware(next http.Handler, tracer trace.Tracer, red *REDMetrics, logger 
 			span.SetStatus(codes.Error, recordErr.Error())
 		}
 		red.Record(ctx, route, recordErr, duration)
+
+		// A quiet route's routine success is not logged (see
+		// WithQuietRoutes); a 5xx on it still is.
+		if _, quiet := cfg.quietRoutes[route]; quiet && !isServerError {
+			return
+		}
 
 		level := slog.LevelInfo
 		if isServerError {
