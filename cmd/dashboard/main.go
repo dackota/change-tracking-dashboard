@@ -54,6 +54,11 @@ const defaultConfigPath = "/etc/dashboard/config.yaml"
 // metric point, and structured log line this process emits.
 const serviceName = "change-tracking-dashboard"
 
+// healthzRoute is the liveness-probe route pattern. It is a named constant so
+// the mux registration and the request-log suppression below cannot drift
+// apart — telemetry.WithQuietRoutes matches on the pattern ServeMux recorded.
+const healthzRoute = "GET /healthz"
+
 // HTTP server timeouts guard against slow-client (slow-loris) attacks and
 // connections held open indefinitely.
 const (
@@ -231,7 +236,7 @@ func run(configPath, dbPath, listenAddr string, logger *slog.Logger) error {
 	mux.Handle("GET /trackers", trackersHandler)
 	mux.Handle("GET /repositories", repositoriesHandler)
 	mux.Handle("GET /changes", changesHandler)
-	mux.Handle("GET /healthz", healthzHandler)
+	mux.Handle(healthzRoute, healthzHandler)
 
 	// RED middleware wraps the whole mux, so every route above — present or
 	// future — emits the generic RED signal and correlated structured logs
@@ -240,7 +245,12 @@ func run(configPath, dbPath, listenAddr string, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("create HTTP RED metrics: %w", err)
 	}
-	instrumentedMux := telemetry.Middleware(mux, sdk.TracerProvider.Tracer("http"), httpRed, logger)
+	// /healthz is the Kubernetes probe target: several hits a minute, forever,
+	// carrying no information when they succeed. Its request log line is
+	// suppressed so real entries are not buried; its RED metrics and spans are
+	// not, and a 5xx on it is still logged. See telemetry.WithQuietRoutes.
+	instrumentedMux := telemetry.Middleware(mux, sdk.TracerProvider.Tracer("http"), httpRed, logger,
+		telemetry.WithQuietRoutes(healthzRoute))
 
 	srv := &http.Server{
 		Addr:         listenAddr,
