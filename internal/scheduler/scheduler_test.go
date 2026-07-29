@@ -119,7 +119,7 @@ func TestScheduler_NewTracker_PolledPromptly(t *testing.T) {
 	rec := &pollRecorder{}
 	tr := makeTracker("/repo/a", "Chart.yaml", "version", 60)
 
-	sched := scheduler.New(clk.Now, scheduler.PollFunc(rec.fn), &fakeStatusRecorder{})
+	sched := scheduler.New(clk.Now, scheduler.PerTracker(rec.fn), &fakeStatusRecorder{})
 
 	// Tick with the tracker present — it has never been polled, so it fires.
 	sched.Tick([]domain.Tracker{tr})
@@ -142,7 +142,7 @@ func TestScheduler_TrackerNotRepolledBeforeInterval(t *testing.T) {
 	rec := &pollRecorder{}
 	tr := makeTracker("/repo/a", "Chart.yaml", "version", 60)
 
-	sched := scheduler.New(clk.Now, scheduler.PollFunc(rec.fn), &fakeStatusRecorder{})
+	sched := scheduler.New(clk.Now, scheduler.PerTracker(rec.fn), &fakeStatusRecorder{})
 
 	// First tick: polls immediately.
 	sched.Tick([]domain.Tracker{tr})
@@ -167,7 +167,7 @@ func TestScheduler_TrackerRepolledAfterInterval(t *testing.T) {
 	rec := &pollRecorder{}
 	tr := makeTracker("/repo/a", "Chart.yaml", "version", 60)
 
-	sched := scheduler.New(clk.Now, scheduler.PollFunc(rec.fn), &fakeStatusRecorder{})
+	sched := scheduler.New(clk.Now, scheduler.PerTracker(rec.fn), &fakeStatusRecorder{})
 
 	sched.Tick([]domain.Tracker{tr}) // poll 1 at t=0
 	clk.Advance(60 * time.Second)
@@ -190,7 +190,7 @@ func TestScheduler_TwoTrackers_DifferentIntervals(t *testing.T) {
 	trA := makeTracker("/repo/a", "Chart.yaml", "version", 60)
 	trB := makeTracker("/repo/b", "Chart.yaml", "version", 120)
 
-	sched := scheduler.New(clk.Now, scheduler.PollFunc(rec.fn), &fakeStatusRecorder{})
+	sched := scheduler.New(clk.Now, scheduler.PerTracker(rec.fn), &fakeStatusRecorder{})
 
 	// t=0: both polled for the first time
 	sched.Tick([]domain.Tracker{trA, trB})
@@ -230,7 +230,7 @@ func TestScheduler_NewlyAppearedTracker_PolledPromptly(t *testing.T) {
 	trA := makeTracker("/repo/a", "Chart.yaml", "version", 60)
 	trB := makeTracker("/repo/b", "Chart.yaml", "version", 60)
 
-	sched := scheduler.New(clk.Now, scheduler.PollFunc(rec.fn), &fakeStatusRecorder{})
+	sched := scheduler.New(clk.Now, scheduler.PerTracker(rec.fn), &fakeStatusRecorder{})
 
 	// t=0: only trA
 	sched.Tick([]domain.Tracker{trA})
@@ -261,7 +261,7 @@ func TestScheduler_RemovedTracker_StopsBeingPolled(t *testing.T) {
 	trA := makeTracker("/repo/a", "Chart.yaml", "version", 60)
 	trB := makeTracker("/repo/b", "Chart.yaml", "version", 60)
 
-	sched := scheduler.New(clk.Now, scheduler.PollFunc(rec.fn), &fakeStatusRecorder{})
+	sched := scheduler.New(clk.Now, scheduler.PerTracker(rec.fn), &fakeStatusRecorder{})
 
 	// t=0: both trackers
 	sched.Tick([]domain.Tracker{trA, trB})
@@ -299,7 +299,7 @@ func TestScheduler_PollSuccess_FeedsIntoStatusRecorder(t *testing.T) {
 	status := &fakeStatusRecorder{}
 	tr := makeTracker("/repo/a", "Chart.yaml", "version", 60)
 
-	sched := scheduler.New(clk.Now, scheduler.PollFunc(rec.fn), status)
+	sched := scheduler.New(clk.Now, scheduler.PerTracker(rec.fn), status)
 	sched.Tick([]domain.Tracker{tr})
 
 	calls := status.snapshot()
@@ -330,7 +330,7 @@ func TestScheduler_PollError_FeedsIntoStatusRecorder(t *testing.T) {
 	wantErr := errors.New("clone failed: connection refused")
 	failingPoll := func(domain.Tracker) error { return wantErr }
 
-	sched := scheduler.New(clk.Now, scheduler.PollFunc(failingPoll), status)
+	sched := scheduler.New(clk.Now, scheduler.PerTracker(failingPoll), status)
 	sched.Tick([]domain.Tracker{tr})
 
 	calls := status.snapshot()

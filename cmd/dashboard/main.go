@@ -165,10 +165,20 @@ func run(configPath, dbPath, listenAddr string, logger *slog.Logger) error {
 	// tracker list from the config watcher each time. Trackers added or removed
 	// by a config reload take effect on the next Tick automatically.
 	// Each tracker fires on its own PollIntervalSeconds cadence.
-	pollFn := func(t domain.Tracker) error {
-		src, err := sources.get(t.Repo)
+	//
+	// The scheduler hands over the due trackers batched by (Repo, FileGlob) so
+	// the poller walks each matched file's history once for the whole group
+	// instead of once per field — every field in a group derives from the same
+	// histories, and that walk is where the poller's CPU goes (#137).
+	pollFn := func(group []domain.Tracker) []error {
+		src, err := sources.get(group[0].Repo)
 		if err != nil {
-			return fmt.Errorf("open git source for %q: %w", t.Repo, err)
+			err = fmt.Errorf("open git source for %q: %w", group[0].Repo, err)
+			errs := make([]error, len(group))
+			for i := range errs {
+				errs[i] = err
+			}
+			return errs
 		}
 		p := poller.New(src, st,
 			poller.WithTracerProvider(sdk.TracerProvider),
@@ -176,10 +186,10 @@ func run(configPath, dbPath, listenAddr string, logger *slog.Logger) error {
 			poller.WithLogger(logger),
 			poller.WithExtractFailureRecorder(pollStatus),
 		)
-		return p.Poll(t)
+		return p.PollGroup(group)
 	}
 
-	sched := scheduler.New(time.Now, scheduler.PollFunc(pollFn), pollStatus)
+	sched := scheduler.New(time.Now, pollFn, pollStatus)
 
 	go func() {
 		ticker := time.NewTicker(scheduler.BaseTickInterval)

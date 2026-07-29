@@ -75,7 +75,7 @@ func TestScheduler_PollError_OnlyCorrelatedLogLineIsThePollersOwn(t *testing.T) 
 	status := &fakeStatusRecorder{}
 	tr := makeTracker("/repo/a", "Chart.yaml", "version", 60)
 
-	sched := scheduler.New(clk.Now, scheduler.PollFunc(pollFn), status)
+	sched := scheduler.New(clk.Now, scheduler.PerTracker(pollFn), status)
 	sched.Tick([]domain.Tracker{tr})
 
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")

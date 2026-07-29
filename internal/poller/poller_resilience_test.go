@@ -20,7 +20,7 @@ import (
 // abort the whole cycle on the first bad file.
 //
 // The failing file (a/bad/Chart.yaml) sorts BEFORE the good one
-// (a/good/Chart.yaml), so MatchingFiles hands it to pollFile first: the
+// (a/good/Chart.yaml), so MatchingFiles hands it to pollFileGroup first: the
 // pre-fix "return on first error" behavior would drop a/good entirely and this
 // test's feed assertion would fail.
 func TestPoller_GlobFanOut_ContinuesPastFailingFile(t *testing.T) {
