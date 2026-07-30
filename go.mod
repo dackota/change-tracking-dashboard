@@ -20,7 +20,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4
 	golang.org/x/sync v0.22.0
 	helm.sh/helm/v4 v4.2.3
-	modernc.org/sqlite v1.54.0
+	modernc.org/sqlite v1.55.0
 )
 
 require (
