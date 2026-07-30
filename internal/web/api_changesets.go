@@ -323,5 +323,10 @@ func writeJSON(r *http.Request, w http.ResponseWriter, status int, v any) {
 		return
 	}
 	w.WriteHeader(status)
-	_, _ = w.Write(body)
+	if _, err := w.Write(body); err != nil {
+		// The status code is already on the wire, so there is nothing to do but
+		// record it — previously discarded outright, which hid genuine write
+		// failures alongside the harmless client-disconnect ones.
+		logResponseWriteError(r.Context(), "web: write changesets response", err)
+	}
 }

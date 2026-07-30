@@ -131,7 +131,7 @@ func (h *ChartDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err := renderChartDiff(w, outcome); err != nil {
-		logger.Error("web: render chart diff", "repo", repo, "tenant", path, "commitSha", commitSha, "error", err)
+		logResponseWriteError(r.Context(), "web: render chart diff", err, "repo", repo, "tenant", path, "commitSha", commitSha)
 	}
 }
 

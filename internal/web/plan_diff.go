@@ -120,7 +120,7 @@ func (h *PlanDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err := renderPlanDiff(w, outcome); err != nil {
-		logger.Error("web: render plan diff", "repo", repo, "tenant", path, "commitSha", commitSha, "error", err)
+		logResponseWriteError(r.Context(), "web: render plan diff", err, "repo", repo, "tenant", path, "commitSha", commitSha)
 	}
 }
 

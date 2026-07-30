@@ -6,11 +6,7 @@
 // scope per the PRD.
 package web
 
-import (
-	"net/http"
-
-	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
-)
+import "net/http"
 
 // HealthzHandler serves GET /healthz: always 200, no dependency checks.
 type HealthzHandler struct{}
@@ -27,6 +23,10 @@ func (h *HealthzHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write([]byte("ok")); err != nil {
-		telemetry.LoggerFromContext(r.Context()).Error("web: write healthz response", "error", err)
+		// Probes are the overwhelming majority of this route's traffic and
+		// kubelet closes the connection as soon as it has the status code, so
+		// a failed body write here is nearly always the prober hanging up —
+		// not something to page on.
+		logResponseWriteError(r.Context(), "web: write healthz response", err)
 	}
 }

@@ -14,8 +14,6 @@ import (
 	"html/template"
 	"net/http"
 	"time"
-
-	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
 )
 
 // changesTitle and changesSubtitle are the fixed title/subtitle rendered in
@@ -49,7 +47,8 @@ func (h *ChangesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	data := buildShell(r.URL.Path, changesTitle, changesSubtitle, "", statusChip(h.pollStatus.Snapshot(), h.pollStatus.ExtractFailureCounts(), h.pollStatus.PlanDiffOutcomeCounts(), now))
 	if err := h.tmpl.Execute(w, data); err != nil {
 		// The response may already be partly written, so we can't change the
-		// status code here — just record the failure so it's observable.
-		telemetry.LoggerFromContext(r.Context()).Error("web: render changes template", "error", err)
+		// status code here — just record the failure so it's observable, at a
+		// level reflecting whether the client hung up or the render broke.
+		logResponseWriteError(r.Context(), "web: render changes template", err)
 	}
 }
