@@ -175,8 +175,9 @@ func (h *TimelineHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.tmpl.Execute(w, data); err != nil {
 		// The response may already be partly written, so we can't change the
-		// status code here — just record the failure so it's observable.
-		logger.Error("web: render timeline template", "error", err)
+		// status code here — just record the failure so it's observable, at a
+		// level reflecting whether the client hung up or the render broke.
+		logResponseWriteError(r.Context(), "web: render timeline template", err)
 	}
 }
 

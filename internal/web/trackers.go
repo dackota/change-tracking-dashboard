@@ -17,7 +17,6 @@ import (
 
 	"github.com/dackota/change-tracking-dashboard/internal/config"
 	"github.com/dackota/change-tracking-dashboard/internal/pollstatus"
-	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
 )
 
 // maxPollErrorDisplayLen bounds how much of a tracker's raw poll-error text
@@ -225,7 +224,8 @@ func (h *TrackersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.tmpl.Execute(w, data); err != nil {
 		// The response may already be partly written, so we can't change the
-		// status code here — just record the failure so it's observable.
-		telemetry.LoggerFromContext(r.Context()).Error("web: render trackers template", "error", err)
+		// status code here — just record the failure so it's observable, at a
+		// level reflecting whether the client hung up or the render broke.
+		logResponseWriteError(r.Context(), "web: render trackers template", err)
 	}
 }

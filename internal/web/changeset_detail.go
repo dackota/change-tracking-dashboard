@@ -74,6 +74,6 @@ func (h *ChangesetDetailHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err := renderChangesetDetail(w, cs, riskRulesOrDefault(h.risk)); err != nil {
-		logger.Error("web: render changeset detail", "error", err)
+		logResponseWriteError(r.Context(), "web: render changeset detail", err)
 	}
 }
