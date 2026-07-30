@@ -167,7 +167,7 @@ func TestOpen_MigratesLegacyDBMissingIssueRefsColumn(t *testing.T) {
 	// Also exercise the exact call that failed in production: the "kpi
 	// changesets" path, whose SQL selects the aliased c.issue_refs_json.
 	asOf := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
-	if _, err := s.QueryChangesets(asOf, filter.FilterSpec{}, "", 100); err != nil {
+	if _, err := s.QueryChangesets(store.TimeWindow{AsOf: asOf}, filter.FilterSpec{}, "", 100); err != nil {
 		t.Fatalf("QueryChangesets after migrating legacy db: %v", err)
 	}
 }

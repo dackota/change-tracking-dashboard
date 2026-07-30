@@ -212,7 +212,7 @@ func (h *TimelineHandler) loadMetrics(ctx context.Context) dashboardstats.Metric
 	var page store.ChangesetPage
 	err := telemetry.WithSpan(ctx, tracer, "store.query_changesets", func(context.Context) error {
 		var err error
-		page, err = h.st.QueryChangesets(time.Now(), filter.FilterSpec{}, "", kpiHistoryCap)
+		page, err = h.st.QueryChangesets(store.TimeWindow{AsOf: time.Now()}, filter.FilterSpec{}, "", kpiHistoryCap)
 		return err
 	})
 	if err != nil {

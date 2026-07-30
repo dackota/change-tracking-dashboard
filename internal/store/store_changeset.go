@@ -37,16 +37,25 @@ type ChangesetPage struct {
 
 // QueryChangesets returns a page of Changesets — Changes grouped by the
 // commit that produced them, via the changeset package's assembly logic —
-// whose commit was committed strictly before asOf, matching spec, ordered
-// most-recent-first (newest commit first; stable ties broken by CommitSha
-// ascending, mirroring changeset.Assemble's tie-break).
+// whose commit falls within the half-open window w ([w.Since, w.AsOf) — see
+// TimeWindow), matching spec, ordered most-recent-first (newest commit
+// first; stable ties broken by CommitSha ascending, mirroring
+// changeset.Assemble's tie-break).
+//
+// A window with no Since is unbounded below, which is exactly the
+// AsOf-only behavior this method had before TimeWindow existed. A window
+// whose Since is at or after its AsOf is empty, not an error: an empty
+// window is a normal, handleable outcome in a polling loop, not a caller
+// mistake worth failing on.
 //
 // cursor is the opaque NextCursor from a previous page, or "" for the first
 // page. Passing back NextCursor on each call walks the full result set with
 // no gaps or overlaps — a page boundary always lands on a commit boundary,
-// so a Changeset is never split across two pages. limit bounds the number of
-// Changesets in this page (not the number of underlying Change rows).
-func (s *Store) QueryChangesets(asOf time.Time, spec filter.FilterSpec, cursor string, limit int) (ChangesetPage, error) {
+// so a Changeset is never split across two pages. The window is re-applied
+// on every page, so paging deep into a window never leaks a Changeset from
+// outside it. limit bounds the number of Changesets in this page (not the
+// number of underlying Change rows).
+func (s *Store) QueryChangesets(w TimeWindow, spec filter.FilterSpec, cursor string, limit int) (ChangesetPage, error) {
 	seek, err := decodeCursor(cursor)
 	if err != nil {
 		return ChangesetPage{}, err
@@ -70,7 +79,7 @@ func (s *Store) QueryChangesets(asOf time.Time, spec filter.FilterSpec, cursor s
 	// Changeset mid-way; bounding by distinct commit and joining back for
 	// all of that commit's rows guarantees a page boundary always lands on
 	// a commit boundary.
-	changes, err := s.queryChangesForChangesets(asOf, spec, seek, effectiveLimit+1)
+	changes, err := s.queryChangesForChangesets(w, spec, seek, effectiveLimit+1)
 	if err != nil {
 		return ChangesetPage{}, err
 	}
@@ -99,8 +108,9 @@ type seekPosition struct {
 }
 
 // queryChangesForChangesets fetches the Change rows to be grouped into
-// Changesets: strictly before asOf, matching spec's facet constraints, and
-// strictly after seek (if active) in changeset.Assemble's sort order —
+// Changesets: within the half-open window w, matching spec's facet
+// constraints, and strictly after seek (if active) in
+// changeset.Assemble's sort order —
 // bounded to the Change rows belonging to at most commitLimit distinct
 // commits, rather than every matching row in the table.
 //
@@ -115,15 +125,28 @@ type seekPosition struct {
 //
 // The facet filter clauses are applied twice: once inside the CTE (to pick
 // which distinct commits count towards the page) and again on the outer
-// join (to drop that commit's non-matching Change rows). asOf and seek are
-// only needed in the CTE — the join to page_commits already restricts the
-// outer rows to exactly the commits the CTE selected — but the filter must
-// be re-applied on the outer side, since a single commit can carry Changes
-// with heterogeneous facets and only the matching ones belong in the page.
-func (s *Store) queryChangesForChangesets(asOf time.Time, spec filter.FilterSpec, seek seekPosition, commitLimit int) ([]domain.Change, error) {
+// join (to drop that commit's non-matching Change rows). The window and
+// seek are only needed in the CTE — the join to page_commits already
+// restricts the outer rows to exactly the commits the CTE selected — but the
+// filter must be re-applied on the outer side, since a single commit can
+// carry Changes with heterogeneous facets and only the matching ones belong
+// in the page.
+//
+// Both window bounds are pushed into the CTE's WHERE rather than applied as
+// a post-filter, so they constrain which distinct commits count towards the
+// page. Applying Since after the fact would let it silently shrink pages.
+func (s *Store) queryChangesForChangesets(w TimeWindow, spec filter.FilterSpec, seek seekPosition, commitLimit int) ([]domain.Change, error) {
 	var cteWhere strings.Builder
 	cteWhere.WriteString("WHERE committed_at < ?")
-	cteParams := []any{asOf.UTC().Format(time.RFC3339Nano)}
+	cteParams := []any{w.AsOf.UTC().Format(time.RFC3339Nano)}
+
+	// The inclusive lower bound, mirroring TimeWindow.Contains. A zero Since
+	// emits no clause at all — unbounded below, as every caller behaved
+	// before the window existed.
+	if !w.Since.IsZero() {
+		cteWhere.WriteString("\nAND committed_at >= ?")
+		cteParams = append(cteParams, w.Since.UTC().Format(time.RFC3339Nano))
+	}
 
 	if seek.active {
 		// Continue strictly past the last Changeset of the previous page, in

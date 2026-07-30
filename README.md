@@ -264,6 +264,37 @@ fails config load with an actionable error rather than silently never firing.
 | `/healthz`              | Liveness check (no dependencies).                |
 | `/api/changesets*`      | JSON + HTML fragments backing the UI.            |
 
+### `GET /api/changesets`
+
+Returns changesets newest-first as JSON, with cursor pagination.
+
+| Param    | Description                                                            |
+| -------- | ---------------------------------------------------------------------- |
+| `since`  | RFC3339. **Inclusive** lower bound on commit time. Omit for no bound.  |
+| `asOf`   | RFC3339. **Exclusive** upper bound on commit time. Defaults to now.    |
+| `repo`   | Restrict to one tracked repository.                                     |
+| `cursor` | Opaque `nextCursor` from a previous response. Omit for the first page. |
+| `limit`  | Page size, clamped to 100. Defaults to 50.                             |
+| *facets* | Any configured facet name, as include/exclude filters.                  |
+
+Together `since` and `asOf` form a **half-open window** `[since, asOf)`. This is
+what makes incremental polling cheap and correct: feed one request's `asOf`
+straight back as the next request's `since` and consecutive windows tile the
+timeline exactly once — no gaps, no duplicates, and no timestamp arithmetic on
+your side. A changeset committed at exactly `since` is returned; one committed
+at exactly `asOf` is not.
+
+```bash
+curl "https://changes.dackota.com/api/changesets?since=2026-07-29T00:00:00Z&asOf=2026-07-30T00:00:00Z"
+```
+
+A `since` at or after `asOf` describes an empty window and returns an empty list
+with `200` — a normal outcome for a polling loop, not an error. A malformed
+`since` returns `400`.
+
+Keep following `nextCursor` until it comes back empty; a non-empty cursor is the
+only signal that more results exist.
+
 ## Private repositories (GitHub App)
 
 To track private repos, set `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, and

@@ -38,6 +38,7 @@ var reservedFacetNames = map[string]struct{}{
 	"asOf":   {},
 	"cursor": {},
 	"limit":  {},
+	"since":  {},
 }
 
 // QueryFilteredFeed returns up to limit Changes, filtered by the given facet

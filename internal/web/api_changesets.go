@@ -46,6 +46,7 @@ var reservedChangesetsParams = map[string]struct{}{
 	"cursor": {},
 	"limit":  {},
 	"repo":   {},
+	"since":  {},
 }
 
 // ChangesetsHandler serves GET /api/changesets as JSON.
@@ -134,6 +135,14 @@ func (h *ChangesetsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	since, err := parseSince(r.URL.Query().Get("since"))
+	if err != nil {
+		logger.Error("web: parse since", "error", err)
+		http.Error(w, genericBadRequestMsg, http.StatusBadRequest)
+		return
+	}
+	window := store.TimeWindow{Since: since, AsOf: asOf}
+
 	// Fetch the set of known facet names first. URL query-param keys are
 	// whitelisted against this set before reaching filter.Parse, mirroring
 	// the HTML feed handler's boundary guard.
@@ -168,7 +177,7 @@ func (h *ChangesetsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var page store.ChangesetPage
 	err = telemetry.WithSpan(r.Context(), tracer, "store.query_changesets", func(context.Context) error {
 		var err error
-		page, err = h.st.QueryChangesets(asOf, spec, cursor, limit)
+		page, err = h.st.QueryChangesets(window, spec, cursor, limit)
 		return err
 	})
 	if err != nil {
@@ -258,6 +267,26 @@ func parseLimit(raw string) (int, error) {
 func parseAsOf(raw string) (time.Time, error) {
 	if raw == "" {
 		return time.Now(), nil
+	}
+	t, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return t, nil
+}
+
+// parseSince parses the since query param as RFC3339 — the same format asOf
+// accepts, so a caller never has to learn a second time format for the same
+// endpoint. An empty string yields the zero Time, which store.TimeWindow
+// reads as "no lower bound": omitting since leaves the endpoint behaving
+// exactly as it did before the param existed.
+//
+// A since at or after asOf is deliberately not rejected here. It describes an
+// empty window, which the store answers with an empty page — a normal outcome
+// for a polling loop, not a caller error.
+func parseSince(raw string) (time.Time, error) {
+	if raw == "" {
+		return time.Time{}, nil
 	}
 	t, err := time.Parse(time.RFC3339, raw)
 	if err != nil {
