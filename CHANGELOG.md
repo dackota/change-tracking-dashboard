@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.3](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.13.2...app-v0.13.3) (2026-07-30)
+
+
+### Bug Fixes
+
+* **web:** stop logging client disconnects as application errors ([#141](https://github.com/dackota/change-tracking-dashboard/issues/141)) ([f7d1e20](https://github.com/dackota/change-tracking-dashboard/commit/f7d1e20257e9e1206e1c848c39aa009e09769f8f))
+
 ## [0.13.2](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.13.1...app-v0.13.2) (2026-07-29)
 
 
