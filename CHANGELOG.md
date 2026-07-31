@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.13.4...app-v0.14.0) (2026-07-31)
+
+
+### Features
+
+* **api:** add impact filter with post-assembly page-fill ([#153](https://github.com/dackota/change-tracking-dashboard/issues/153)) ([30a8025](https://github.com/dackota/change-tracking-dashboard/commit/30a80256a2f7f0edc8ccb11dca75a1e7c4b7b4a0))
+
 ## [0.13.4](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.13.3...app-v0.13.4) (2026-07-30)
 
 
