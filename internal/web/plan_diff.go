@@ -55,14 +55,22 @@ func NewPlanDiffHandler(engine PlanDiffEngine, resolver PlanRepoResolver, checke
 
 // ServeHTTP satisfies http.Handler.
 func (h *PlanDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Security headers apply to every response regardless of representation or
+	// status, so they are set before anything can return.
 	setSecurityHeaders(w.Header())
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	// Negotiation depends only on the Accept header, so it is decided up front
+	// and every exit path below — including the error paths — honors it.
+	// Content-Type is deliberately NOT set here: it is set by whichever
+	// renderer actually runs, so it can never describe a body that was not
+	// produced.
+	asJSON := wantsJSON(r.Header.Get("Accept"))
 
 	repo := r.URL.Query().Get("repo")
 	commitSha := r.URL.Query().Get("commitSha")
 	path := r.URL.Query().Get("path")
 	if repo == "" || commitSha == "" || path == "" {
-		http.Error(w, genericBadRequestMsg, http.StatusBadRequest)
+		writeDetailError(r, w, asJSON, http.StatusBadRequest, genericBadRequestMsg)
 		return
 	}
 
@@ -82,11 +90,11 @@ func (h *PlanDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		logger.Error("web: check changeset existence for plan diff", "repo", repo, "tenant", path, "commitSha", commitSha, "error", err)
-		http.Error(w, genericServerErrorMsg, http.StatusInternalServerError)
+		writeDetailError(r, w, asJSON, http.StatusInternalServerError, genericServerErrorMsg)
 		return
 	}
 	if !found || !hasTerraformChangeAt(cs, path) {
-		http.NotFound(w, r)
+		writeDiffNotFound(r, w, asJSON)
 		return
 	}
 
@@ -98,7 +106,7 @@ func (h *PlanDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		logger.Error("web: resolve plan repo for plan diff", "repo", repo, "tenant", path, "commitSha", commitSha, "error", err)
-		http.Error(w, genericServerErrorMsg, http.StatusInternalServerError)
+		writeDetailError(r, w, asJSON, http.StatusInternalServerError, genericServerErrorMsg)
 		return
 	}
 
@@ -119,6 +127,12 @@ func (h *PlanDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return planDiffSpanError(outcome.Kind)
 	})
 
+	if asJSON {
+		writeJSON(r, w, http.StatusOK, toPlanDiffJSON(outcome))
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := renderPlanDiff(w, outcome); err != nil {
 		logResponseWriteError(r.Context(), "web: render plan diff", err, "repo", repo, "tenant", path, "commitSha", commitSha)
 	}

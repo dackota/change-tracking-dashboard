@@ -400,6 +400,124 @@ Status codes are the same in both representations: `400` when `repo` or
 failure. Error messages are generic and never echo request values back, and a
 `404` reveals nothing about whether the repo or the commit exists.
 
+### `GET /api/changesets/detail/chart-diff`
+
+Returns the manifest-level blast radius of a Helm chart version bump — what
+actually changed in the rendered Kubernetes manifests, not just the version
+string. Requires `repo`, `commitSha`, and `path` (the chart's directory).
+
+It follows the same `Accept` rule as `/api/changesets/detail`: JSON only when
+you name `application/json` explicitly; `*/*`, an absent header, and
+`text/html` all get today's HTML fragment.
+
+```bash
+curl -H "Accept: application/json" \
+  "https://changes.dackota.com/api/changesets/detail/chart-diff?repo=infra-repo&commitSha=abc123&path=workloads/app"
+```
+
+Every response carries a `kind` classifying the outcome:
+
+| `kind`              | Meaning                                                       |
+| ------------------- | ------------------------------------------------------------- |
+| `ok`                | The diff computed; `diff` is present.                          |
+| `no-prior-version`  | Root commit — there is no "old" side to diff against.          |
+| `unavailable`       | A chart dependency has no vendored artifact, and this service never pulls from a registry. |
+| `could-not-render`  | The chart could not be rendered (malformed content, or any other failure). |
+| `exceeded-limits`   | The render hit a configured timeout or resource ceiling.       |
+
+On `ok`, the body carries the unified diff text, its summary counts, and the
+truncation flag — so you can present either the counts or the full diff
+depending on how much room you have:
+
+```json
+{
+  "kind": "ok",
+  "diff": {
+    "unified": "-image: 1.9.0\n+image: 2.0.0\n",
+    "truncated": false,
+    "summary": { "manifestsChanged": 12, "linesAdded": 200, "linesRemoved": 140 }
+  }
+}
+```
+
+`truncated` is `true` when `unified` was cut short by the size ceiling —
+**check it before presenting a diff as complete.** The `summary` counts are
+always the true totals, computed before any truncation, so they stay an honest
+blast-radius indicator either way.
+
+**Every non-`ok` outcome carries the `kind` and nothing else.** `diff` is
+omitted entirely — no error strings, no Helm output, no git internals ever
+reach the wire. The underlying cause stays server-side in the logs.
+
+```json
+{ "kind": "could-not-render" }
+```
+
+Status codes match the sibling endpoints: `400` when `repo`, `commitSha`, or
+`path` is missing, `404` for an unknown changeset, `500` on an internal
+failure; errors are JSON objects when JSON is negotiated. A `404` is returned
+both for an unknown changeset and for a `path` that isn't the directory of one
+of that changeset's own chart changes — the two are **indistinguishable**, in
+both representations, so the endpoint can't be used to enumerate what has been
+ingested.
+
+### `GET /api/changesets/detail/plan-diff`
+
+The Terraform counterpart: the static resource-level blast radius of a change,
+so a PR bot can post "2 resources force replacement" as a check and reviewers
+see destructive changes before merging rather than after. Requires `repo`,
+`commitSha`, and `path`. Same `Accept` rule, same status codes, same
+indistinguishable `404`.
+
+```bash
+curl -H "Accept: application/json" \
+  "https://changes.dackota.com/api/changesets/detail/plan-diff?repo=infra-repo&commitSha=abc123&path=envs/prod"
+```
+
+The `kind` vocabulary is the chart-diff one minus `unavailable`: `ok`,
+`no-prior-version`, `could-not-render`, `exceeded-limits`. There is no
+`unavailable` case here — a Terraform resource block is always statically
+resolvable from the materialized subtree, so there is nothing to decline to
+fetch.
+
+On `ok`, the body carries the unified diff and line summary, the aggregate
+resource counts, and the per-resource deltas:
+
+```json
+{
+  "kind": "ok",
+  "diff": {
+    "unified": "-shape = \"VM.Standard2.1\"\n+shape = \"VM.Standard2.4\"\n",
+    "truncated": false,
+    "summary": { "manifestsChanged": 3, "linesAdded": 9, "linesRemoved": 4 }
+  },
+  "summary": { "added": 1, "removed": 1, "changed": 1, "replaced": 2 },
+  "resources": [
+    { "type": "oci_core_instance", "name": "web", "kind": "changed", "forcesReplacement": true },
+    { "type": "oci_core_vcn", "name": "main", "kind": "added", "forcesReplacement": false },
+    { "type": "oci_load_balancer", "name": "edge", "kind": "removed", "forcesReplacement": true }
+  ]
+}
+```
+
+`summary` is the aggregate, so a one-line blast-radius summary needs no
+client-side computation. `replaced` counts how many of `removed` + `changed`
+force replacement — it is a **subset of those two, never a separate category**,
+so `added + removed + changed` is the total resource count and adding
+`replaced` would double-count.
+
+Each entry in `resources` carries the resource's `type` and `name` (its HCL
+address), its change `kind` (`added` / `removed` / `changed`), and
+`forcesReplacement`. That last flag is the destructive-change signal: `true`
+for a removal (always destructive) or a change touching a force-replacement
+attribute, and always `false` for an addition. `resources` is returned in a
+deterministic sorted order, so output is stable across requests and two
+responses can be diffed meaningfully.
+
+As with chart-diff, a non-`ok` outcome carries the `kind` and nothing else —
+`diff`, `summary`, and `resources` are all omitted, and no HCL-parser or git
+internals reach the wire.
+
 ## Private repositories (GitHub App)
 
 To track private repos, set `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, and
