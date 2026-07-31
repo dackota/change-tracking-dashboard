@@ -6,6 +6,10 @@ import (
 	"sync"
 	"testing"
 
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
 	"github.com/dackota/change-tracking-dashboard/internal/gitsource"
 	"github.com/dackota/change-tracking-dashboard/internal/subtree"
 )
@@ -191,14 +195,11 @@ func TestDiff_ConcurrencyCap_BoundsSimultaneousProduces(t *testing.T) {
 func TestDiff_IsTotal_AlwaysReturnsOneKindAndNeverPanics(t *testing.T) {
 	t.Parallel()
 
-	// A panicking FirstParent is deliberately absent: it is called
-	// synchronously on the caller's goroutine and is not recovered, so it is
-	// the one input for which Diff is not total. See
-	// TestDiff_FirstParentPanic_IsNotContained.
 	repos := map[string]func(string) (string, error){
 		"ok":       func(string) (string, error) { return "parent-sha", nil },
 		"no-paren": func(string) (string, error) { return "", gitsource.ErrNoParent },
 		"error":    func(string) (string, error) { return "", errUnexpected },
+		"panic":    func(string) (string, error) { panic("first parent exploded") },
 	}
 	materializers := map[string]func(_, _, _ string, _ gitsource.MaterializeBounds) error{
 		"ok":     func(_, _, _ string, _ gitsource.MaterializeBounds) error { return nil },
@@ -230,24 +231,55 @@ func TestDiff_IsTotal_AlwaysReturnsOneKindAndNeverPanics(t *testing.T) {
 	}
 }
 
-// TestDiff_FirstParentPanic_IsNotContained documents a real limitation: the
-// engine recovers panics raised inside the materialize and produce
-// goroutines, but Repo.FirstParent is called synchronously on the caller's
-// own goroutine and is NOT guarded. A panicking FirstParent propagates.
-//
-// *gitsource.Source.FirstParent does not walk untrusted tree content the way
-// MaterializeSubtreeBounded does, so this is accepted rather than closed —
-// but it is asserted here so the gap is a decision on record, not a surprise.
-func TestDiff_FirstParentPanic_IsNotContained(t *testing.T) {
+// TestDiff_FirstParentPanic_IsContainedAndClassified closes the last hole in
+// Diff's totality claim. Repo.FirstParent runs synchronously on the caller's
+// own goroutine, so unlike the materialize and produce steps it has no
+// goroutine of its own to contain a panic — it needs its own recover. It
+// still decodes attacker-influenced repository data on a request path, so a
+// go-git panic there must not take the dashboard process down.
+func TestDiff_FirstParentPanic_IsContainedAndClassified(t *testing.T) {
 	t.Parallel()
 
 	engine := newTestEngine(t, testConfig(), &fakeDomain{})
 	repo := &fakeRepo{firstParentFn: func(string) (string, error) { panic("first parent exploded") }}
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("FirstParent panic was contained — if that is now intended, update this test and the engine's doc")
-		}
-	}()
+	got := engine.Diff(context.Background(), repo, defaultRequest)
+
+	if got.Kind != kindFailed {
+		t.Errorf("Kind = %q, want %q — a FirstParent panic must be contained and classified", got.Kind, kindFailed)
+	}
+}
+
+// TestDiff_FirstParentPanic_RecordsSpanError proves the recover happens
+// inside the span rather than around it: telemetry.WithSpan does not recover,
+// so a panic unwinding through it would end the span without ever recording
+// the error or setting Error status, leaving the failure invisible in traces.
+func TestDiff_FirstParentPanic_RecordsSpanError(t *testing.T) {
+	t.Parallel()
+
+	exporter := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+
+	engine := newTestEngine(t, testConfig(), &fakeDomain{}, subtree.WithTracerProvider(tp))
+	repo := &fakeRepo{firstParentFn: func(string) (string, error) { panic("first parent exploded") }}
+
 	engine.Diff(context.Background(), repo, defaultRequest)
+
+	var found bool
+	for _, span := range exporter.GetSpans() {
+		if span.Name != "gitsource.first_parent" {
+			continue
+		}
+		found = true
+		if span.Status.Code != codes.Error {
+			t.Errorf("span status = %v, want Error", span.Status.Code)
+		}
+		if len(span.Events) == 0 {
+			t.Error("span recorded no exception event for the panic")
+		}
+	}
+	if !found {
+		t.Error("no gitsource.first_parent span was emitted")
+	}
 }
