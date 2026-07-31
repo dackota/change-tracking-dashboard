@@ -355,10 +355,26 @@ As with `impact`, an unrecognized `risk` value returns `400` rather than being
 silently ignored, and the same short-page caveat applies.
 
 Risk classification is driven by operator-configured rules, so which
-changesets a `risk` query returns depends on your configured rule set. Note
-that the built-in default rules produce only `replace-destroy`, `security`,
-and `cost-tripwire`; `major-version-bump` requires a configured rule using
-`semverBump`.
+changesets a `risk` query returns depends on your configured rule set. The
+built-in default rules produce only `replace-destroy`, `security`, and
+`cost-tripwire`. `major-version-bump` is **not** produced by default — that is
+deliberate, since `impact=major` already carries the signal (see [Risk
+classes](#risk-classes)) — so it requires a configured rule using `semverBump`.
+
+That matters when reading an empty result. A slug in the vocabulary is always
+accepted, so `?risk=major-version-bump` on a default deployment returns `200`
+with an empty list, which looks identical to "no breaking upgrades in this
+window" but actually means "no rule here produces that class". To make the
+difference visible, the server logs a warning naming the class and the fix
+whenever a `risk` filter names a class no active rule can produce:
+
+```
+level=WARN message="web: risk filter names a class no configured rule can produce; ..." risk=major-version-bump remedy="add a riskRules entry for this class ..."
+```
+
+If you see that warning and want the class, add the rule shown above under
+[Risk classes](#risk-classes). If you filter only on classes your rules
+produce, you will never see it.
 
 ### `GET /api/changesets/detail`
 

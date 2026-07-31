@@ -203,6 +203,7 @@ func (h *ChangesetsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// against this one value, so they can never disagree about an operator's
 	// configured rules.
 	rules := riskRulesOrDefault(h.risk)
+	warnUnreachableRiskFilter(logger, risks, rules)
 	pred := allPredicates(impactPredicate(impacts), riskPredicate(risks, rules))
 
 	var page store.ChangesetPage

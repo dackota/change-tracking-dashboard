@@ -60,6 +60,73 @@ var riskSlugs = map[Risk]string{
 	RiskMajorVersionBump: "major-version-bump",
 }
 
+// risksRequiringConfiguration records the Risk classes the shipped
+// DefaultRiskRules deliberately does NOT produce, so an operator must author a
+// rule to make them reachable.
+//
+// This mapping lives here, beside the Risk constants and riskSlugs, for the
+// same reason riskSlugs does: adding a fifth class now forces a decision about
+// its default reachability at the moment of definition, and the drift guard in
+// risk_reachability_test.go fails until that decision is made.
+//
+// The gap that motivated it: RiskMajorVersionBump had a constant, a slug,
+// badge rendering, and full classifier support, yet no default rule produced
+// it — and nothing in the code said whether that was deliberate. It was (the
+// rule was folded into impact:major, so a major bump earns one badge instead
+// of two saying the same thing), but the only way to learn that was to read
+// git history. A class that compiles, classifies, and renders a badge while
+// being unreachable is exactly the kind of gap nobody notices until a consumer
+// asks why their query returns nothing.
+//
+// Membership here is a statement about the SHIPPED DEFAULTS only. An operator
+// who configures a rule for one of these classes makes it reachable for their
+// deployment; ask ProducibleRisks about a specific rule set rather than
+// consulting this map to answer "can this deployment produce r".
+var risksRequiringConfiguration = map[Risk]struct{}{
+	// impact: major already carries the semver-major-bump signal, so shipping
+	// a default rule for it would badge the same change twice. The SemverBump
+	// predicate remains fully supported for a config-authored rule; only the
+	// shipped default is absent. See risk_rules.go and the README's
+	// "re-add it explicitly" recipe.
+	RiskMajorVersionBump: {},
+}
+
+// RequiresConfiguration reports whether r is a class the shipped defaults
+// deliberately do not produce, so a deployment must author a rule for it.
+//
+// It is total: any value that is not one of the Risk constants reports false —
+// an unknown value is not "requiring configuration", it is simply not a risk
+// class.
+func RequiresConfiguration(r Risk) bool {
+	_, ok := risksRequiringConfiguration[r]
+	return ok
+}
+
+// ProducibleRisks returns the set of Risk classes rules can ever produce.
+//
+// It answers the reachability question for a SPECIFIC rule set — normally the
+// active one, defaults plus whatever the operator configured — which is what
+// makes it useful for telling "no changeset matched your filter" apart from
+// "no rule in this deployment can ever produce that class". The second is a
+// configuration problem the operator can fix; presented as an empty result,
+// it reads as the first.
+//
+// Reachability here is structural: a class is producible if some rule names
+// it. Whether that rule's patterns ever match real data is not knowable
+// without the data, so this deliberately answers the narrower, decidable
+// question. A false positive (a rule exists but never matches) is possible; a
+// false negative is not — if this says a class is unreachable, no changeset
+// can ever carry it.
+func ProducibleRisks(rules []RiskRule) map[Risk]struct{} {
+	out := make(map[Risk]struct{}, len(rules))
+	for _, rule := range rules {
+		if rule.Risk != "" {
+			out[rule.Risk] = struct{}{}
+		}
+	}
+	return out
+}
+
 // SlugForRisk returns the wire slug for r. ok is false for any value that is
 // not one of the Risk constants — the function is total and never panics.
 func SlugForRisk(r Risk) (string, bool) {
