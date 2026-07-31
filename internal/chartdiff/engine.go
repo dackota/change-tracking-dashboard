@@ -126,8 +126,10 @@ func NewEngine(cfg Config, renderer Renderer, opts ...Option) (*Engine, error) {
 }
 
 // Diff computes (or returns the cached) Chart diff Outcome for req against
-// repo. It is a total function: for any input, exactly one Outcome Kind is
-// returned and Diff never panics.
+// repo. For any input it returns exactly one Outcome Kind, and a panic in
+// either the materialize or the render step is recovered and classified. The
+// one exception is a panic inside Repo.FirstParent, which is called
+// synchronously and propagates — see subtree.Engine.Diff.
 //
 // Classification:
 //   - repo.FirstParent reports gitsource.ErrNoParent (req.CommitSha is a

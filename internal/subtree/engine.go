@@ -166,10 +166,17 @@ func NewEngine[A, O any](cfg Config, domain Domain[A, O], opts ...Option) (*Engi
 	}, nil
 }
 
-// Diff computes (or returns the cached) Outcome for req against repo. It is a
-// total function: for any input, exactly one Outcome is returned and Diff
-// never panics — a panic in either the materialize or the produce step is
-// recovered on the goroutine that raised it and folded into a Failure.
+// Diff computes (or returns the cached) Outcome for req against repo. For any
+// input it returns exactly one Outcome, and a panic in either the materialize
+// or the produce step is recovered on the goroutine that raised it and folded
+// into a Failure.
+//
+// One gap: Repo.FirstParent is called synchronously on the caller's own
+// goroutine and is NOT guarded, so a panicking FirstParent propagates to the
+// caller. *gitsource.Source.FirstParent resolves a single commit object and
+// does not walk untrusted tree content the way MaterializeSubtreeBounded
+// does, so this is an accepted limitation rather than a closed one — see
+// TestDiff_FirstParentPanic_IsNotContained, which pins it.
 //
 // Known limitation: e.group.Do coalesces concurrent Diff calls for the same
 // key onto a single computation, which runs under only the *leader's* ctx
