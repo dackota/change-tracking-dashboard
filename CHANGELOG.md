@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.1](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.18.0...app-v0.18.1) (2026-07-31)
+
+
+### Bug Fixes
+
+* **diff:** contain panics from Repo.FirstParent ([#170](https://github.com/dackota/change-tracking-dashboard/issues/170)) ([0078820](https://github.com/dackota/change-tracking-dashboard/commit/00788205b32e047a94c62c5d2dbdd648ac7357cd))
+
 ## [0.18.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.17.1...app-v0.18.0) (2026-07-31)
 
 
