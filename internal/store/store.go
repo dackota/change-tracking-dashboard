@@ -268,35 +268,6 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	return nil
 }
 
-// QueryFeed returns up to limit Changes ordered newest-first by committed_at.
-func (s *Store) QueryFeed(limit int) ([]domain.Change, error) {
-	const query = `
-SELECT repo, file_path, field, key_val, change_type,
-       old_value, new_value, facets_json, commit_sha, author, committed_at, issue_refs_json, commit_subject
-FROM changes
-ORDER BY committed_at DESC
-LIMIT ?`
-
-	rows, err := s.db.Query(query, limit)
-	if err != nil {
-		return nil, fmt.Errorf("store: query feed: %w", err)
-	}
-	defer rows.Close()
-
-	var results []domain.Change
-	for rows.Next() {
-		c, err := scanChange(rows)
-		if err != nil {
-			return nil, fmt.Errorf("store: scan change: %w", err)
-		}
-		results = append(results, c)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("store: rows error: %w", err)
-	}
-	return results, nil
-}
-
 // GetHighWaterMark returns the last persisted commit SHA for the given
 // (repo, filePath, field) triple, or an empty string if none has been set yet.
 // Keying by field (not just repo+path) lets multiple trackers extracting

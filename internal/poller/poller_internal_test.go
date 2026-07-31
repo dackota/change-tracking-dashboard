@@ -14,8 +14,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dackota/change-tracking-dashboard/internal/changeset"
 	"github.com/dackota/change-tracking-dashboard/internal/domain"
 	"github.com/dackota/change-tracking-dashboard/internal/facet"
+	"github.com/dackota/change-tracking-dashboard/internal/filter"
 	"github.com/dackota/change-tracking-dashboard/internal/gitsource"
 	"github.com/dackota/change-tracking-dashboard/internal/store"
 	"github.com/go-git/go-git/v5"
@@ -108,9 +110,16 @@ func TestPollFileGroup_UsesInjectedFieldExtractor(t *testing.T) {
 		t.Fatalf("pollFileGroup: %v", errs[0])
 	}
 
-	feed, err := st.QueryFeed(10)
+	// Read the persisted Changes back through the query path production
+	// actually uses. An unbounded-below window ending in the future covers
+	// every commit the fixture repo can produce.
+	page, err := st.QueryChangesets(store.TimeWindow{AsOf: time.Now().Add(time.Hour)}, filter.FilterSpec{}, nil, "", 10)
 	if err != nil {
-		t.Fatalf("QueryFeed: %v", err)
+		t.Fatalf("QueryChangesets: %v", err)
+	}
+	var feed []changeset.Change
+	for _, cs := range page.Changesets {
+		feed = append(feed, cs.Changes...)
 	}
 	if len(feed) != 1 {
 		t.Fatalf("got %d changes, want 1", len(feed))

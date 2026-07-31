@@ -117,10 +117,7 @@ func TestPoller_HCL_AutoDetectsEngineFromGlob_AndTracksProviderVersion(t *testin
 		t.Fatalf("Poll: %v", err)
 	}
 
-	feed, err := st.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed: %v", err)
-	}
+	feed := queryFeed(t, st)
 	if len(feed) != 1 {
 		t.Fatalf("got %d changes, want 1; feed = %+v", len(feed), feed)
 	}
@@ -174,10 +171,7 @@ func TestPoller_HCL_TracksLockfileProviderPin(t *testing.T) {
 		t.Fatalf("Poll: %v", err)
 	}
 
-	feed, err := st.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed: %v", err)
-	}
+	feed := queryFeed(t, st)
 	if len(feed) != 1 {
 		t.Fatalf("got %d changes, want 1; feed = %+v", len(feed), feed)
 	}
@@ -222,10 +216,7 @@ func TestPoller_HCL_TracksModuleSourceAndVersion(t *testing.T) {
 		t.Fatalf("Poll: %v", err)
 	}
 
-	feed, err := st.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed: %v", err)
-	}
+	feed := queryFeed(t, st)
 	if len(feed) != 1 {
 		t.Fatalf("got %d changes, want 1; feed = %+v", len(feed), feed)
 	}
@@ -262,10 +253,7 @@ func TestPoller_HCL_TracksRequiredVersion(t *testing.T) {
 		t.Fatalf("Poll: %v", err)
 	}
 
-	feed, err := st.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed: %v", err)
-	}
+	feed := queryFeed(t, st)
 	if len(feed) != 1 {
 		t.Fatalf("got %d changes, want 1; feed = %+v", len(feed), feed)
 	}
@@ -316,10 +304,7 @@ func TestPoller_HCL_TracksNamedResourceAttribute(t *testing.T) {
 		t.Fatalf("Poll: %v", err)
 	}
 
-	feed, err := st.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed: %v", err)
-	}
+	feed := queryFeed(t, st)
 	if len(feed) != 1 {
 		t.Fatalf("got %d changes, want 1; feed = %+v", len(feed), feed)
 	}
@@ -352,10 +337,7 @@ func TestPoller_HCL_TracksNamedResourceAttribute(t *testing.T) {
 	if err := p2.Poll(exprTracker); err != nil {
 		t.Fatalf("Poll (expr field): %v", err)
 	}
-	exprFeed, err := st2.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed (expr field): %v", err)
-	}
+	exprFeed := queryFeed(t, st2)
 	if len(exprFeed) != 1 {
 		t.Fatalf("expr field: got %d changes, want 1; feed = %+v", len(exprFeed), exprFeed)
 	}
@@ -396,10 +378,7 @@ func TestPoller_HCL_AbsentTraversal_YieldsNoChangeAndNoError(t *testing.T) {
 		t.Fatalf("Poll: %v", err)
 	}
 
-	feed, err := st.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed: %v", err)
-	}
+	feed := queryFeed(t, st)
 	if len(feed) != 0 {
 		t.Fatalf("got %d changes, want 0 (absent path); feed = %+v", len(feed), feed)
 	}
@@ -464,10 +443,7 @@ func TestPoller_HCL_MalformedFile_SkippedWithoutDroppingOtherFiles(t *testing.T)
 
 	// The other (valid) file's Change must still have been processed and
 	// persisted — the malformed file must not drop the rest of the cycle.
-	feed, err := st.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed: %v", err)
-	}
+	feed := queryFeed(t, st)
 	if len(feed) != 1 {
 		t.Fatalf("got %d changes, want 1 (good.tf's change survives bad.tf's failure); feed = %+v", len(feed), feed)
 	}

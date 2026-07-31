@@ -12,12 +12,14 @@ import (
 // into parameterized SQL WHERE clauses (each appended with a leading
 // "\nAND ") and appends the bound values to params. Facet keys are
 // concatenated into the json_extract path (not bindable as a ? parameter),
-// so each key is validated against facetKeyPattern before use — the same
-// boundary guard QueryFilteredFeed relies on.
+// so each key is validated against facetKeyPattern before use — the store
+// boundary's guard against an unsafe key from any caller.
 //
-// Semantics mirror filter.FilterSpec.MatchesRepo/Matches exactly, combined
-// with AND: an unset repo scope emits no clause (R26/R27's no-op
-// invariant); a set scope requires an exact repo match. Every include facet
+// This function is the single definition of what matching a FilterSpec
+// means; filter.FilterSpec itself carries the request and does not interpret
+// it. The clauses combine with AND: an unset repo scope emits no clause
+// (R26/R27's no-op invariant); a set scope requires an exact repo match
+// (case-sensitive, no partial match). Every include facet
 // must have a matching value (json_extract(...) = ?, OR'd across the
 // facet's value set), and no exclude facet may have a matching value. An
 // exclude clause explicitly allows the json_extract result to be NULL (facet
@@ -85,7 +87,7 @@ func validateFacetKey(key string) error {
 }
 
 // sortedKeys returns m's keys sorted ascending, for deterministic clause
-// ordering (easier to test/debug — mirrors QueryFilteredFeed's convention).
+// ordering (easier to test/debug).
 func sortedKeys(m map[string][]string) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {

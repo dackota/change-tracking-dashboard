@@ -100,12 +100,9 @@ func TestOpen_MigratesLegacyDBMissingCommitSubjectColumn(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = s.Close() })
 
-	feed, err := s.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed after migrating pre-subject db: %v", err)
-	}
+	feed := queryFeed(t, s)
 	if len(feed) != 1 {
-		t.Fatalf("QueryFeed returned %d rows, want 1", len(feed))
+		t.Fatalf("queryFeed returned %d rows, want 1", len(feed))
 	}
 	if got := feed[0].Subject; got != "" {
 		t.Errorf("pre-subject row Subject = %q, want empty", got)
@@ -153,12 +150,9 @@ func TestOpen_MigratesLegacyDBMissingIssueRefsColumn(t *testing.T) {
 
 	// Assert: the query that failed in production now succeeds, and the legacy
 	// row reads back with the empty-slice default for IssueRefs.
-	feed, err := s.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed after migrating legacy db: %v", err)
-	}
+	feed := queryFeed(t, s)
 	if len(feed) != 1 {
-		t.Fatalf("QueryFeed returned %d rows, want 1", len(feed))
+		t.Fatalf("queryFeed returned %d rows, want 1", len(feed))
 	}
 	if got := feed[0].IssueRefs; len(got) != 0 {
 		t.Errorf("legacy row IssueRefs = %#v, want empty", got)
@@ -196,9 +190,7 @@ func TestOpen_MigrationIsIdempotent(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = s2.Close() })
 
-	if _, err := s2.QueryFeed(100); err != nil {
-		t.Fatalf("QueryFeed after reopening migrated db: %v", err)
-	}
+	queryFeed(t, s2)
 }
 
 // TestOpen_MigratesLegacyHWMTableToPerField reproduces a pre-per-field volume:
@@ -294,10 +286,7 @@ func TestOpen_DedupesLegacyDuplicateChanges(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = s.Close() })
 
-	feed, err := s.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed after dedupe migration: %v", err)
-	}
+	feed := queryFeed(t, s)
 	if len(feed) != 1 {
 		t.Fatalf("after dedupe migration: got %d rows, want 1", len(feed))
 	}
@@ -310,10 +299,7 @@ func TestOpen_DedupesLegacyDuplicateChanges(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SaveChange (idempotent re-save): %v", err)
 	}
-	feed, err = s.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed after idempotent re-save: %v", err)
-	}
+	feed = queryFeed(t, s)
 	if len(feed) != 1 {
 		t.Fatalf("after idempotent re-save: got %d rows, want 1", len(feed))
 	}

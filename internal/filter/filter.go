@@ -1,8 +1,14 @@
-// Package filter parses request parameters into a FilterSpec and provides a
-// match predicate over facet maps. This module is pure — no I/O, no side
-// effects, and no SQL: it only decides what should be included or excluded.
-// SQL translation of a FilterSpec lives in the store-layer, using the
-// Includes/Excludes accessors below.
+// Package filter parses request parameters into a FilterSpec: the immutable,
+// storage-independent statement of which Changes a request asks for. This
+// module is pure — no I/O, no side effects, and no SQL: it only carries what
+// should be included or excluded.
+//
+// A FilterSpec is not self-applying. The one authority on what it means to
+// match is the SQL translation in internal/store (appendFilterClauses), which
+// reads the spec through the Repo/Includes/Excludes accessors below. Adding a
+// second, in-process interpretation here would create two definitions of
+// matching that only a comment could hold together — notably around facet
+// absence, where SQL's three-valued logic makes the exclude case subtle.
 package filter
 
 import "sort"
@@ -20,24 +26,6 @@ type FilterSpec struct {
 	repo     string
 }
 
-// Matches reports whether facets satisfies the FilterSpec's facet filter:
-// every include filter matches and no exclude filter matches. It does not
-// consider the repo scope — callers combine Matches with MatchesRepo (AND)
-// to get the full spec's verdict for a given (repo, facets) pair.
-func (s FilterSpec) Matches(facets map[string]string) bool {
-	for name, values := range s.includes {
-		if !facetValueIn(facets, name, values) {
-			return false
-		}
-	}
-	for name, values := range s.excludes {
-		if facetValueIn(facets, name, values) {
-			return false
-		}
-	}
-	return true
-}
-
 // Repo returns the repo this spec is scoped to, or "" when no repo scope is
 // set (the spec matches any repo).
 func (s FilterSpec) Repo() string {
@@ -49,14 +37,6 @@ func (s FilterSpec) Repo() string {
 // value's behavior.
 func (s FilterSpec) WithRepo(repo string) FilterSpec {
 	return FilterSpec{includes: s.includes, excludes: s.excludes, repo: repo}
-}
-
-// MatchesRepo reports whether repo satisfies this spec's repo scope: true
-// when no scope is set (Repo() == "" is a no-op) or repo equals the scoped
-// repo exactly (case-sensitive, no partial match). Combine with Matches via
-// AND — never OR — to get the full spec's verdict for a (repo, facets) pair.
-func (s FilterSpec) MatchesRepo(repo string) bool {
-	return s.repo == "" || s.repo == repo
 }
 
 // Includes returns the include side of the spec as facet name -> sorted
@@ -87,17 +67,4 @@ func exportValueSets(sets map[string]map[string]struct{}) map[string][]string {
 		out[name] = vals
 	}
 	return out
-}
-
-// facetValueIn reports whether facets carries name with a value present in
-// values. A facet absent from the map is never "in" any value set — this is
-// the shared rule that makes an include fail on absence and an exclude not
-// fire on absence.
-func facetValueIn(facets map[string]string, name string, values map[string]struct{}) bool {
-	v, ok := facets[name]
-	if !ok {
-		return false
-	}
-	_, ok = values[v]
-	return ok
 }

@@ -111,12 +111,9 @@ func TestPoller_EndToEnd(t *testing.T) {
 	}
 
 	// Should have produced one Change (1.0.0 → 1.1.0).
-	feed, err := st.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed: %v", err)
-	}
+	feed := queryFeed(t, st)
 	if len(feed) != 1 {
-		t.Fatalf("QueryFeed after poll: got %d changes, want 1", len(feed))
+		t.Fatalf("queryFeed after poll: got %d changes, want 1", len(feed))
 	}
 
 	c := feed[0]
@@ -168,10 +165,7 @@ func TestPoller_IncrementalPoll(t *testing.T) {
 		t.Fatalf("Poll (first): %v", err)
 	}
 
-	feedAfterFirst, err := st.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed (first): %v", err)
-	}
+	feedAfterFirst := queryFeed(t, st)
 	firstCount := len(feedAfterFirst)
 
 	// Second poll — high-water mark should prevent re-processing.
@@ -179,10 +173,7 @@ func TestPoller_IncrementalPoll(t *testing.T) {
 		t.Fatalf("Poll (second): %v", err)
 	}
 
-	feedAfterSecond, err := st.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed (second): %v", err)
-	}
+	feedAfterSecond := queryFeed(t, st)
 
 	if len(feedAfterSecond) != firstCount {
 		t.Errorf("Second poll added %d unexpected changes (had %d, now %d)",
@@ -248,10 +239,7 @@ func TestPoller_SingleCommitProducesAdded(t *testing.T) {
 		t.Fatalf("Poll: %v", err)
 	}
 
-	feed, err := st.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed: %v", err)
-	}
+	feed := queryFeed(t, st)
 
 	// Single commit → "added" Change for the first appearance.
 	if len(feed) != 1 {
@@ -337,10 +325,7 @@ func TestPoller_ResumesFromHighWaterMark(t *testing.T) {
 		t.Fatalf("Poll (resume): %v", err)
 	}
 
-	feed, err := st.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed: %v", err)
-	}
+	feed := queryFeed(t, st)
 
 	// Should have two changes: sha2 (1.0.0→1.1.0) and sha3 (1.1.0→1.2.0).
 	if len(feed) != 2 {
@@ -432,10 +417,7 @@ func TestPoller_FirstRun_BackfillWindowExcludesOldCommits(t *testing.T) {
 		t.Fatalf("Poll: %v", err)
 	}
 
-	feed, err := st.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed: %v", err)
-	}
+	feed := queryFeed(t, st)
 
 	// sha2 (Jan 10) is the oldest commit within the window; it becomes the
 	// baseline "old" state. sha3 (Jan 20) is diffed against sha2, producing
@@ -508,10 +490,7 @@ func TestPoller_IncrementalRun_UnaffectedByBackfillWindow(t *testing.T) {
 		t.Fatalf("Poll: %v", err)
 	}
 
-	feed, err := st.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed: %v", err)
-	}
+	feed := queryFeed(t, st)
 
 	// Correct: 2 changes. A wrongly-applied window would drop sha2 → 1 change.
 	if len(feed) != 2 {
@@ -573,10 +552,7 @@ func TestPoller_HWMContentLookup_WorksForOutOfWindowHWM(t *testing.T) {
 		t.Fatalf("Poll: %v", err)
 	}
 
-	feed, err := st.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed: %v", err)
-	}
+	feed := queryFeed(t, st)
 
 	// Must produce 2 changes (sha1→sha2: 1.0.0→1.1.0, sha2→sha3: 1.1.0→1.2.0).
 	if len(feed) != 2 {
@@ -697,10 +673,7 @@ func TestPoller_KeyedEndToEnd(t *testing.T) {
 		t.Fatalf("Poll: %v", err)
 	}
 
-	feed, err := st.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed: %v", err)
-	}
+	feed := queryFeed(t, st)
 
 	// Expect exactly 3 Changes: aidp-gateway modified, aidp-engine removed,
 	// aidp-analytics added.
@@ -801,12 +774,9 @@ func TestPoller_EngineJQ_BehavesIdenticallyToUnset(t *testing.T) {
 		t.Fatalf("Poll: %v", err)
 	}
 
-	feed, err := st.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed: %v", err)
-	}
+	feed := queryFeed(t, st)
 	if len(feed) != 1 {
-		t.Fatalf("QueryFeed after poll: got %d changes, want 1", len(feed))
+		t.Fatalf("queryFeed after poll: got %d changes, want 1", len(feed))
 	}
 	if feed[0].OldValue == nil || *feed[0].OldValue != "1.0.0" || feed[0].NewValue == nil || *feed[0].NewValue != "1.1.0" {
 		t.Errorf("change = %v -> %v, want 1.0.0 -> 1.1.0", feed[0].OldValue, feed[0].NewValue)
@@ -930,10 +900,7 @@ func TestPoller_GlobFanOut_EmitsChangesPerMatchedFile(t *testing.T) {
 		t.Fatalf("Poll: %v", err)
 	}
 
-	feed, err := st.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed: %v", err)
-	}
+	feed := queryFeed(t, st)
 
 	// Each matched file has 2 commits -> one modified Change per file (1.0.0->1.1.0
 	// and 2.0.0->2.1.0). The non-matching b/Chart.yaml must contribute nothing.
@@ -1014,10 +981,7 @@ func TestPoller_GlobFanOut_ResumePerFile(t *testing.T) {
 	if err := p.Poll(tracker); err != nil {
 		t.Fatalf("Poll (first): %v", err)
 	}
-	feedAfterFirst, err := st.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed (first): %v", err)
-	}
+	feedAfterFirst := queryFeed(t, st)
 	if len(feedAfterFirst) != 2 {
 		t.Fatalf("after first poll: got %d changes, want 2", len(feedAfterFirst))
 	}
@@ -1054,10 +1018,7 @@ func TestPoller_GlobFanOut_ResumePerFile(t *testing.T) {
 		t.Fatalf("Poll (second): %v", err)
 	}
 
-	feedAfterSecond, err := st.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed (second): %v", err)
-	}
+	feedAfterSecond := queryFeed(t, st)
 	if len(feedAfterSecond) != 3 {
 		t.Fatalf("after second poll: got %d changes, want 3 (2 baseline + 1 new for x)", len(feedAfterSecond))
 	}
@@ -1180,10 +1141,7 @@ func TestPoller_BackfillsAllFieldsSharingOneFile(t *testing.T) {
 				}
 			}
 
-			feed, err := st.QueryFeed(100)
-			if err != nil {
-				t.Fatalf("QueryFeed: %v", err)
-			}
+			feed := queryFeed(t, st)
 			byField := map[string]domain.Change{}
 			for _, c := range feed {
 				byField[c.Field] = c

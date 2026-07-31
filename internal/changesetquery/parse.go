@@ -34,19 +34,6 @@ const MaxPageSize = 100
 // DefaultPageSize is used when the caller omits the limit param.
 const DefaultPageSize = 50
 
-// reservedParams are query-param names that are never treated as facet
-// filters, regardless of whether a stored Change happens to carry a facet
-// with the same name.
-var reservedParams = map[string]struct{}{
-	"asOf":   {},
-	"cursor": {},
-	"impact": {},
-	"limit":  {},
-	"repo":   {},
-	"risk":   {},
-	"since":  {},
-}
-
 // params is a fully decoded, validated request.
 type params struct {
 	Window  store.TimeWindow
@@ -127,7 +114,7 @@ func parseFilter(q url.Values, knownFacets map[string][]string) (filter.FilterSp
 	values := make(map[string][]string, len(q))
 
 	for name := range knownFacets {
-		if isReservedParam(name) {
+		if store.IsReservedFacetName(name) {
 			continue
 		}
 		allowed[name] = struct{}{}
@@ -137,13 +124,6 @@ func parseFilter(q url.Values, knownFacets map[string][]string) (filter.FilterSp
 	}
 
 	return filter.Parse(values, allowed)
-}
-
-// isReservedParam reports whether name is reserved and therefore never
-// eligible as a facet filter.
-func isReservedParam(name string) bool {
-	_, reserved := reservedParams[name]
-	return reserved
 }
 
 // parseLimit parses the limit param and clamps it to MaxPageSize. An empty
