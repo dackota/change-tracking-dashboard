@@ -133,7 +133,7 @@ func TestWalkCommits_NotBefore_ExcludesOldCommits(t *testing.T) {
 	// notBefore = Jan 5 2024 — should include sha2 (Jan 10) and sha3 (Jan 20),
 	// but exclude sha1 (Jan 1).
 	notBefore := time.Date(2024, 1, 5, 0, 0, 0, 0, time.UTC)
-	snapshots, err := src.WalkCommits(context.Background(), "Chart.yaml", "", notBefore)
+	snapshots, err := src.WalkCommits(context.Background(), "Chart.yaml", notBefore)
 	if err != nil {
 		t.Fatalf("WalkCommits: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestWalkCommits_NotBefore_ZeroMeansUnbounded(t *testing.T) {
 		t.Fatalf("gitsource.Open: %v", err)
 	}
 
-	snapshots, err := src.WalkCommits(context.Background(), "Chart.yaml", "", time.Time{})
+	snapshots, err := src.WalkCommits(context.Background(), "Chart.yaml", time.Time{})
 	if err != nil {
 		t.Fatalf("WalkCommits: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestWalkCommits_AllCommits(t *testing.T) {
 		t.Fatalf("gitsource.Open: %v", err)
 	}
 
-	snapshots, err := src.WalkCommits(context.Background(), "Chart.yaml", "", time.Time{})
+	snapshots, err := src.WalkCommits(context.Background(), "Chart.yaml", time.Time{})
 	if err != nil {
 		t.Fatalf("WalkCommits: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestWalkCommits_PopulatesCommitMessage(t *testing.T) {
 		t.Fatalf("gitsource.Open: %v", err)
 	}
 
-	snapshots, err := src.WalkCommits(context.Background(), "Chart.yaml", "", time.Time{})
+	snapshots, err := src.WalkCommits(context.Background(), "Chart.yaml", time.Time{})
 	if err != nil {
 		t.Fatalf("WalkCommits: %v", err)
 	}
@@ -254,7 +254,13 @@ func TestWalkCommits_PopulatesCommitMessage(t *testing.T) {
 	}
 }
 
-func TestWalkCommits_SinceHighWaterMark(t *testing.T) {
+// TestWalkCommits_ResumingFromACursorGoesThroughHistorySince covers what
+// replaced the walk's old stop-at-SHA parameter: the walk is bounded by time
+// only, and a caller resuming from a cursor narrows the result. The
+// distinction matters — narrowing also yields the snapshot AT the cursor,
+// which the walk's stop-at-SHA excluded, and which is the baseline the first
+// new commit is diffed against.
+func TestWalkCommits_ResumingFromACursorGoesThroughHistorySince(t *testing.T) {
 	t.Parallel()
 
 	repoPath, sha1, sha2 := buildFixtureRepo(t)
@@ -264,17 +270,23 @@ func TestWalkCommits_SinceHighWaterMark(t *testing.T) {
 		t.Fatalf("gitsource.Open: %v", err)
 	}
 
-	// Walk since sha1 — should only return sha2.
-	snapshots, err := src.WalkCommits(context.Background(), "Chart.yaml", sha1, time.Time{})
+	history, err := src.WalkCommits(context.Background(), "Chart.yaml", time.Time{})
 	if err != nil {
-		t.Fatalf("WalkCommits (since sha1): %v", err)
+		t.Fatalf("WalkCommits: %v", err)
 	}
 
-	if len(snapshots) != 1 {
-		t.Fatalf("WalkCommits (since sha1) returned %d snapshots, want 1", len(snapshots))
+	rest, at, found := history.Since(sha1)
+	if !found {
+		t.Fatalf("Since(%q) did not find the cursor commit in the walked history", sha1)
 	}
-	if snapshots[0].CommitSha != sha2 {
-		t.Errorf("snapshots[0].CommitSha = %q, want %q", snapshots[0].CommitSha, sha2)
+	if at.CommitSha != sha1 {
+		t.Errorf("baseline snapshot = %q, want the cursor commit %q", at.CommitSha, sha1)
+	}
+	if len(rest) != 1 {
+		t.Fatalf("Since(%q) returned %d commits, want 1", sha1, len(rest))
+	}
+	if rest[0].CommitSha != sha2 {
+		t.Errorf("rest[0].CommitSha = %q, want %q", rest[0].CommitSha, sha2)
 	}
 }
 
@@ -288,7 +300,7 @@ func TestWalkCommits_FilePath(t *testing.T) {
 		t.Fatalf("gitsource.Open: %v", err)
 	}
 
-	snapshots, err := src.WalkCommits(context.Background(), "Chart.yaml", "", time.Time{})
+	snapshots, err := src.WalkCommits(context.Background(), "Chart.yaml", time.Time{})
 	if err != nil {
 		t.Fatalf("WalkCommits: %v", err)
 	}
@@ -315,7 +327,7 @@ func TestOpenOrClone_LocalPath_StillWorks(t *testing.T) {
 		t.Fatalf("OpenOrClone (local): %v", err)
 	}
 
-	snapshots, err := src.WalkCommits(context.Background(), "Chart.yaml", "", time.Time{})
+	snapshots, err := src.WalkCommits(context.Background(), "Chart.yaml", time.Time{})
 	if err != nil {
 		t.Fatalf("WalkCommits: %v", err)
 	}
@@ -384,7 +396,7 @@ func TestOpenOrClone_IdempotentOpen(t *testing.T) {
 		t.Fatalf("OpenOrClone (second / idempotent): %v", err)
 	}
 
-	snapshots, err := src2.WalkCommits(context.Background(), "Chart.yaml", "", time.Time{})
+	snapshots, err := src2.WalkCommits(context.Background(), "Chart.yaml", time.Time{})
 	if err != nil {
 		t.Fatalf("WalkCommits after idempotent open: %v", err)
 	}
@@ -446,7 +458,7 @@ func TestFetch_NewCommitIsVisible(t *testing.T) {
 	}
 
 	// Confirm the clone sees the two initial commits.
-	snapshots, err := src.WalkCommits(context.Background(), "Chart.yaml", "", time.Time{})
+	snapshots, err := src.WalkCommits(context.Background(), "Chart.yaml", time.Time{})
 	if err != nil {
 		t.Fatalf("WalkCommits before fetch: %v", err)
 	}
@@ -463,7 +475,7 @@ func TestFetch_NewCommitIsVisible(t *testing.T) {
 	}
 
 	// Assert: WalkCommits now returns all three commits including the new one.
-	snapshots, err = src.WalkCommits(context.Background(), "Chart.yaml", "", time.Time{})
+	snapshots, err = src.WalkCommits(context.Background(), "Chart.yaml", time.Time{})
 	if err != nil {
 		t.Fatalf("WalkCommits after fetch: %v", err)
 	}

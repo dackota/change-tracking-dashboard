@@ -246,7 +246,7 @@ func TestGet_RemoteBackedCopy_SeesCommitsPushedSinceTheLastCall(t *testing.T) {
 		t.Fatalf("OpenOrClone: %v", err)
 	}
 
-	before, err := src.WalkCommits(t.Context(), "Chart.yaml", "", time.Time{})
+	before, err := src.WalkCommits(t.Context(), "Chart.yaml", time.Time{})
 	if err != nil {
 		t.Fatalf("WalkCommits (before): %v", err)
 	}
@@ -257,7 +257,7 @@ func TestGet_RemoteBackedCopy_SeesCommitsPushedSinceTheLastCall(t *testing.T) {
 		t.Fatalf("Fetch: %v", err)
 	}
 
-	after, err := src.WalkCommits(t.Context(), "Chart.yaml", "", time.Time{})
+	after, err := src.WalkCommits(t.Context(), "Chart.yaml", time.Time{})
 	if err != nil {
 		t.Fatalf("WalkCommits (after): %v", err)
 	}
