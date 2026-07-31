@@ -1,7 +1,7 @@
 package changeset
 
 import (
-	"path/filepath"
+	"path"
 	"strings"
 )
 
@@ -65,7 +65,11 @@ func (k Kind) IsTerraform() bool {
 // (.tf/.tofu/.terraform.lock.hcl) is classified by classifyTerraformKind;
 // every other basename (e.g. values.yaml) yields KindValue.
 func ClassifyKind(filePath string) Kind {
-	base := filepath.Base(filePath)
+	// path.Base, not filepath.Base: filePath is a git path, forward-slash
+	// separated on every platform. filepath.Base would additionally treat "\\"
+	// as a separator on Windows, so a file whose name legitimately contains a
+	// backslash would be classified differently there than on Linux.
+	base := path.Base(filePath)
 	switch {
 	case base == "Chart.yaml":
 		return KindChart

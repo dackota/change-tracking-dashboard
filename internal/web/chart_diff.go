@@ -10,7 +10,7 @@ package web
 import (
 	"context"
 	"net/http"
-	"path/filepath"
+	"path"
 
 	"github.com/dackota/change-tracking-dashboard/internal/changeset"
 	"github.com/dackota/change-tracking-dashboard/internal/chartdiff"
@@ -79,8 +79,8 @@ func (h *ChartDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	repo := r.URL.Query().Get("repo")
 	commitSha := r.URL.Query().Get("commitSha")
-	path := r.URL.Query().Get("path")
-	if repo == "" || commitSha == "" || path == "" {
+	tenantPath := r.URL.Query().Get("path")
+	if repo == "" || commitSha == "" || tenantPath == "" {
 		writeDetailError(r, w, json, http.StatusBadRequest, genericBadRequestMsg)
 		return
 	}
@@ -112,11 +112,11 @@ func (h *ChartDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return err
 	})
 	if err != nil {
-		logger.Error("web: check changeset existence for chart diff", "repo", repo, "tenant", path, "commitSha", commitSha, "error", err)
+		logger.Error("web: check changeset existence for chart diff", "repo", repo, "tenant", tenantPath, "commitSha", commitSha, "error", err)
 		writeDetailError(r, w, json, http.StatusInternalServerError, genericServerErrorMsg)
 		return
 	}
-	if !found || !hasChartChangeAt(cs, path) {
+	if !found || !hasChartChangeAt(cs, tenantPath) {
 		writeDiffNotFound(r, w, json)
 		return
 	}
@@ -128,14 +128,14 @@ func (h *ChartDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return err
 	})
 	if err != nil {
-		logger.Error("web: resolve chart repo for chart diff", "repo", repo, "tenant", path, "commitSha", commitSha, "error", err)
+		logger.Error("web: resolve chart repo for chart diff", "repo", repo, "tenant", tenantPath, "commitSha", commitSha, "error", err)
 		writeDetailError(r, w, json, http.StatusInternalServerError, genericServerErrorMsg)
 		return
 	}
 
 	outcome := h.engine.Diff(r.Context(), chartRepo, chartdiff.Request{
 		RepoName:   repo,
-		TenantPath: path,
+		TenantPath: tenantPath,
 		CommitSha:  commitSha,
 	})
 
@@ -146,19 +146,27 @@ func (h *ChartDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := renderChartDiff(w, outcome); err != nil {
-		logResponseWriteError(r.Context(), "web: render chart diff", err, "repo", repo, "tenant", path, "commitSha", commitSha)
+		logResponseWriteError(r.Context(), "web: render chart diff", err, "repo", repo, "tenant", tenantPath, "commitSha", commitSha)
 	}
 }
 
 // hasChartChangeAt reports whether cs contains at least one chart-kind Change
-// (Kind == changeset.KindChart) whose own source file directory equals path.
-// This is the request's actual authorization check: (repo, commitSha) being
-// a real, ingested Changeset is necessary but not sufficient, since a single
-// commit's Changeset can carry Changes for many tenants — path must name a
-// directory this specific changeset actually recorded a chart change for.
-func hasChartChangeAt(cs changeset.Changeset, path string) bool {
+// (Kind == changeset.KindChart) whose own source file directory equals
+// tenantPath. This is the request's actual authorization check: (repo,
+// commitSha) being a real, ingested Changeset is necessary but not
+// sufficient, since a single commit's Changeset can carry Changes for many
+// tenants — tenantPath must name a directory this specific changeset actually
+// recorded a chart change for.
+//
+// The directory is taken with path.Dir, not filepath.Dir: Change.FilePath is a
+// git path, which is forward-slash separated on every platform. filepath.Dir
+// would rewrite the separator to "\" on Windows, so a caller sending the
+// documented forward-slash spelling would be refused — indistinguishably from
+// an unknown changeset, and so with no signal about why. See
+// changeset_detail_render.go, which must derive tenantPath the same way.
+func hasChartChangeAt(cs changeset.Changeset, tenantPath string) bool {
 	for _, c := range cs.Changes {
-		if c.Kind == changeset.KindChart && filepath.Dir(c.FilePath) == path {
+		if c.Kind == changeset.KindChart && path.Dir(c.FilePath) == tenantPath {
 			return true
 		}
 	}
