@@ -37,7 +37,9 @@ var reservedFacetNames = map[string]struct{}{
 	"repo":   {},
 	"asOf":   {},
 	"cursor": {},
+	"impact": {},
 	"limit":  {},
+	"since":  {},
 }
 
 // QueryFilteredFeed returns up to limit Changes, filtered by the given facet

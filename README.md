@@ -264,6 +264,64 @@ fails config load with an actionable error rather than silently never firing.
 | `/healthz`              | Liveness check (no dependencies).                |
 | `/api/changesets*`      | JSON + HTML fragments backing the UI.            |
 
+### `GET /api/changesets`
+
+Returns changesets newest-first as JSON, with cursor pagination.
+
+| Param    | Description                                                            |
+| -------- | ---------------------------------------------------------------------- |
+| `since`  | RFC3339. **Inclusive** lower bound on commit time. Omit for no bound.  |
+| `asOf`   | RFC3339. **Exclusive** upper bound on commit time. Defaults to now.    |
+| `repo`   | Restrict to one tracked repository.                                     |
+| `cursor` | Opaque `nextCursor` from a previous response. Omit for the first page. |
+| `limit`  | Page size, clamped to 100. Defaults to 50.                             |
+| `impact` | Restrict to one or more impact tiers. Repeatable. Omit for no filter.  |
+| *facets* | Any configured facet name, as include/exclude filters.                  |
+
+Together `since` and `asOf` form a **half-open window** `[since, asOf)`. This is
+what makes incremental polling cheap and correct: feed one request's `asOf`
+straight back as the next request's `since` and consecutive windows tile the
+timeline exactly once — no gaps, no duplicates, and no timestamp arithmetic on
+your side. A changeset committed at exactly `since` is returned; one committed
+at exactly `asOf` is not.
+
+```bash
+curl "https://changes.dackota.com/api/changesets?since=2026-07-29T00:00:00Z&asOf=2026-07-30T00:00:00Z"
+```
+
+A `since` at or after `asOf` describes an empty window and returns an empty list
+with `200` — a normal outcome for a polling loop, not an error. A malformed
+`since` returns `400`.
+
+Keep following `nextCursor` until it comes back empty; a non-empty cursor is the
+only signal that more results exist.
+
+#### Filtering by impact
+
+`impact` restricts the feed to one or more impact tiers: `major`, `minor`,
+`patch`, `downgrade`, or `other`. Repeated values OR together, and the result
+ANDs with `repo` and any facet filters.
+
+```bash
+# every breaking or rolled-back change in infra-repo's prod environment
+curl "https://changes.dackota.com/api/changesets?impact=major&impact=downgrade&repo=infra-repo&env=prod"
+```
+
+**An unrecognized `impact` value returns `400`.** This is a deliberate
+divergence from how unknown *facet* params are handled, which are silently
+ignored. The reasoning: a facet vocabulary is open-ended and data-derived, so
+ignoring an unknown key is the only sane option — but the impact vocabulary is
+closed and five values long. Silently ignoring `impact=majr` would return the
+whole unfiltered feed, and a consumer that alerts on the response would read
+that as "everything is major". A rejection is the far better failure.
+
+Because `impact` is evaluated after changesets are assembled rather than in
+SQL, a filtered request has a per-call bound on how many commits it will
+examine. A highly selective filter can therefore return a **short page that is
+not the last page**. This changes nothing about how you paginate — keep
+following `nextCursor` until it is empty — but never infer that you are done
+from a page being shorter than `limit`.
+
 ## Private repositories (GitHub App)
 
 To track private repos, set `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, and

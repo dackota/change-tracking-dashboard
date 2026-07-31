@@ -20,6 +20,8 @@ import (
 	"github.com/dackota/change-tracking-dashboard/internal/filter"
 	"github.com/dackota/change-tracking-dashboard/internal/store"
 	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // genericServerErrorMsg is the only text sent to the client on an internal
@@ -44,8 +46,10 @@ const defaultChangesetPageSize = 50
 var reservedChangesetsParams = map[string]struct{}{
 	"asOf":   {},
 	"cursor": {},
+	"impact": {},
 	"limit":  {},
 	"repo":   {},
+	"since":  {},
 }
 
 // ChangesetsHandler serves GET /api/changesets as JSON.
@@ -97,11 +101,11 @@ type changesetsResponse struct {
 // changeset with no comparable version change still carries "other" rather
 // than a blank field.
 type changesetJSON struct {
-	Repo        string       `json:"repo"`
-	CommitSha   string       `json:"commitSha"`
-	Author      string       `json:"author"`
-	CommittedAt string       `json:"committedAt"`
-	IssueRefs   []string     `json:"issueRefs,omitempty"`
+	Repo        string   `json:"repo"`
+	CommitSha   string   `json:"commitSha"`
+	Author      string   `json:"author"`
+	CommittedAt string   `json:"committedAt"`
+	IssueRefs   []string `json:"issueRefs,omitempty"`
 	// Subject is the commit message's first line (#85), omitted when empty
 	// (pre-#85 rows) so the client falls back to the SHA.
 	Subject string       `json:"subject,omitempty"`
@@ -134,6 +138,14 @@ func (h *ChangesetsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	since, err := parseSince(r.URL.Query().Get("since"))
+	if err != nil {
+		logger.Error("web: parse since", "error", err)
+		http.Error(w, genericBadRequestMsg, http.StatusBadRequest)
+		return
+	}
+	window := store.TimeWindow{Since: since, AsOf: asOf}
+
 	// Fetch the set of known facet names first. URL query-param keys are
 	// whitelisted against this set before reaching filter.Parse, mirroring
 	// the HTML feed handler's boundary guard.
@@ -156,6 +168,17 @@ func (h *ChangesetsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// An absent/empty repo param is a no-op: WithRepo("") matches any repo.
 	spec = spec.WithRepo(r.URL.Query().Get("repo"))
 
+	// The impact filter is a flat allow-set over a closed vocabulary, not a
+	// facet, so it is parsed separately and never reaches filter.Parse. An
+	// unrecognized tier is a 400 rather than being dropped — see
+	// filter.ParseClassSet for why this diverges from facet-param handling.
+	impacts, err := filter.ParseClassSet(r.URL.Query()["impact"], changeset.ImpactTiers())
+	if err != nil {
+		logger.Error("web: parse impact filter", "error", err)
+		http.Error(w, genericBadRequestMsg, http.StatusBadRequest)
+		return
+	}
+
 	cursor := r.URL.Query().Get("cursor")
 
 	limit, err := parseLimit(r.URL.Query().Get("limit"))
@@ -166,10 +189,23 @@ func (h *ChangesetsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var page store.ChangesetPage
-	err = telemetry.WithSpan(r.Context(), tracer, "store.query_changesets", func(context.Context) error {
+	err = telemetry.WithSpan(r.Context(), tracer, "store.query_changesets", func(ctx context.Context) error {
 		var err error
-		page, err = h.st.QueryChangesets(asOf, spec, cursor, limit)
-		return err
+		page, err = h.st.QueryChangesets(window, spec, impactPredicate(impacts), cursor, limit)
+		if err != nil {
+			return err
+		}
+		// Record the page-fill loop's work: how many commits were examined
+		// against how many survived. The ratio is what makes a pathological
+		// class filter diagnosable from a trace — a span reporting 5000
+		// examined for 3 returned is a filter worth investigating, and
+		// without the examined count that span is indistinguishable from a
+		// cheap query that returned 3.
+		trace.SpanFromContext(ctx).SetAttributes(
+			attribute.Int("changesets.examined", page.Examined),
+			attribute.Int("changesets.returned", len(page.Changesets)),
+		)
+		return nil
 	})
 	if err != nil {
 		// Log the detail server-side; return a generic message so internal
@@ -190,6 +226,20 @@ func (h *ChangesetsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		NextCursor: page.NextCursor,
 	}
 	writeJSON(r, w, http.StatusOK, resp)
+}
+
+// impactPredicate adapts an impact allow-set into the opaque predicate the
+// store applies after assembly. An empty set yields a nil predicate rather
+// than one that always returns true: nil is the store's own "no filtering"
+// signal, so an absent impact param costs nothing — no per-changeset
+// classification, no page-fill loop iterations beyond the first fetch.
+func impactPredicate(impacts filter.ClassSet) store.ChangesetPredicate {
+	if impacts.Empty() {
+		return nil
+	}
+	return func(cs changeset.Changeset) bool {
+		return impacts.Allows(string(changeset.ClassifyImpact(cs)))
+	}
 }
 
 // genericBadRequestMsg is the only text sent to the client for a malformed
@@ -258,6 +308,26 @@ func parseLimit(raw string) (int, error) {
 func parseAsOf(raw string) (time.Time, error) {
 	if raw == "" {
 		return time.Now(), nil
+	}
+	t, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return t, nil
+}
+
+// parseSince parses the since query param as RFC3339 — the same format asOf
+// accepts, so a caller never has to learn a second time format for the same
+// endpoint. An empty string yields the zero Time, which store.TimeWindow
+// reads as "no lower bound": omitting since leaves the endpoint behaving
+// exactly as it did before the param existed.
+//
+// A since at or after asOf is deliberately not rejected here. It describes an
+// empty window, which the store answers with an empty page — a normal outcome
+// for a polling loop, not a caller error.
+func parseSince(raw string) (time.Time, error) {
+	if raw == "" {
+		return time.Time{}, nil
 	}
 	t, err := time.Parse(time.RFC3339, raw)
 	if err != nil {
