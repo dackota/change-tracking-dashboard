@@ -13,10 +13,9 @@
 //	                                         # never a package.json/lock
 //	go test -race -tags regression -run TestUIRegression -v ./internal/web/...
 //
-// It boots the dashboard's real, production HTTP surface — the exact
-// handlers cmd/dashboard/main.go wires into its mux (TimelineHandler,
-// StaticHandler, ChangesetsHandler, ChangesetDetailHandler,
-// ChartDiffHandler) — against a seeded store plus a real, temporary git repo
+// It boots the dashboard's real, production HTTP surface — web.NewMux, the
+// same routing table cmd/dashboard serves, rather than a hand-copied
+// re-declaration of it — against a seeded store plus a real, temporary git repo
 // carrying an actual chart-version bump (the same fixture shape as
 // chart_diff_realrepo_test.go's buildDepBumpAndVendoredChartSwapRepo, reused
 // directly), then drives a headless system Chrome via playwright-core
@@ -40,7 +39,6 @@ package web_test
 
 import (
 	"context"
-	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -50,6 +48,7 @@ import (
 	"time"
 
 	"github.com/dackota/change-tracking-dashboard/internal/chartdiff"
+	"github.com/dackota/change-tracking-dashboard/internal/config"
 	"github.com/dackota/change-tracking-dashboard/internal/domain"
 	"github.com/dackota/change-tracking-dashboard/internal/gitsource"
 	"github.com/dackota/change-tracking-dashboard/internal/pollstatus"
@@ -167,9 +166,9 @@ func resolveSystemChrome(t *testing.T) string {
 	return ""
 }
 
-// newRegressionServer boots an httptest.Server wired with the exact
-// production handler set cmd/dashboard/main.go assembles into its mux,
-// backed by a store seeded via seedRegressionDataset. It returns the server
+// newRegressionServer boots an httptest.Server serving web.NewMux — the same
+// routing table cmd/dashboard serves — backed by a store seeded via
+// seedRegressionDataset. It returns the server
 // (closed automatically via t.Cleanup) and the full commit sha of the
 // seeded chart-bump Changeset, so the Node harness can locate that specific
 // row/marker without depending on any other seeded data's shape.
@@ -191,12 +190,17 @@ func newRegressionServer(t *testing.T) (*httptest.Server, string) {
 		return src, nil
 	}}
 
-	mux := http.NewServeMux()
-	mux.Handle("/", web.NewTimelineHandler(st, pollstatus.New()))
-	mux.Handle("/static/", web.NewStaticHandler())
-	mux.Handle("/api/changesets", web.NewChangesetsHandler(st))
-	mux.Handle("/api/changesets/detail", web.NewChangesetDetailHandler(st))
-	mux.Handle("/api/changesets/detail/chart-diff", web.NewChartDiffHandler(engine, resolver, st))
+	mux, err := web.NewMux(web.Deps{
+		Store:      st,
+		PollHealth: pollstatus.New(),
+		Config:     fakeConfigSnapshot{cfg: &config.Config{}},
+		ChartDiff:  engine,
+		PlanDiff:   &fakePlanDiffEngine{},
+		Repos:      resolver,
+	})
+	if err != nil {
+		t.Fatalf("web.NewMux: %v", err)
+	}
 
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)

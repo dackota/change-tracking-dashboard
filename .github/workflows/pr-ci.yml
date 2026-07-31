@@ -93,8 +93,10 @@ jobs:
       # recover() blocks, and background "abandoned goroutine" waiters
       # whose temp-dir cleanup handoff must happen exactly once and only
       # after the goroutine has stopped touching the directory); poller
-      # and scheduler drive them from background loops, and store/web are
-      # the shared state those loops write through.
+      # and scheduler drive them from background loops, and store/web and
+      # reposource are the shared state those loops write through --
+      # reposource hands the same working copies to the poll loop and to
+      # both on-demand diff handlers.
       #
       # Scoped rather than ./... because -race costs roughly 2-10x per
       # package and internal/store alone is already ~20s -- the packages
@@ -114,6 +116,7 @@ jobs:
             ./internal/plandiff/... \
             ./internal/subtree/... \
             ./internal/poller/... \
+            ./internal/reposource/... \
             ./internal/scheduler/... \
             ./internal/store/... \
             ./internal/web/...

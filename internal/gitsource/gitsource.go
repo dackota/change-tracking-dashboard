@@ -40,11 +40,22 @@ import (
 const maxCommitsPerWalk = 5000
 
 // Source wraps a local git repository for commit walking.
+//
+// A Source remembers the remote it was cloned from, so refreshing one is
+// "fetch this Source" rather than "fetch this Source from that URL, which the
+// caller must have kept alongside it". A Source opened from a local path has
+// no remote, and Fetch on it is a no-op.
 type Source struct {
 	repo *git.Repository
+	// remoteURL is the URL this Source was cloned from, or empty when it was
+	// opened from a local path. Never logged — it is a plain repo URL, but it
+	// travels with credentials in Fetch and is kept out of error text for the
+	// same reason those are.
+	remoteURL string
 }
 
-// Open opens an existing local git repository at the given path.
+// Open opens an existing local git repository at the given path. The result
+// has no remote: it is never fetched, and RemoteURL returns "".
 func Open(path string) (*Source, error) {
 	r, err := git.PlainOpen(path)
 	if err != nil {
@@ -52,6 +63,10 @@ func Open(path string) (*Source, error) {
 	}
 	return &Source{repo: r}, nil
 }
+
+// RemoteURL returns the remote this Source was cloned from, or "" when it was
+// opened from a local path.
+func (s *Source) RemoteURL() string { return s.remoteURL }
 
 // OpenOrClone opens an existing local repository at localPath if it exists,
 // or clones from remoteURL into localPath if it does not. The auth parameter
@@ -68,7 +83,9 @@ func OpenOrClone(remoteURL, localPath string, auth gogithttp.AuthMethod) (*Sourc
 		if err != nil {
 			return nil, fmt.Errorf("gitsource: open existing clone at %q: %w", localPath, err)
 		}
-		return &Source{repo: r}, nil
+		// An existing clone is still remote-backed: it is reopened across
+		// restarts and must keep fetching from the URL it was cloned from.
+		return &Source{repo: r, remoteURL: remoteURL}, nil
 	}
 
 	// Clone from the remote URL into localPath.
@@ -80,28 +97,30 @@ func OpenOrClone(remoteURL, localPath string, auth gogithttp.AuthMethod) (*Sourc
 	if err != nil {
 		return nil, fmt.Errorf("gitsource: clone %q: %w", remoteURL, err)
 	}
-	return &Source{repo: r}, nil
+	return &Source{repo: r, remoteURL: remoteURL}, nil
 }
 
-// Fetch performs an authenticated git fetch for the given remoteURL, updating
-// the local clone's remote-tracking refs and fast-forwarding the local branch so
-// that WalkCommits (which walks from repo.Head()) observes any commits pushed to
-// the remote after the initial clone.
+// Fetch performs an authenticated git fetch from the remote this Source was
+// cloned from, updating the local clone's remote-tracking refs and
+// fast-forwarding the local branch so that WalkCommits (which walks from
+// repo.Head()) observes any commits pushed to the remote after the initial
+// clone.
 //
-// If remoteURL is empty, Fetch is a no-op — local-path Sources opened via Open
-// have no remote and are never fetched.
+// A Source with no remote — one opened from a local path via Open — is never
+// fetched, and Fetch on it is a no-op. The caller does not have to know which
+// kind it holds.
 //
 // git.NoErrAlreadyUpToDate is treated as success: there is nothing new to fetch
 // on this cycle, which is the common steady-state case.
 //
 // The auth parameter must not appear in any error message (never log tokens).
-func (s *Source) Fetch(remoteURL string, auth gogithttp.AuthMethod) error {
-	if remoteURL == "" {
+func (s *Source) Fetch(auth gogithttp.AuthMethod) error {
+	if s.remoteURL == "" {
 		return nil
 	}
 
 	fetchOpts := &git.FetchOptions{
-		RemoteURL: remoteURL,
+		RemoteURL: s.remoteURL,
 		RefSpecs:  []config.RefSpec{"+refs/heads/*:refs/remotes/origin/*"},
 		Auth:      auth,
 		Force:     true,

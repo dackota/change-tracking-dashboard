@@ -7,9 +7,11 @@
 // change: added/removed trackers take effect on the next poll cycle without
 // a restart.
 //
-// Each distinct repo path gets its own gitsource.Source (a small in-process
-// cache keyed by path). DB_PATH and LISTEN_ADDR are still env-driven; they
-// are operational config, not tracker config.
+// This package owns process concerns only: environment, config loading,
+// telemetry setup, the poll scheduler's ticker, and server lifecycle. The HTTP
+// surface is internal/web's NewMux, and tracked repos' working copies are
+// internal/reposource's Cache. DB_PATH and LISTEN_ADDR are still env-driven;
+// they are operational config, not tracker config.
 //
 // GitHub App token auth for remote repos is enabled when the three env vars
 // GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, and GITHUB_APP_PRIVATE_KEY_FILE
@@ -26,8 +28,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -35,16 +35,14 @@ import (
 	"github.com/dackota/change-tracking-dashboard/internal/config"
 	"github.com/dackota/change-tracking-dashboard/internal/domain"
 	"github.com/dackota/change-tracking-dashboard/internal/githubapp"
-	"github.com/dackota/change-tracking-dashboard/internal/gitsource"
 	"github.com/dackota/change-tracking-dashboard/internal/plandiff"
 	"github.com/dackota/change-tracking-dashboard/internal/poller"
 	"github.com/dackota/change-tracking-dashboard/internal/pollstatus"
+	"github.com/dackota/change-tracking-dashboard/internal/reposource"
 	"github.com/dackota/change-tracking-dashboard/internal/scheduler"
 	"github.com/dackota/change-tracking-dashboard/internal/store"
-	"github.com/dackota/change-tracking-dashboard/internal/subtree"
 	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
 	"github.com/dackota/change-tracking-dashboard/internal/web"
-	gogithttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	"go.opentelemetry.io/otel"
 )
 
@@ -54,11 +52,6 @@ const defaultConfigPath = "/etc/dashboard/config.yaml"
 // serviceName is the OTel "service.name" resource attribute for every span,
 // metric point, and structured log line this process emits.
 const serviceName = "change-tracking-dashboard"
-
-// healthzRoute is the liveness-probe route pattern. It is a named constant so
-// the mux registration and the request-log suppression below cannot drift
-// apart — telemetry.WithQuietRoutes matches on the pattern ServeMux recorded.
-const healthzRoute = "GET /healthz"
 
 // HTTP server timeouts guard against slow-client (slow-loris) attacks and
 // connections held open indefinitely.
@@ -149,8 +142,12 @@ func run(configPath, dbPath, listenAddr string, logger *slog.Logger) error {
 		logger.Info("dashboard: GitHub App auth enabled", "appID", appCfg.AppID, "installationID", appCfg.InstallationID)
 	}
 
-	// --- Per-repo gitsource cache ---
-	sources := newSourceCache(tokenProvider)
+	// --- Per-repo working copies ---
+	var sourceOpts []reposource.Option
+	if tokenProvider != nil {
+		sourceOpts = append(sourceOpts, reposource.WithTokenProvider(tokenProvider))
+	}
+	sources := reposource.New(sourceOpts...)
 
 	// --- Poll status registry ---
 	// Records, per tracker, the last attempt/success time and last error —
@@ -172,7 +169,7 @@ func run(configPath, dbPath, listenAddr string, logger *slog.Logger) error {
 	// instead of once per field — every field in a group derives from the same
 	// histories, and that walk is where the poller's CPU goes (#137).
 	pollFn := func(group []domain.Tracker) []error {
-		src, err := sources.get(group[0].Repo)
+		src, err := sources.Get(group[0].Repo)
 		if err != nil {
 			err = fmt.Errorf("open git source for %q: %w", group[0].Repo, err)
 			errs := make([]error, len(group))
@@ -227,29 +224,22 @@ func run(configPath, dbPath, listenAddr string, logger *slog.Logger) error {
 	}
 
 	// --- HTTP ---
-	timelineHandler := web.NewTimelineHandler(st, pollStatus)
-	staticHandler := web.NewStaticHandler()
-	changesetsHandler := web.NewChangesetsHandler(st, web.WithChangesetsRiskRules(cfgWatcher))
-	changesetDetailHandler := web.NewChangesetDetailHandler(st, web.WithDetailRiskRules(cfgWatcher))
-	chartDiffHandler := web.NewChartDiffHandler(chartDiffEngine, sources, st)
-	planDiffHandler := web.NewPlanDiffHandler(planDiffEngine, sources, st)
-	trackersHandler := web.NewTrackersHandler(cfgWatcher, pollStatus)
-	repositoriesHandler := web.NewRepositoriesHandler(st, pollStatus)
-	changesHandler := web.NewChangesHandler(pollStatus)
-	healthzHandler := web.NewHealthzHandler()
-	mux := http.NewServeMux()
-	mux.Handle("/", timelineHandler)
-	mux.Handle("/static/", staticHandler)
-	mux.Handle("/api/changesets", changesetsHandler)
-	mux.Handle("/api/changesets/detail", changesetDetailHandler)
-	mux.Handle("/api/changesets/detail/chart-diff", chartDiffHandler)
-	mux.Handle("/api/changesets/detail/plan-diff", planDiffHandler)
-	mux.Handle("GET /trackers", trackersHandler)
-	mux.Handle("GET /repositories", repositoriesHandler)
-	mux.Handle("GET /changes", changesHandler)
-	mux.Handle(healthzRoute, healthzHandler)
+	// The routing table lives in internal/web so it can be booted and
+	// exercised without this binary; main supplies the collaborators and
+	// wraps the result in edge concerns.
+	mux, err := web.NewMux(web.Deps{
+		Store:      st,
+		PollHealth: pollStatus,
+		Config:     cfgWatcher,
+		ChartDiff:  chartDiffEngine,
+		PlanDiff:   planDiffEngine,
+		Repos:      sources,
+	})
+	if err != nil {
+		return fmt.Errorf("build http mux: %w", err)
+	}
 
-	// RED middleware wraps the whole mux, so every route above — present or
+	// RED middleware wraps the whole mux, so every route — present or
 	// future — emits the generic RED signal and correlated structured logs
 	// without each handler needing its own instrumentation.
 	httpRed, err := telemetry.NewREDMetrics(sdk.MeterProvider, "http")
@@ -261,7 +251,7 @@ func run(configPath, dbPath, listenAddr string, logger *slog.Logger) error {
 	// suppressed so real entries are not buried; its RED metrics and spans are
 	// not, and a 5xx on it is still logged. See telemetry.WithQuietRoutes.
 	instrumentedMux := telemetry.Middleware(mux, sdk.TracerProvider.Tracer("http"), httpRed, logger,
-		telemetry.WithQuietRoutes(healthzRoute))
+		telemetry.WithQuietRoutes(web.HealthzRoute))
 
 	srv := &http.Server{
 		Addr:         listenAddr,
@@ -299,155 +289,6 @@ func run(configPath, dbPath, listenAddr string, logger *slog.Logger) error {
 		}
 		return nil
 	}
-}
-
-// cachedSource bundles a gitsource.Source with the remote URL it was cloned
-// from (empty string for local-path sources). The remoteURL is used on every
-// subsequent poll cycle to perform an authenticated fetch so that commits pushed
-// to the remote after the initial clone are observed by WalkCommits.
-type cachedSource struct {
-	src       *gitsource.Source
-	remoteURL string // empty for local-path sources — no fetch needed
-}
-
-// sourceCache is a small thread-safe map from repo path/URL → cachedSource.
-// Opening a gitsource is cheap (local disk), but we avoid re-opening the same
-// repo on every poll cycle.
-//
-// For remote HTTPS repos the cache also performs an authenticated fetch on every
-// get() call so that newly-pushed commits are visible within each poll cycle.
-// Local paths continue to use PlainOpen without any fetch.
-//
-// NOTE: clone directories are placed under os.TempDir() (typically tmpfs on
-// many Kubernetes nodes). They are therefore ephemeral: a pod restart re-clones
-// from scratch. This is intentional — the store's high-water-mark resumes
-// incremental polling correctly after a re-clone with no data loss.
-type sourceCache struct {
-	mu            sync.Mutex
-	sources       map[string]*cachedSource
-	tokenProvider *githubapp.Provider // nil when GitHub App auth is disabled
-}
-
-func newSourceCache(tp *githubapp.Provider) *sourceCache {
-	return &sourceCache{
-		sources:       make(map[string]*cachedSource),
-		tokenProvider: tp,
-	}
-}
-
-// get returns the Source for the given repo path or URL. On the first call it
-// opens or clones the repo; on every subsequent call for a remote-backed source
-// it performs an authenticated fetch so that newly-pushed commits are visible to
-// WalkCommits within the same poll cycle.
-func (c *sourceCache) get(repo string) (*gitsource.Source, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if cs, ok := c.sources[repo]; ok {
-		// Already cloned — fetch from the remote (if any) to pick up new commits.
-		if cs.remoteURL != "" {
-			auth, err := c.buildAuth(repo)
-			if err != nil {
-				return nil, err
-			}
-			if err := cs.src.Fetch(cs.remoteURL, auth); err != nil {
-				return nil, fmt.Errorf("fetch %q: %w", repo, err)
-			}
-		}
-		return cs.src, nil
-	}
-
-	cs, err := c.openOrClone(repo)
-	if err != nil {
-		return nil, err
-	}
-	c.sources[repo] = cs
-	return cs.src, nil
-}
-
-// ResolveRepo adapts sourceCache.get to subtree.Resolver, letting both
-// on-demand diff handlers resolve/clone a repo via the same source cache
-// every poller and the timeline detail handler use. *gitsource.Source
-// already satisfies subtree.Repo directly, so no further wrapping is needed
-// beyond the interface conversion.
-func (c *sourceCache) ResolveRepo(repo string) (subtree.Repo, error) {
-	src, err := c.get(repo)
-	if err != nil {
-		return nil, err
-	}
-	return src, nil
-}
-
-// buildAuth constructs the BasicAuth for the given remote repo URL. Returns nil
-// when no tokenProvider is configured (unauthenticated access) or when the
-// remote is not an https:// URL — credentials are never attached to non-HTTPS
-// remotes so an on-path observer cannot capture the installation token.
-//
-// This is a belt-and-suspenders guard: the config validator already rejects
-// http:// repos at load time; this ensures auth is never attached even if a
-// non-https URL reaches this path through an unexpected code route.
-func (c *sourceCache) buildAuth(repo string) (gogithttp.AuthMethod, error) {
-	if c.tokenProvider == nil {
-		return nil, nil
-	}
-	// Never send credentials over a non-HTTPS transport.
-	if !strings.HasPrefix(repo, "https://") {
-		return nil, nil
-	}
-	tok, err := c.tokenProvider.Token()
-	if err != nil {
-		return nil, fmt.Errorf("get installation token for %q: %w", repo, err)
-	}
-	return &gogithttp.BasicAuth{
-		Username: "x-access-token",
-		Password: tok,
-	}, nil
-}
-
-// openOrClone opens a local path directly, or clones a remote HTTPS URL with
-// optional GitHub App token auth into a local directory under the system temp dir.
-func (c *sourceCache) openOrClone(repo string) (*cachedSource, error) {
-	if isRemoteURL(repo) {
-		auth, err := c.buildAuth(repo)
-		if err != nil {
-			return nil, err
-		}
-		// Clone into a stable local directory derived from the repo URL.
-		// Clones are ephemeral (os.TempDir() / tmpfs on many k8s nodes);
-		// the store's high-water-mark resumes polling after a pod restart
-		// with no data loss — see sourceCache doc comment.
-		localPath := filepath.Join(os.TempDir(), "ctd-clones", sanitizeRepoURL(repo))
-		src, err := gitsource.OpenOrClone(repo, localPath, auth)
-		if err != nil {
-			return nil, err
-		}
-		return &cachedSource{src: src, remoteURL: repo}, nil
-	}
-
-	// Local path: use the existing PlainOpen path; no remote to fetch.
-	src, err := gitsource.Open(repo)
-	if err != nil {
-		return nil, err
-	}
-	return &cachedSource{src: src, remoteURL: ""}, nil
-}
-
-// isRemoteURL returns true for http:// and https:// repo URLs.
-func isRemoteURL(repo string) bool {
-	return strings.HasPrefix(repo, "http://") || strings.HasPrefix(repo, "https://")
-}
-
-// sanitizeRepoURL converts a URL to a filesystem-safe directory name by
-// replacing path separators and scheme characters with dashes.
-func sanitizeRepoURL(url string) string {
-	r := strings.NewReplacer(
-		"https://", "",
-		"http://", "",
-		"/", "-",
-		":", "-",
-		".", "-",
-	)
-	return r.Replace(url)
 }
 
 func envOrDefault(key, defaultVal string) string {
