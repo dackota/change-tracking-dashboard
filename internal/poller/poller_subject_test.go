@@ -42,10 +42,7 @@ func TestPoller_PersistsCommitSubject(t *testing.T) {
 		t.Fatalf("Poll: %v", err)
 	}
 
-	feed, err := st.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed: %v", err)
-	}
+	feed := queryFeed(t, st)
 	if len(feed) != 1 {
 		t.Fatalf("got %d changes, want 1; feed = %+v", len(feed), feed)
 	}
@@ -85,10 +82,7 @@ func TestPoller_MultiLineCommitMessage_PersistsOnlyFirstLineAsSubject(t *testing
 		t.Fatalf("Poll: %v", err)
 	}
 
-	feed, err := st.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed: %v", err)
-	}
+	feed := queryFeed(t, st)
 	if len(feed) != 1 {
 		t.Fatalf("got %d changes, want 1; feed = %+v", len(feed), feed)
 	}

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/dackota/change-tracking-dashboard/internal/domain"
+	"github.com/dackota/change-tracking-dashboard/internal/filter"
 	"github.com/dackota/change-tracking-dashboard/internal/store"
 )
 
@@ -22,7 +23,42 @@ func newTestStore(t *testing.T) *store.Store {
 	return s
 }
 
-func TestPersistAndQueryFeed(t *testing.T) {
+// queryFeed reads every persisted Change back through QueryChangesets — the
+// one query path production uses — flattening the Changesets into a
+// newest-commit-first slice of Changes. It exists so round-trip tests can
+// assert on what was stored without a second, test-only SELECT that could
+// disagree with the real one. It walks the cursor to completion, so no caller
+// has to think about the store's page ceiling.
+func queryFeed(t *testing.T, s *store.Store) []domain.Change {
+	t.Helper()
+
+	// An upper bound comfortably past any fixture's commit time; the window
+	// is unbounded below, so this selects everything.
+	w := store.TimeWindow{AsOf: time.Now().Add(24 * time.Hour)}
+
+	var out []domain.Change
+	cursor := ""
+	for pages := 0; ; pages++ {
+		if pages > 100 {
+			t.Fatal("queryFeed: cursor walk did not terminate")
+		}
+		page, err := s.QueryChangesets(w, filter.FilterSpec{}, nil, cursor, store.MaxChangesetPageSize)
+		if err != nil {
+			t.Fatalf("QueryChangesets (cursor=%q): %v", cursor, err)
+		}
+		for _, cs := range page.Changesets {
+			for _, c := range cs.Changes {
+				out = append(out, c.Change)
+			}
+		}
+		if page.NextCursor == "" {
+			return out
+		}
+		cursor = page.NextCursor
+	}
+}
+
+func TestPersistAndQueryChangesets(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 
@@ -63,13 +99,10 @@ func TestPersistAndQueryFeed(t *testing.T) {
 		}
 	}
 
-	feed, err := s.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed: %v", err)
-	}
+	feed := queryFeed(t, s)
 
 	if len(feed) != 2 {
-		t.Fatalf("QueryFeed returned %d changes, want 2", len(feed))
+		t.Fatalf("queryFeed returned %d changes, want 2", len(feed))
 	}
 
 	// Newest first: sha-002 (base+1h) should be first.
@@ -266,30 +299,24 @@ func TestSaveChange_Idempotent(t *testing.T) {
 		}
 	}
 
-	feed, err := s.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed: %v", err)
-	}
+	feed := queryFeed(t, s)
 	if len(feed) != 2 {
-		t.Fatalf("QueryFeed returned %d changes, want 2 (each saved-twice change recorded once)", len(feed))
+		t.Fatalf("queryFeed returned %d changes, want 2 (each saved-twice change recorded once)", len(feed))
 	}
 }
 
-func TestQueryFeedEmptyDatabase(t *testing.T) {
+func TestQueryChangesetsEmptyDatabase(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 
-	feed, err := s.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed (empty): %v", err)
-	}
+	feed := queryFeed(t, s)
 	if len(feed) != 0 {
-		t.Errorf("QueryFeed (empty): got %d changes, want 0", len(feed))
+		t.Errorf("queryFeed (empty): got %d changes, want 0", len(feed))
 	}
 }
 
 // TestKeyedChangeRoundTrip confirms that a Change with a non-nil Key persists
-// and reads back with its Key intact through SaveChange → QueryFeed.
+// and reads back with its Key intact through SaveChange → QueryChangesets.
 func TestKeyedChangeRoundTrip(t *testing.T) {
 	t.Parallel()
 
@@ -314,13 +341,10 @@ func TestKeyedChangeRoundTrip(t *testing.T) {
 		t.Fatalf("SaveChange: %v", err)
 	}
 
-	feed, err := s.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed: %v", err)
-	}
+	feed := queryFeed(t, s)
 
 	if len(feed) != 1 {
-		t.Fatalf("QueryFeed returned %d changes, want 1", len(feed))
+		t.Fatalf("queryFeed returned %d changes, want 1", len(feed))
 	}
 
 	got := feed[0]
@@ -351,7 +375,7 @@ func TestKeyedChangeRoundTrip(t *testing.T) {
 // TestIssueRefsRoundTrip confirms that a Change's IssueRefs (issue/PR
 // references parsed from its triggering commit message — see
 // internal/issueref) persists and reads back intact through SaveChange ->
-// QueryFeed, and that a Change with no references round-trips to an empty
+// QueryChangesets, and that a Change with no references round-trips to an empty
 // slice — never a false/spurious reference (mirrors the Facets and Key
 // round-trip contracts already proven above).
 func TestIssueRefsRoundTrip(t *testing.T) {
@@ -391,12 +415,9 @@ func TestIssueRefsRoundTrip(t *testing.T) {
 		t.Fatalf("SaveChange (withoutRefs): %v", err)
 	}
 
-	feed, err := s.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed: %v", err)
-	}
+	feed := queryFeed(t, s)
 	if len(feed) != 2 {
-		t.Fatalf("QueryFeed returned %d changes, want 2", len(feed))
+		t.Fatalf("queryFeed returned %d changes, want 2", len(feed))
 	}
 
 	// Newest first: sha-without-refs (later CommittedAt) is feed[0].
@@ -410,7 +431,7 @@ func TestIssueRefsRoundTrip(t *testing.T) {
 
 // TestSubjectRoundTrip confirms that a Change's Subject (the commit
 // message's first line, see issue #85) persists and reads back intact
-// through SaveChange -> QueryFeed, and that a Change with no subject
+// through SaveChange -> QueryChangesets, and that a Change with no subject
 // round-trips to an empty string — mirrors the IssueRefs and Facets
 // round-trip contracts already proven above.
 func TestSubjectRoundTrip(t *testing.T) {
@@ -449,12 +470,9 @@ func TestSubjectRoundTrip(t *testing.T) {
 		t.Fatalf("SaveChange (withoutSubject): %v", err)
 	}
 
-	feed, err := s.QueryFeed(100)
-	if err != nil {
-		t.Fatalf("QueryFeed: %v", err)
-	}
+	feed := queryFeed(t, s)
 	if len(feed) != 2 {
-		t.Fatalf("QueryFeed returned %d changes, want 2", len(feed))
+		t.Fatalf("queryFeed returned %d changes, want 2", len(feed))
 	}
 
 	// Newest first: sha-without-subject (later CommittedAt) is feed[0].

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dackota/change-tracking-dashboard/internal/domain"
+	"github.com/dackota/change-tracking-dashboard/internal/filter"
 	"github.com/dackota/change-tracking-dashboard/internal/gitsource"
 	"github.com/dackota/change-tracking-dashboard/internal/poller"
 	"github.com/dackota/change-tracking-dashboard/internal/store"
@@ -118,15 +119,43 @@ func tracingPoller(t *testing.T, repoPath string) (*poller.Poller, *tracetest.In
 	return poller.New(src, st, poller.WithTracerProvider(tp)), exporter, st
 }
 
+// queryFeed reads every persisted Change back through QueryChangesets — the
+// one query path production uses — flattening the Changesets into a
+// newest-commit-first slice of Changes. It walks the cursor to completion, so
+// callers never bump into the store's page ceiling.
+func queryFeed(t *testing.T, st *store.Store) []domain.Change {
+	t.Helper()
+
+	w := store.TimeWindow{AsOf: time.Now().Add(24 * time.Hour)}
+
+	var out []domain.Change
+	cursor := ""
+	for pages := 0; ; pages++ {
+		if pages > 100 {
+			t.Fatal("queryFeed: cursor walk did not terminate")
+		}
+		page, err := st.QueryChangesets(w, filter.FilterSpec{}, nil, cursor, store.MaxChangesetPageSize)
+		if err != nil {
+			t.Fatalf("QueryChangesets (cursor=%q): %v", cursor, err)
+		}
+		for _, cs := range page.Changesets {
+			for _, c := range cs.Changes {
+				out = append(out, c.Change)
+			}
+		}
+		if page.NextCursor == "" {
+			return out
+		}
+		cursor = page.NextCursor
+	}
+}
+
 // feedKeys renders the store's feed as a stable, comparable set of
 // field/path/old/new/sha tuples.
 func feedKeys(t *testing.T, st *store.Store) []string {
 	t.Helper()
 
-	feed, err := st.QueryFeed(1000)
-	if err != nil {
-		t.Fatalf("QueryFeed: %v", err)
-	}
+	feed := queryFeed(t, st)
 	deref := func(s *string) string {
 		if s == nil {
 			return "<nil>"
@@ -306,10 +335,7 @@ func TestPollGroup_PreservesPerFieldHighWaterMarks(t *testing.T) {
 	}
 
 	byField := map[string][]domain.Change{}
-	feed, err := st.QueryFeed(1000)
-	if err != nil {
-		t.Fatalf("QueryFeed: %v", err)
-	}
+	feed := queryFeed(t, st)
 	for _, c := range feed {
 		byField[c.Field] = append(byField[c.Field], c)
 	}

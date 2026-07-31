@@ -195,7 +195,7 @@ func TestQueryChangesets_WindowHoldsOnEveryPageOfACursorWalk(t *testing.T) {
 			t.Fatalf("QueryChangesets (cursor=%q): %v", cursor, err)
 		}
 		for _, cs := range page.Changesets {
-			if !w.Contains(cs.CommittedAt) {
+			if cs.CommittedAt.Before(w.Since) || !cs.CommittedAt.Before(w.AsOf) {
 				t.Errorf("cursor walk returned %s committed at %s, outside the window [%s, %s)",
 					cs.CommitSha, cs.CommittedAt, w.Since, w.AsOf)
 			}

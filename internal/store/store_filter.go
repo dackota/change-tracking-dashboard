@@ -5,9 +5,6 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
-	"strings"
-
-	"github.com/dackota/change-tracking-dashboard/internal/domain"
 )
 
 // facetKeyPattern constrains facet key names to a safe identifier charset.
@@ -19,20 +16,21 @@ import (
 var facetKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 
 // reservedFacetNames are facet-key names that must never be offered as a
-// selectable/parseable facet, because they collide with reserved query-param
-// names the web layer treats specially: the dedicated repo-scope dropdown
-// ("repo") and the asOf/cursor/limit paging params (see
-// web.reservedChangesetsParams). Without this exclusion, a tracker/extractor
-// whose facet map happens to produce one of these keys (e.g. a named capture
-// group literally called "repo") would render as a UI checkbox and,
-// server-side, shadow the dedicated repo-scope query param — the caller's
-// repeated ?repo=... query values collapse to whichever one net/url's
-// Query().Get returns first, silently overriding the user's actual
-// repo-dropdown selection with the facet-driven value.
+// selectable/parseable facet, because they collide with query-param names the
+// request layer treats specially: the dedicated repo-scope dropdown ("repo"),
+// the impact/risk class filters, and the asOf/since/cursor/limit paging
+// params. Without this exclusion, a tracker/extractor whose facet map happens
+// to produce one of these keys (e.g. a named capture group literally called
+// "repo") would render as a UI checkbox and, server-side, shadow the
+// dedicated repo-scope query param — the caller's repeated ?repo=... query
+// values collapse to whichever one net/url's Query().Get returns first,
+// silently overriding the user's actual repo-dropdown selection with the
+// facet-driven value.
 //
-// internal/store cannot import internal/web (web already imports store), so
-// this set is intentionally duplicated rather than shared; keep it in sync
-// with web.reservedChangesetsParams if a new reserved query param is added.
+// This set is the single authority for that vocabulary. The request layer
+// reads it through IsReservedFacetName rather than keeping its own copy, so
+// adding a reserved query param here closes the facet-shadowing hole on both
+// sides at once.
 var reservedFacetNames = map[string]struct{}{
 	"repo":   {},
 	"asOf":   {},
@@ -43,82 +41,12 @@ var reservedFacetNames = map[string]struct{}{
 	"since":  {},
 }
 
-// QueryFilteredFeed returns up to limit Changes, filtered by the given facet
-// constraints (AND semantics — all constraints must match), ordered newest-first.
-//
-// The filter is applied across the full dataset before the LIMIT is imposed, so
-// matching rows are never silently dropped by an early limit. Passing a nil or
-// empty filters map is equivalent to calling QueryFeed — all Changes are returned.
-//
-// Filter values originate from user input and are passed as SQL parameters
-// (? placeholders) — never string-concatenated into the query.
-func (s *Store) QueryFilteredFeed(limit int, filters map[string]string) ([]domain.Change, error) {
-	// Build the SELECT statement. The WHERE clauses use SQLite json_extract to
-	// reach individual keys inside the facets_json blob. Each clause is a
-	// separate ? parameter so the driver handles escaping — no string injection.
-	const baseQuery = `
-SELECT repo, file_path, field, key_val, change_type,
-       old_value, new_value, facets_json, commit_sha, author, committed_at, issue_refs_json, commit_subject
-FROM changes`
-
-	var (
-		sb     strings.Builder
-		params []any
-	)
-	sb.WriteString(baseQuery)
-
-	if len(filters) > 0 {
-		// Sort filter keys so the query is deterministic (easier to test/debug).
-		keys := make([]string, 0, len(filters))
-		for k := range filters {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-
-		sb.WriteString("\nWHERE ")
-		for i, k := range keys {
-			// The key is concatenated into the SQL path (not bindable), so it
-			// must be a safe identifier. Reject anything else at the boundary.
-			if !facetKeyPattern.MatchString(k) {
-				return nil, fmt.Errorf("store: invalid facet key %q: must match %s", k, facetKeyPattern)
-			}
-			if i > 0 {
-				sb.WriteString("\n  AND ")
-			}
-			// json_extract(facets_json, '$.key') = ?  (value bound as a parameter)
-			sb.WriteString("json_extract(facets_json, '$.")
-			sb.WriteString(k)
-			sb.WriteString("') = ?")
-			params = append(params, filters[k])
-		}
-	}
-
-	sb.WriteString("\nORDER BY committed_at DESC\nLIMIT ?")
-	params = append(params, limit)
-
-	rows, err := s.db.Query(sb.String(), params...)
-	if err != nil {
-		return nil, fmt.Errorf("store: query filtered feed: %w", err)
-	}
-	defer rows.Close()
-
-	var results []domain.Change
-	for rows.Next() {
-		c, err := scanChange(rows)
-		if err != nil {
-			return nil, fmt.Errorf("store: scan change (filtered): %w", err)
-		}
-		results = append(results, c)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("store: rows error (filtered): %w", err)
-	}
-
-	// Return an empty slice (not nil) when there are no results.
-	if results == nil {
-		return []domain.Change{}, nil
-	}
-	return results, nil
+// IsReservedFacetName reports whether name is reserved and therefore never
+// eligible as a facet — neither offered by FacetOptions nor accepted as a
+// facet filter by a caller parsing a request. See reservedFacetNames.
+func IsReservedFacetName(name string) bool {
+	_, reserved := reservedFacetNames[name]
+	return reserved
 }
 
 // parseFacetsJSON unmarshals a JSON facets blob into a map[string]string. It is

@@ -52,10 +52,7 @@ func TestPoller_GlobFanOut_ContinuesPastFailingFile(t *testing.T) {
 	}
 
 	// ...but the good file's Change must have been persisted regardless.
-	feed, ferr := st.QueryFeed(100)
-	if ferr != nil {
-		t.Fatalf("QueryFeed: %v", ferr)
-	}
+	feed := queryFeed(t, st)
 	if len(feed) != 1 {
 		t.Fatalf("got %d changes, want 1 (a/good only, despite a/bad failing); feed = %+v", len(feed), feed)
 	}

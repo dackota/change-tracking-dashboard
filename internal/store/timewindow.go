@@ -1,7 +1,8 @@
 // Package store (this file): TimeWindow, the half-open commit-time window
-// that bounds a changeset query. Kept separate from the SQL that applies it
-// so the boundary invariant — inclusive lower, exclusive upper — is stated
-// and tested in one pure place, independent of any database.
+// that bounds a changeset query. The type is declared apart from the SQL that
+// applies it so the boundary invariant — inclusive lower, exclusive upper —
+// is stated in one place; it is enforced and tested where it actually runs,
+// in QueryChangesets (see store_changeset_window_test.go).
 package store
 
 import "time"
@@ -24,13 +25,4 @@ type TimeWindow struct {
 	Since time.Time
 	// AsOf is the exclusive upper bound. Always applied.
 	AsOf time.Time
-}
-
-// Contains reports whether t falls within the window: at or after Since (when
-// Since is set) and strictly before AsOf.
-func (w TimeWindow) Contains(t time.Time) bool {
-	if !t.Before(w.AsOf) {
-		return false
-	}
-	return w.Since.IsZero() || !t.Before(w.Since)
 }
