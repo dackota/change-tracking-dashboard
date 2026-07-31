@@ -458,7 +458,7 @@ func TestFetch_NewCommitIsVisible(t *testing.T) {
 	sha3 := addCommitToRepo(t, remoteRepo, "2.0.0")
 
 	// Fetch from the remote into the existing clone.
-	if err := src.Fetch(remoteRepo, nil); err != nil {
+	if err := src.Fetch(nil); err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
 
@@ -496,7 +496,7 @@ func TestFetch_AlreadyUpToDate(t *testing.T) {
 	}
 
 	// Fetch immediately — nothing has changed on the remote, must not error.
-	if err := src.Fetch(remoteRepo, nil); err != nil {
+	if err := src.Fetch(nil); err != nil {
 		t.Errorf("Fetch on already-up-to-date repo returned error: %v", err)
 	}
 }
@@ -508,12 +508,11 @@ func TestFetch_AlreadyUpToDate(t *testing.T) {
 func TestFetch_RemoteHTTPS_SendsBasicAuth(t *testing.T) {
 	t.Parallel()
 
-	// First clone locally so we have a Source with a remote configured.
+	// First clone locally so there is an existing clone on disk.
 	remoteRepo, _, _ := buildFixtureRepo(t)
 	localClone := t.TempDir()
 
-	src, err := gitsource.OpenOrClone(remoteRepo, localClone, nil)
-	if err != nil {
+	if _, err := gitsource.OpenOrClone(remoteRepo, localClone, nil); err != nil {
 		t.Fatalf("initial OpenOrClone: %v", err)
 	}
 
@@ -531,8 +530,19 @@ func TestFetch_RemoteHTTPS_SendsBasicAuth(t *testing.T) {
 		Password: "ghs_fetch_token_wiring",
 	}
 
+	// Reopen the existing clone as remote-backed by the httptest server — the
+	// same path a restart takes when its clone directory survived. The Source
+	// remembers that URL, so Fetch needs no second copy of it.
+	src, err := gitsource.OpenOrClone(srv.URL+"/repo.git", localClone, auth)
+	if err != nil {
+		t.Fatalf("reopen existing clone as remote-backed: %v", err)
+	}
+	if got := src.RemoteURL(); got != srv.URL+"/repo.git" {
+		t.Fatalf("RemoteURL() = %q, want the URL it was reopened against", got)
+	}
+
 	// Fetch against the httptest server — it will fail (401) but auth must be sent.
-	_ = src.Fetch(srv.URL+"/repo.git", auth)
+	_ = src.Fetch(auth)
 
 	if receivedAuth == "" {
 		t.Fatal("no Authorization header sent to server on fetch — auth not wired")
@@ -556,8 +566,12 @@ func TestFetch_LocalPath_NoFetch(t *testing.T) {
 		t.Fatalf("gitsource.Open: %v", err)
 	}
 
-	// A local-path Source has no remote; Fetch with empty remoteURL must be a no-op.
-	if err := src.Fetch("", nil); err != nil {
+	// A local-path Source has no remote, so Fetch is a no-op — the caller
+	// never has to know which kind of Source it holds.
+	if got := src.RemoteURL(); got != "" {
+		t.Errorf("RemoteURL() = %q, want empty for a local-path source", got)
+	}
+	if err := src.Fetch(nil); err != nil {
 		t.Errorf("Fetch on local-path source returned error: %v", err)
 	}
 }
