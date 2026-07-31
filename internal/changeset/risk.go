@@ -36,6 +36,63 @@ const (
 	RiskMajorVersionBump Risk = "major version bump"
 )
 
+// riskSlugs maps each Risk to its stable, URL-clean wire slug.
+//
+// Two display values are hostile in a query string — "replace/destroy" carries
+// a path separator and "cost tripwire" a space — so the wire never uses the
+// display value. The slugs are lowercase letters and hyphens only.
+//
+// This mapping lives here, immediately below the Risk constants, on purpose.
+// Adding a fifth risk class now forces a decision about its slug at the moment
+// of definition, and the drift guard in risk_slug_internal_test.go fails until
+// that decision is made. Had this lived in the web layer instead, a newly-added
+// class would compile, classify, render its badge — and be silently
+// unfilterable, which is the kind of gap nobody notices until a consumer asks
+// why their query returns nothing.
+//
+// These slugs are a wire contract. Renaming one breaks every saved query and
+// dashboard bookmark that uses it, so treat a change here as a breaking API
+// change, not a refactor.
+var riskSlugs = map[Risk]string{
+	RiskReplaceDestroy:   "replace-destroy",
+	RiskSecurity:         "security",
+	RiskCostTripwire:     "cost-tripwire",
+	RiskMajorVersionBump: "major-version-bump",
+}
+
+// SlugForRisk returns the wire slug for r. ok is false for any value that is
+// not one of the Risk constants — the function is total and never panics.
+func SlugForRisk(r Risk) (string, bool) {
+	slug, ok := riskSlugs[r]
+	return slug, ok
+}
+
+// RiskFromSlug returns the Risk a wire slug names. ok is false for an
+// unrecognized slug, including the display values themselves ("replace/destroy"
+// is not accepted on the wire) and any difference in case. Callers map ok ==
+// false to a rejection rather than a silent no-op: the vocabulary is closed and
+// four values long, so a typo is a caller error, not a hint.
+func RiskFromSlug(slug string) (Risk, bool) {
+	for risk, s := range riskSlugs {
+		if s == slug {
+			return risk, true
+		}
+	}
+	return "", false
+}
+
+// RiskSlugs returns the closed vocabulary of wire slugs as a set, as an
+// independent copy the caller may retain or mutate. It exists so a
+// request-parsing layer can validate caller input against the authoritative
+// list without hard-coding a second copy that would drift.
+func RiskSlugs() map[string]struct{} {
+	out := make(map[string]struct{}, len(riskSlugs))
+	for _, slug := range riskSlugs {
+		out[slug] = struct{}{}
+	}
+	return out
+}
+
 // SemverBumpLevel names how large a semantic-version increase a rule requires
 // before it fires. It is the one relational predicate on RiskRule: every other
 // predicate inspects a single Change field in isolation, but a version "bump"
