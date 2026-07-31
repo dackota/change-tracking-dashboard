@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.2](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.18.1...app-v0.18.2) (2026-07-31)
+
+
+### Performance Improvements
+
+* **poller:** bound the steady-state history walk ([#181](https://github.com/dackota/change-tracking-dashboard/issues/181)) ([3b6b8ba](https://github.com/dackota/change-tracking-dashboard/commit/3b6b8ba0b237916668dbb01efb01871b5e2d9082))
+
 ## [0.18.1](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.18.0...app-v0.18.1) (2026-07-31)
 
 
