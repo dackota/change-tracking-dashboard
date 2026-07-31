@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dackota/change-tracking-dashboard/internal/gitsource"
+	"github.com/dackota/change-tracking-dashboard/internal/subtree"
 	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
 )
 
@@ -30,7 +31,7 @@ import (
 // chartdiff.materializeAndRender's cleanup-lifecycle chokepoint exactly, for
 // the same reason: an unbounded/uncancellable step next to a bounded one is
 // itself the DoS gap chartdiff's own history already found and closed once.
-func (e *Engine) materializeAndParse(ctx context.Context, repo PlanRepo, req Request, sha string, bounds gitsource.MaterializeBounds, side string) (resources []Resource, outcome Outcome, ok bool) {
+func (e *Engine) materializeAndParse(ctx context.Context, repo subtree.Repo, req Request, sha string, bounds gitsource.MaterializeBounds, side string) (resources []Resource, outcome Outcome, ok bool) {
 	destDir, cleanup, err := newExclusiveTempDir()
 	if err != nil {
 		telemetry.LoggerFromContext(ctx).Error("plandiff: create temp materialize dir",
@@ -101,13 +102,13 @@ func newExclusiveTempDir() (dir string, cleanup func(), err error) {
 	return dir, func() { _ = os.RemoveAll(dir) }, nil
 }
 
-// materializeBounded runs a single PlanRepo.MaterializeSubtreeBounded call
+// materializeBounded runs a single subtree.Repo.MaterializeSubtreeBounded call
 // under both the materialize concurrency semaphore and
 // Config.MaterializeTimeout, against the caller-exclusive destDir
 // materializeAndParse created for this side. This is a byte-for-byte mirror
 // of chartdiff.materializeBounded's shape and lifecycle guarantees -- see
 // its doc for the full rationale, unchanged here.
-func (e *Engine) materializeBounded(ctx context.Context, repo PlanRepo, sha, subtreePath, destDir string, bounds gitsource.MaterializeBounds, cleanup func()) (err error, timedOut bool) {
+func (e *Engine) materializeBounded(ctx context.Context, repo subtree.Repo, sha, subtreePath, destDir string, bounds gitsource.MaterializeBounds, cleanup func()) (err error, timedOut bool) {
 	select {
 	case e.materializeSem <- struct{}{}: // acquired a concurrency slot
 	case <-ctx.Done():

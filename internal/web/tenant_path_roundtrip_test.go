@@ -13,6 +13,7 @@ import (
 	"github.com/dackota/change-tracking-dashboard/internal/chartdiff"
 	"github.com/dackota/change-tracking-dashboard/internal/domain"
 	"github.com/dackota/change-tracking-dashboard/internal/plandiff"
+	"github.com/dackota/change-tracking-dashboard/internal/subtree"
 	"github.com/dackota/change-tracking-dashboard/internal/web"
 )
 
@@ -87,10 +88,10 @@ func TestTenantPath_RoundTripsFromDetailRenderIntoChartDiffGate(t *testing.T) {
 		{Change: domain.Change{FilePath: filePath}, Kind: changeset.KindChart},
 	}}
 	h := web.NewChartDiffHandler(
-		&fakeChartDiffEngine{fn: func(context.Context, chartdiff.ChartRepo, chartdiff.Request) chartdiff.Outcome {
+		&fakeChartDiffEngine{fn: func(context.Context, subtree.Repo, chartdiff.Request) chartdiff.Outcome {
 			return chartdiff.Outcome{Kind: chartdiff.OK}
 		}},
-		&fakeChartRepoResolver{fn: func(string) (chartdiff.ChartRepo, error) { return stubChartRepo{}, nil }},
+		&fakeRepoResolver{fn: func(string) (subtree.Repo, error) { return stubRepo{}, nil }},
 		&fakeChangesetExistenceChecker{fn: func(string, string) (changeset.Changeset, bool, error) {
 			return cs, true, nil
 		}},
@@ -120,10 +121,10 @@ func TestTenantPath_RoundTripsFromDetailRenderIntoPlanDiffGate(t *testing.T) {
 		{Change: domain.Change{FilePath: filePath}, Kind: changeset.KindResource},
 	}}
 	h := web.NewPlanDiffHandler(
-		&fakePlanDiffEngine{fn: func(context.Context, plandiff.PlanRepo, plandiff.Request) plandiff.Outcome {
+		&fakePlanDiffEngine{fn: func(context.Context, subtree.Repo, plandiff.Request) plandiff.Outcome {
 			return plandiff.Outcome{Kind: plandiff.OK}
 		}},
-		&fakePlanRepoResolver{fn: func(string) (plandiff.PlanRepo, error) { return stubPlanRepo{}, nil }},
+		&fakeRepoResolver{fn: func(string) (subtree.Repo, error) { return stubRepo{}, nil }},
 		&fakeChangesetExistenceChecker{fn: func(string, string) (changeset.Changeset, bool, error) {
 			return cs, true, nil
 		}},
@@ -154,10 +155,10 @@ func TestTenantPath_DocumentedAPIPathIsAccepted(t *testing.T) {
 		{Change: domain.Change{FilePath: "envs/prod/main.tf"}, Kind: changeset.KindResource},
 	}}
 	h := web.NewPlanDiffHandler(
-		&fakePlanDiffEngine{fn: func(context.Context, plandiff.PlanRepo, plandiff.Request) plandiff.Outcome {
+		&fakePlanDiffEngine{fn: func(context.Context, subtree.Repo, plandiff.Request) plandiff.Outcome {
 			return plandiff.Outcome{Kind: plandiff.OK}
 		}},
-		&fakePlanRepoResolver{fn: func(string) (plandiff.PlanRepo, error) { return stubPlanRepo{}, nil }},
+		&fakeRepoResolver{fn: func(string) (subtree.Repo, error) { return stubRepo{}, nil }},
 		&fakeChangesetExistenceChecker{fn: func(string, string) (changeset.Changeset, bool, error) {
 			return cs, true, nil
 		}},

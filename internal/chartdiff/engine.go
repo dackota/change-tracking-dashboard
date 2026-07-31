@@ -1,7 +1,7 @@
 // Package chartdiff is the lazy compute engine for a Chart diff (see
 // CONTEXT.md and ADR 0002). Given a chart-kind Change (repo, tenant chart
 // directory, commit SHA), Engine.Diff resolves old = the commit's first
-// parent tree and new = the commit tree via a ChartRepo (gitsource), renders
+// parent tree and new = the commit tree via a subtree.Repo (gitsource), renders
 // both via a Renderer (chartrender), diffs the result via manifestdiff, and
 // classifies any unavailability into one of a fixed, safe set of Outcome
 // Kinds — never leaking internal Helm/git error detail to the caller.
@@ -25,6 +25,7 @@ import (
 	"github.com/dackota/change-tracking-dashboard/internal/gitsource"
 	"github.com/dackota/change-tracking-dashboard/internal/lru"
 	"github.com/dackota/change-tracking-dashboard/internal/manifestdiff"
+	"github.com/dackota/change-tracking-dashboard/internal/subtree"
 	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
 )
 
@@ -56,7 +57,7 @@ type Engine struct {
 	cache    *lru.Cache[cacheKey, Outcome]
 	// sem bounds concurrent render invocations (Config.ConcurrencyCap).
 	sem chan struct{}
-	// materializeSem bounds concurrent ChartRepo.MaterializeSubtreeBounded
+	// materializeSem bounds concurrent subtree.Repo.MaterializeSubtreeBounded
 	// invocations (Config.MaterializeConcurrencyCap) — a dedicated
 	// semaphore, not shared with sem, because materialize (a disk/CPU tree
 	// walk) and render (a CPU-bound Helm template execution) have different
@@ -145,7 +146,7 @@ func NewEngine(cfg Config, renderer Renderer, opts ...Option) (*Engine, error) {
 // cancellation. This is inherent to singleflight, pre-existing, and not
 // addressed here; it does not affect the leader, and a follower is still
 // bounded by the leader's own render timeout / bounds checks.
-func (e *Engine) Diff(ctx context.Context, repo ChartRepo, req Request) Outcome {
+func (e *Engine) Diff(ctx context.Context, repo subtree.Repo, req Request) Outcome {
 	var parentSha string
 	err := telemetry.WithSpan(ctx, e.tracer, "gitsource.first_parent", func(context.Context) error {
 		v, err := repo.FirstParent(req.CommitSha)
@@ -184,7 +185,7 @@ func (e *Engine) Diff(ctx context.Context, repo ChartRepo, req Request) Outcome 
 // may have already populated the cache in between), computes the Outcome on
 // a genuine miss, and caches it (including a classified failure) before
 // returning.
-func (e *Engine) computeAndCache(ctx context.Context, repo ChartRepo, req Request, key cacheKey) Outcome {
+func (e *Engine) computeAndCache(ctx context.Context, repo subtree.Repo, req Request, key cacheKey) Outcome {
 	if cached, ok := e.cache.Get(key); ok {
 		return cached
 	}
@@ -196,7 +197,7 @@ func (e *Engine) computeAndCache(ctx context.Context, repo ChartRepo, req Reques
 
 // compute materializes and renders both sides of the diff and returns the
 // classified Outcome. It never touches the cache; computeAndCache owns that.
-func (e *Engine) compute(ctx context.Context, repo ChartRepo, req Request, parentSha string) Outcome {
+func (e *Engine) compute(ctx context.Context, repo subtree.Repo, req Request, parentSha string) Outcome {
 	bounds := gitsource.MaterializeBounds{
 		MaxTotalBytes: e.cfg.MaxMaterializedBytes,
 		MaxFiles:      e.cfg.MaxMaterializedFiles,

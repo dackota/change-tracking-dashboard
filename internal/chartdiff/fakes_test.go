@@ -14,7 +14,7 @@ import (
 // or panicking.
 var errUnexpected = errors.New("fakes_test: unexpected failure")
 
-// fakeChartRepo is a chartdiff.ChartRepo test double: both methods delegate
+// fakeChartRepo is a subtree.Repo test double: both methods delegate
 // to caller-supplied funcs, so each test configures exactly the git behavior
 // it needs without a real repository. MaterializeSubtreeBounded calls are
 // counted (thread-safely) so tests can assert "at most once per key" under

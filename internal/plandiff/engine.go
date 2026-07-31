@@ -2,7 +2,7 @@
 // Terraform plan-diff (see CONTEXT.md and the terraform-change-tracking PRD,
 // R17-R22). Given a Terraform-kind Request (repo, stack/module directory,
 // commit SHA), Engine.Diff resolves old = the commit's first parent tree and
-// new = the commit tree via a PlanRepo (gitsource), parses both sides' HCL
+// new = the commit tree via a subtree.Repo (gitsource), parses both sides' HCL
 // via a Parser into a Resource set, classifies the resource-level delta
 // (added/removed/changed, with a replacement-forcing heuristic), renders it
 // through manifestdiff, and classifies any unavailability into one of a
@@ -17,7 +17,7 @@
 // Config. Unlike chartdiff, plandiff never executes `terraform plan` or
 // `terraform show -json` and never touches cloud credentials or state
 // (acceptance criterion 3, PRD R19) -- its only inputs are HCL bytes
-// PlanRepo materializes from git, parsed entirely in-process.
+// subtree.Repo materializes from git, parsed entirely in-process.
 package plandiff
 
 import (
@@ -33,6 +33,7 @@ import (
 	"github.com/dackota/change-tracking-dashboard/internal/gitsource"
 	"github.com/dackota/change-tracking-dashboard/internal/lru"
 	"github.com/dackota/change-tracking-dashboard/internal/manifestdiff"
+	"github.com/dackota/change-tracking-dashboard/internal/subtree"
 	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
 )
 
@@ -67,7 +68,7 @@ type Engine struct {
 	cache  *lru.Cache[cacheKey, Outcome]
 	// sem bounds concurrent parse invocations (Config.ConcurrencyCap).
 	sem chan struct{}
-	// materializeSem bounds concurrent PlanRepo.MaterializeSubtreeBounded
+	// materializeSem bounds concurrent subtree.Repo.MaterializeSubtreeBounded
 	// invocations (Config.MaterializeConcurrencyCap) -- a dedicated
 	// semaphore, not shared with sem, mirroring chartdiff's identical
 	// rationale (materialize is a disk/CPU tree walk; parse is a CPU-bound
@@ -187,13 +188,13 @@ func NewEngine(cfg Config, parser Parser, opts ...Option) (*Engine, error) {
 // chartdiff.Engine.Diff's identical documented limitation, and does not
 // affect the leader; a follower is still bounded by the leader's own parse
 // timeout / bounds checks.
-func (e *Engine) Diff(ctx context.Context, repo PlanRepo, req Request) Outcome {
+func (e *Engine) Diff(ctx context.Context, repo subtree.Repo, req Request) Outcome {
 	outcome := e.diff(ctx, repo, req)
 	e.outcomeRecorder.RecordPlanDiffOutcome(string(outcome.Kind))
 	return outcome
 }
 
-func (e *Engine) diff(ctx context.Context, repo PlanRepo, req Request) Outcome {
+func (e *Engine) diff(ctx context.Context, repo subtree.Repo, req Request) Outcome {
 	var parentSha string
 	err := telemetry.WithSpan(ctx, e.tracer, "gitsource.first_parent", func(context.Context) error {
 		v, err := repo.FirstParent(req.CommitSha)
@@ -232,7 +233,7 @@ func (e *Engine) diff(ctx context.Context, repo PlanRepo, req Request) Outcome {
 // may have already populated the cache in between), computes the Outcome on
 // a genuine miss, and caches it (including a classified failure) before
 // returning.
-func (e *Engine) computeAndCache(ctx context.Context, repo PlanRepo, req Request, key cacheKey) Outcome {
+func (e *Engine) computeAndCache(ctx context.Context, repo subtree.Repo, req Request, key cacheKey) Outcome {
 	if cached, ok := e.cache.Get(key); ok {
 		return cached
 	}
@@ -245,7 +246,7 @@ func (e *Engine) computeAndCache(ctx context.Context, repo PlanRepo, req Request
 // compute materializes and parses both sides of the diff, classifies the
 // resource-level delta, and returns the OK Outcome. It never touches the
 // cache; computeAndCache owns that.
-func (e *Engine) compute(ctx context.Context, repo PlanRepo, req Request, parentSha string) Outcome {
+func (e *Engine) compute(ctx context.Context, repo subtree.Repo, req Request, parentSha string) Outcome {
 	bounds := gitsource.MaterializeBounds{
 		MaxTotalBytes: e.cfg.MaxMaterializedBytes,
 		MaxFiles:      e.cfg.MaxMaterializedFiles,

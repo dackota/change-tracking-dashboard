@@ -10,6 +10,7 @@ import (
 	"github.com/dackota/change-tracking-dashboard/internal/chartrender"
 	"github.com/dackota/change-tracking-dashboard/internal/gitsource"
 	"github.com/dackota/change-tracking-dashboard/internal/manifestdiff"
+	"github.com/dackota/change-tracking-dashboard/internal/subtree"
 	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
 )
 
@@ -31,7 +32,7 @@ import (
 // (timeout + concurrency cap + goroutine-isolated panic recovery), closing
 // the asymmetry a prior review flagged: an unbounded/uncancellable
 // materialize step next to a bounded render step was itself the DoS gap.
-func (e *Engine) materializeAndRender(ctx context.Context, repo ChartRepo, req Request, sha string, bounds gitsource.MaterializeBounds, side string) (manifests []manifestdiff.Manifest, outcome Outcome, ok bool) {
+func (e *Engine) materializeAndRender(ctx context.Context, repo subtree.Repo, req Request, sha string, bounds gitsource.MaterializeBounds, side string) (manifests []manifestdiff.Manifest, outcome Outcome, ok bool) {
 	destDir, cleanup, err := newExclusiveTempDir()
 	if err != nil {
 		telemetry.LoggerFromContext(ctx).Error("chartdiff: create temp materialize dir",
@@ -123,7 +124,7 @@ func newExclusiveTempDir() (dir string, cleanup func(), err error) {
 	return dir, func() { _ = os.RemoveAll(dir) }, nil
 }
 
-// materializeBounded runs a single ChartRepo.MaterializeSubtreeBounded call
+// materializeBounded runs a single subtree.Repo.MaterializeSubtreeBounded call
 // under both the materialize concurrency semaphore and
 // Config.MaterializeTimeout, against the caller-exclusive destDir
 // materializeAndRender created for this side. It mirrors renderBounded's
@@ -166,7 +167,7 @@ func newExclusiveTempDir() (dir string, cleanup func(), err error) {
 // materialize still counts against MaterializeConcurrencyCap until it
 // actually completes, which keeps the cap bounding real concurrent work
 // rather than leaking unbounded goroutines.
-func (e *Engine) materializeBounded(ctx context.Context, repo ChartRepo, sha, subtreePath, destDir string, bounds gitsource.MaterializeBounds, cleanup func()) (err error, timedOut bool) {
+func (e *Engine) materializeBounded(ctx context.Context, repo subtree.Repo, sha, subtreePath, destDir string, bounds gitsource.MaterializeBounds, cleanup func()) (err error, timedOut bool) {
 	select {
 	case e.materializeSem <- struct{}{}: // acquired a concurrency slot
 	case <-ctx.Done():
