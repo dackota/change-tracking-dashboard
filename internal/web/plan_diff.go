@@ -17,6 +17,7 @@ import (
 
 	"github.com/dackota/change-tracking-dashboard/internal/changeset"
 	"github.com/dackota/change-tracking-dashboard/internal/plandiff"
+	"github.com/dackota/change-tracking-dashboard/internal/subtree"
 	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
 )
 
@@ -25,21 +26,14 @@ import (
 // inject a fake to exercise each classified message without real HCL
 // parsing.
 type PlanDiffEngine interface {
-	Diff(ctx context.Context, repo plandiff.PlanRepo, req plandiff.Request) plandiff.Outcome
-}
-
-// PlanRepoResolver resolves a repo name (as carried on a Change/Changeset)
-// to a plandiff.PlanRepo for a single plan-diff computation. Mirrors
-// ChartRepoResolver's identical role for the sibling chart-diff endpoint.
-type PlanRepoResolver interface {
-	ResolvePlanRepo(repo string) (plandiff.PlanRepo, error)
+	Diff(ctx context.Context, repo subtree.Repo, req plandiff.Request) plandiff.Outcome
 }
 
 // PlanDiffHandler serves GET /api/changesets/detail/plan-diff as a
 // server-rendered HTML fragment.
 type PlanDiffHandler struct {
 	engine   PlanDiffEngine
-	resolver PlanRepoResolver
+	resolver subtree.Resolver
 	checker  ChangesetExistenceChecker
 }
 
@@ -49,7 +43,7 @@ type PlanDiffHandler struct {
 // Changeset that also carries a Terraform-kind Change (Kind.IsTerraform())
 // at path — mirroring ChartDiffHandler's identical two-part security gate
 // (existence + path-scoped Kind match) for the sibling endpoint.
-func NewPlanDiffHandler(engine PlanDiffEngine, resolver PlanRepoResolver, checker ChangesetExistenceChecker) *PlanDiffHandler {
+func NewPlanDiffHandler(engine PlanDiffEngine, resolver subtree.Resolver, checker ChangesetExistenceChecker) *PlanDiffHandler {
 	return &PlanDiffHandler{engine: engine, resolver: resolver, checker: checker}
 }
 
@@ -78,7 +72,7 @@ func (h *PlanDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Security gate: repo/commitSha/path are unauthenticated, caller-supplied
 	// input — see ChartDiffHandler.ServeHTTP's identical rationale. Only
-	// proceed to ResolvePlanRepo (and the git clone/fetch/PlainOpen it can
+	// proceed to ResolveRepo (and the git clone/fetch/PlainOpen it can
 	// trigger) once (repo, commitSha) is confirmed a real, already-ingested
 	// Changeset carrying a Terraform-kind Change whose own directory is path.
 	var cs changeset.Changeset
@@ -98,10 +92,10 @@ func (h *PlanDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var planRepo plandiff.PlanRepo
+	var planRepo subtree.Repo
 	err = telemetry.WithSpan(r.Context(), tracer, "gitsource.resolve_plan_repo", func(context.Context) error {
 		var err error
-		planRepo, err = h.resolver.ResolvePlanRepo(repo)
+		planRepo, err = h.resolver.ResolveRepo(repo)
 		return err
 	})
 	if err != nil {

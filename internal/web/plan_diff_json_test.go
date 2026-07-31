@@ -12,6 +12,7 @@ import (
 	"github.com/dackota/change-tracking-dashboard/internal/domain"
 	"github.com/dackota/change-tracking-dashboard/internal/manifestdiff"
 	"github.com/dackota/change-tracking-dashboard/internal/plandiff"
+	"github.com/dackota/change-tracking-dashboard/internal/subtree"
 	"github.com/dackota/change-tracking-dashboard/internal/web"
 )
 
@@ -34,10 +35,10 @@ func jsonPlanDiffChecker() *fakeChangesetExistenceChecker {
 // newJSONPlanDiffHandler builds a PlanDiffHandler whose engine always returns
 // outcome, gated by a checker that accepts jsonPlanDiffURL.
 func newJSONPlanDiffHandler(outcome plandiff.Outcome) *web.PlanDiffHandler {
-	engine := &fakePlanDiffEngine{fn: func(context.Context, plandiff.PlanRepo, plandiff.Request) plandiff.Outcome {
+	engine := &fakePlanDiffEngine{fn: func(context.Context, subtree.Repo, plandiff.Request) plandiff.Outcome {
 		return outcome
 	}}
-	resolver := &fakePlanRepoResolver{fn: func(string) (plandiff.PlanRepo, error) { return stubPlanRepo{}, nil }}
+	resolver := &fakeRepoResolver{fn: func(string) (subtree.Repo, error) { return stubRepo{}, nil }}
 	return web.NewPlanDiffHandler(engine, resolver, jsonPlanDiffChecker())
 }
 
@@ -326,7 +327,7 @@ func TestPlanDiffHandler_NonJSONAcceptReturnsHTML(t *testing.T) {
 func TestPlanDiffHandler_JSON_MissingParamIsJSONObject(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewPlanDiffHandler(&fakePlanDiffEngine{}, &fakePlanRepoResolver{}, &fakeChangesetExistenceChecker{})
+	h := web.NewPlanDiffHandler(&fakePlanDiffEngine{}, &fakeRepoResolver{}, &fakeChangesetExistenceChecker{})
 
 	urls := []string{
 		"/api/changesets/detail/plan-diff?commitSha=sha&path=prod",
@@ -371,13 +372,13 @@ func TestPlanDiffHandler_JSON_MissingParamIsJSONObject(t *testing.T) {
 func TestPlanDiffHandler_JSON_UnknownChangesetAndWrongPath_404Indistinguishable(t *testing.T) {
 	t.Parallel()
 
-	engineFn := func(context.Context, plandiff.PlanRepo, plandiff.Request) plandiff.Outcome {
+	engineFn := func(context.Context, subtree.Repo, plandiff.Request) plandiff.Outcome {
 		return plandiff.Outcome{Kind: plandiff.OK}
 	}
 	newHandler := func(checker *fakeChangesetExistenceChecker) *web.PlanDiffHandler {
 		return web.NewPlanDiffHandler(
 			&fakePlanDiffEngine{fn: engineFn},
-			&fakePlanRepoResolver{fn: func(string) (plandiff.PlanRepo, error) { return stubPlanRepo{}, nil }},
+			&fakeRepoResolver{fn: func(string) (subtree.Repo, error) { return stubRepo{}, nil }},
 			checker,
 		)
 	}
@@ -425,10 +426,10 @@ func TestPlanDiffHandler_JSON_404IsJSONObject(t *testing.T) {
 	t.Parallel()
 
 	h := web.NewPlanDiffHandler(
-		&fakePlanDiffEngine{fn: func(context.Context, plandiff.PlanRepo, plandiff.Request) plandiff.Outcome {
+		&fakePlanDiffEngine{fn: func(context.Context, subtree.Repo, plandiff.Request) plandiff.Outcome {
 			return plandiff.Outcome{Kind: plandiff.OK}
 		}},
-		&fakePlanRepoResolver{fn: func(string) (plandiff.PlanRepo, error) { return stubPlanRepo{}, nil }},
+		&fakeRepoResolver{fn: func(string) (subtree.Repo, error) { return stubRepo{}, nil }},
 		&fakeChangesetExistenceChecker{fn: func(string, string) (changeset.Changeset, bool, error) {
 			return changeset.Changeset{}, false, nil
 		}},
@@ -461,7 +462,7 @@ func TestPlanDiffHandler_SecurityHeadersSetOnEveryRepresentation(t *testing.T) {
 	t.Parallel()
 
 	ok := newJSONPlanDiffHandler(okPlanOutcome())
-	badRequest := web.NewPlanDiffHandler(&fakePlanDiffEngine{}, &fakePlanRepoResolver{}, &fakeChangesetExistenceChecker{})
+	badRequest := web.NewPlanDiffHandler(&fakePlanDiffEngine{}, &fakeRepoResolver{}, &fakeChangesetExistenceChecker{})
 
 	cases := []struct {
 		name   string

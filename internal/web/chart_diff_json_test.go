@@ -253,7 +253,7 @@ func TestChartDiffHandler_NonJSONAcceptReturnsHTML(t *testing.T) {
 func TestChartDiffHandler_JSON_MissingParamIsJSONObject(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewChartDiffHandler(&spyChartDiffEngine{}, &spyChartRepoResolver{}, &fakeChangesetExistenceChecker{})
+	h := web.NewChartDiffHandler(&spyChartDiffEngine{}, &spyRepoResolver{}, &fakeChangesetExistenceChecker{})
 
 	urls := []string{
 		"/api/changesets/detail/chart-diff?commitSha=sha&path=tenant",
@@ -303,12 +303,12 @@ func TestChartDiffHandler_JSON_MissingParamIsJSONObject(t *testing.T) {
 func TestChartDiffHandler_JSON_UnknownChangesetAndWrongPath_404Indistinguishable(t *testing.T) {
 	t.Parallel()
 
-	unknownCommit := web.NewChartDiffHandler(&spyChartDiffEngine{}, &spyChartRepoResolver{}, neverFoundChecker())
+	unknownCommit := web.NewChartDiffHandler(&spyChartDiffEngine{}, &spyRepoResolver{}, neverFoundChecker())
 
 	wrongPathChecker := &fakeChangesetExistenceChecker{fn: func(string, string) (changeset.Changeset, bool, error) {
 		return changeset.Changeset{}, true, nil // found, but no Changes at all -> no path match
 	}}
-	knownCommitWrongPath := web.NewChartDiffHandler(&spyChartDiffEngine{}, &spyChartRepoResolver{}, wrongPathChecker)
+	knownCommitWrongPath := web.NewChartDiffHandler(&spyChartDiffEngine{}, &spyRepoResolver{}, wrongPathChecker)
 
 	for _, accept := range []string{"application/json", ""} {
 		name := accept
@@ -345,7 +345,7 @@ func TestChartDiffHandler_JSON_UnknownChangesetAndWrongPath_404Indistinguishable
 func TestChartDiffHandler_JSON_404IsJSONObject(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewChartDiffHandler(&spyChartDiffEngine{}, &spyChartRepoResolver{}, neverFoundChecker())
+	h := web.NewChartDiffHandler(&spyChartDiffEngine{}, &spyRepoResolver{}, neverFoundChecker())
 
 	rr := serveChartDiffAccept(h, defaultChartDiffURL, "application/json")
 	if rr.Code != http.StatusNotFound {
@@ -372,7 +372,7 @@ func TestChartDiffHandler_JSON_404IsJSONObject(t *testing.T) {
 func TestChartDiffHandler_ErrorPathsKeepHTMLBodiesByteIdentical(t *testing.T) {
 	t.Parallel()
 
-	notFound := web.NewChartDiffHandler(&spyChartDiffEngine{}, &spyChartRepoResolver{}, neverFoundChecker())
+	notFound := web.NewChartDiffHandler(&spyChartDiffEngine{}, &spyRepoResolver{}, neverFoundChecker())
 	rr := serveChartDiffAccept(notFound, defaultChartDiffURL, "*/*")
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rr.Code)
@@ -381,7 +381,7 @@ func TestChartDiffHandler_ErrorPathsKeepHTMLBodiesByteIdentical(t *testing.T) {
 		t.Errorf("HTML 404 body = %q, want http.NotFound's %q", got, "404 page not found\n")
 	}
 
-	badRequest := web.NewChartDiffHandler(&spyChartDiffEngine{}, &spyChartRepoResolver{}, &fakeChangesetExistenceChecker{})
+	badRequest := web.NewChartDiffHandler(&spyChartDiffEngine{}, &spyRepoResolver{}, &fakeChangesetExistenceChecker{})
 	rr = serveChartDiffAccept(badRequest, "/api/changesets/detail/chart-diff", "*/*")
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rr.Code)
@@ -398,8 +398,8 @@ func TestChartDiffHandler_SecurityHeadersSetOnEveryRepresentation(t *testing.T) 
 	t.Parallel()
 
 	ok := newChartDiffHandlerForOutcome(chartdiff.Outcome{Kind: chartdiff.OK})
-	notFound := web.NewChartDiffHandler(&spyChartDiffEngine{}, &spyChartRepoResolver{}, neverFoundChecker())
-	badRequest := web.NewChartDiffHandler(&spyChartDiffEngine{}, &spyChartRepoResolver{}, &fakeChangesetExistenceChecker{})
+	notFound := web.NewChartDiffHandler(&spyChartDiffEngine{}, &spyRepoResolver{}, neverFoundChecker())
+	badRequest := web.NewChartDiffHandler(&spyChartDiffEngine{}, &spyRepoResolver{}, &fakeChangesetExistenceChecker{})
 
 	cases := []struct {
 		name   string

@@ -41,6 +41,7 @@ import (
 	"github.com/dackota/change-tracking-dashboard/internal/pollstatus"
 	"github.com/dackota/change-tracking-dashboard/internal/scheduler"
 	"github.com/dackota/change-tracking-dashboard/internal/store"
+	"github.com/dackota/change-tracking-dashboard/internal/subtree"
 	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
 	"github.com/dackota/change-tracking-dashboard/internal/web"
 	gogithttp "github.com/go-git/go-git/v5/plumbing/transport/http"
@@ -364,26 +365,12 @@ func (c *sourceCache) get(repo string) (*gitsource.Source, error) {
 	return cs.src, nil
 }
 
-// ResolveChartRepo adapts sourceCache.get to web.ChartRepoResolver, letting
-// the chart-diff handler resolve/clone a repo via the same source cache
+// ResolveRepo adapts sourceCache.get to subtree.Resolver, letting both
+// on-demand diff handlers resolve/clone a repo via the same source cache
 // every poller and the timeline detail handler use. *gitsource.Source
-// already satisfies chartdiff.ChartRepo directly, so no further wrapping is
-// needed beyond the interface conversion.
-func (c *sourceCache) ResolveChartRepo(repo string) (chartdiff.ChartRepo, error) {
-	src, err := c.get(repo)
-	if err != nil {
-		return nil, err
-	}
-	return src, nil
-}
-
-// ResolvePlanRepo adapts sourceCache.get to web.PlanRepoResolver, letting
-// the plan-diff handler resolve/clone a repo via the same source cache
-// every poller, the chart-diff handler, and the timeline detail handler
-// use. *gitsource.Source already satisfies plandiff.PlanRepo directly (the
-// same two methods chartdiff.ChartRepo requires), so no further wrapping is
-// needed beyond the interface conversion.
-func (c *sourceCache) ResolvePlanRepo(repo string) (plandiff.PlanRepo, error) {
+// already satisfies subtree.Repo directly, so no further wrapping is needed
+// beyond the interface conversion.
+func (c *sourceCache) ResolveRepo(repo string) (subtree.Repo, error) {
 	src, err := c.get(repo)
 	if err != nil {
 		return nil, err

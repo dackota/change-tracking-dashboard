@@ -10,8 +10,8 @@ import (
 
 	"github.com/dackota/change-tracking-dashboard/internal/changeset"
 	"github.com/dackota/change-tracking-dashboard/internal/domain"
-	"github.com/dackota/change-tracking-dashboard/internal/gitsource"
 	"github.com/dackota/change-tracking-dashboard/internal/plandiff"
+	"github.com/dackota/change-tracking-dashboard/internal/subtree"
 	"github.com/dackota/change-tracking-dashboard/internal/web"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
@@ -19,34 +19,18 @@ import (
 
 // fakePlanDiffEngine is a web.PlanDiffEngine test double.
 type fakePlanDiffEngine struct {
-	fn     func(ctx context.Context, repo plandiff.PlanRepo, req plandiff.Request) plandiff.Outcome
+	fn     func(ctx context.Context, repo subtree.Repo, req plandiff.Request) plandiff.Outcome
 	called bool
 }
 
-func (f *fakePlanDiffEngine) Diff(ctx context.Context, repo plandiff.PlanRepo, req plandiff.Request) plandiff.Outcome {
+func (f *fakePlanDiffEngine) Diff(ctx context.Context, repo subtree.Repo, req plandiff.Request) plandiff.Outcome {
 	f.called = true
 	return f.fn(ctx, repo, req)
 }
 
-// fakePlanRepoResolver is a web.PlanRepoResolver test double.
-type fakePlanRepoResolver struct {
-	fn     func(repo string) (plandiff.PlanRepo, error)
-	called bool
-}
-
-func (f *fakePlanRepoResolver) ResolvePlanRepo(repo string) (plandiff.PlanRepo, error) {
-	f.called = true
-	return f.fn(repo)
-}
-
-// stubPlanRepo is a minimal plandiff.PlanRepo used where the resolver must
-// succeed but the fake engine never actually calls its methods.
-type stubPlanRepo struct{}
-
-func (stubPlanRepo) FirstParent(string) (string, error) { return "", nil }
-func (stubPlanRepo) MaterializeSubtreeBounded(string, string, string, gitsource.MaterializeBounds) error {
-	return nil
-}
+// The plan-diff handler takes the same subtree.Resolver as the chart-diff
+// handler, so it reuses fakeRepoResolver/spyRepoResolver/stubRepo from
+// chart_diff_test.go rather than declaring its own identical doubles.
 
 const defaultPlanDiffURL = "/api/changesets/detail/plan-diff?repo=r&commitSha=sha&path=envs/prod"
 
@@ -60,8 +44,8 @@ func alwaysFoundTerraformChecker() *fakeChangesetExistenceChecker {
 }
 
 func newPlanDiffHandlerForOutcome(outcome plandiff.Outcome) *web.PlanDiffHandler {
-	engine := &fakePlanDiffEngine{fn: func(context.Context, plandiff.PlanRepo, plandiff.Request) plandiff.Outcome { return outcome }}
-	resolver := &fakePlanRepoResolver{fn: func(string) (plandiff.PlanRepo, error) { return stubPlanRepo{}, nil }}
+	engine := &fakePlanDiffEngine{fn: func(context.Context, subtree.Repo, plandiff.Request) plandiff.Outcome { return outcome }}
+	resolver := &fakeRepoResolver{fn: func(string) (subtree.Repo, error) { return stubRepo{}, nil }}
 	return web.NewPlanDiffHandler(engine, resolver, alwaysFoundTerraformChecker())
 }
 
@@ -77,7 +61,7 @@ func servePlanDiff(h http.Handler, url string) *httptest.ResponseRecorder {
 func TestPlanDiffHandler_MissingRequiredParam_Returns400Generic(t *testing.T) {
 	t.Parallel()
 
-	h := web.NewPlanDiffHandler(&fakePlanDiffEngine{}, &fakePlanRepoResolver{}, &fakeChangesetExistenceChecker{})
+	h := web.NewPlanDiffHandler(&fakePlanDiffEngine{}, &fakeRepoResolver{}, &fakeChangesetExistenceChecker{})
 
 	cases := []string{
 		"/api/changesets/detail/plan-diff?commitSha=sha&path=envs/prod",
@@ -100,8 +84,8 @@ func TestPlanDiffHandler_MissingRequiredParam_Returns400Generic(t *testing.T) {
 func TestPlanDiffHandler_UnknownChangeset_RejectsWithoutReachingResolverOrEngine(t *testing.T) {
 	t.Parallel()
 
-	resolver := &fakePlanRepoResolver{fn: func(string) (plandiff.PlanRepo, error) { return stubPlanRepo{}, nil }}
-	engine := &fakePlanDiffEngine{fn: func(context.Context, plandiff.PlanRepo, plandiff.Request) plandiff.Outcome {
+	resolver := &fakeRepoResolver{fn: func(string) (subtree.Repo, error) { return stubRepo{}, nil }}
+	engine := &fakePlanDiffEngine{fn: func(context.Context, subtree.Repo, plandiff.Request) plandiff.Outcome {
 		return plandiff.Outcome{Kind: plandiff.OK}
 	}}
 	checker := &fakeChangesetExistenceChecker{fn: func(string, string) (changeset.Changeset, bool, error) {
@@ -126,8 +110,8 @@ func TestPlanDiffHandler_UnknownChangeset_RejectsWithoutReachingResolverOrEngine
 func TestPlanDiffHandler_PathNotTerraformKind_RejectsWithoutReachingResolverOrEngine(t *testing.T) {
 	t.Parallel()
 
-	resolver := &fakePlanRepoResolver{fn: func(string) (plandiff.PlanRepo, error) { return stubPlanRepo{}, nil }}
-	engine := &fakePlanDiffEngine{fn: func(context.Context, plandiff.PlanRepo, plandiff.Request) plandiff.Outcome {
+	resolver := &fakeRepoResolver{fn: func(string) (subtree.Repo, error) { return stubRepo{}, nil }}
+	engine := &fakePlanDiffEngine{fn: func(context.Context, subtree.Repo, plandiff.Request) plandiff.Outcome {
 		return plandiff.Outcome{Kind: plandiff.OK}
 	}}
 	cs := changeset.Changeset{Changes: []changeset.Change{
@@ -154,7 +138,7 @@ func TestPlanDiffHandler_ResolverFailure_Returns500GenericWithoutLeakingDetail(t
 	t.Parallel()
 
 	sentinel := errors.New("clone failed: /var/secret/internal/path unreachable")
-	resolver := &fakePlanRepoResolver{fn: func(string) (plandiff.PlanRepo, error) { return nil, sentinel }}
+	resolver := &fakeRepoResolver{fn: func(string) (subtree.Repo, error) { return nil, sentinel }}
 	h := web.NewPlanDiffHandler(&fakePlanDiffEngine{}, resolver, alwaysFoundTerraformChecker())
 
 	rr := servePlanDiff(h, defaultPlanDiffURL)

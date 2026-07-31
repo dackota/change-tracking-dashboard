@@ -104,7 +104,7 @@ type Config struct {
 	// visit, passed through to gitsource.MaterializeBounds.MaxTreeNodes.
 	MaxMaterializedNodes int
 	// MaterializeTimeout bounds a single
-	// ChartRepo.MaterializeSubtreeBounded call — the sibling bound to
+	// subtree.Repo.MaterializeSubtreeBounded call — the sibling bound to
 	// RenderTimeout for the other half of a Chart diff's per-side work.
 	// Materialize and render have different resource profiles (a
 	// disk/CPU tree walk vs. a Helm template execution), but both are

@@ -54,6 +54,7 @@ import (
 	"github.com/dackota/change-tracking-dashboard/internal/gitsource"
 	"github.com/dackota/change-tracking-dashboard/internal/pollstatus"
 	"github.com/dackota/change-tracking-dashboard/internal/store"
+	"github.com/dackota/change-tracking-dashboard/internal/subtree"
 	"github.com/dackota/change-tracking-dashboard/internal/web"
 )
 
@@ -182,7 +183,7 @@ func newRegressionServer(t *testing.T) (*httptest.Server, string) {
 	if err != nil {
 		t.Fatalf("chartdiff.NewEngine: %v", err)
 	}
-	resolver := &fakeChartRepoResolver{fn: func(repo string) (chartdiff.ChartRepo, error) {
+	resolver := &fakeRepoResolver{fn: func(repo string) (subtree.Repo, error) {
 		src, err := gitsource.Open(repo)
 		if err != nil {
 			return nil, err

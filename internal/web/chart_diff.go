@@ -14,6 +14,7 @@ import (
 
 	"github.com/dackota/change-tracking-dashboard/internal/changeset"
 	"github.com/dackota/change-tracking-dashboard/internal/chartdiff"
+	"github.com/dackota/change-tracking-dashboard/internal/subtree"
 	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
 )
 
@@ -21,16 +22,7 @@ import (
 // *chartdiff.Engine satisfies this directly; tests inject a fake to exercise
 // each classified message without a real Helm render.
 type ChartDiffEngine interface {
-	Diff(ctx context.Context, repo chartdiff.ChartRepo, req chartdiff.Request) chartdiff.Outcome
-}
-
-// ChartRepoResolver resolves a repo name (as carried on a Change/Changeset)
-// to a chartdiff.ChartRepo for a single Chart diff computation.
-// cmd/dashboard's sourceCache satisfies this via a small adapter over its
-// existing get method — defined here, at the point of use, per this
-// project's small-interfaces convention.
-type ChartRepoResolver interface {
-	ResolveChartRepo(repo string) (chartdiff.ChartRepo, error)
+	Diff(ctx context.Context, repo subtree.Repo, req chartdiff.Request) chartdiff.Outcome
 }
 
 // ChangesetExistenceChecker reports whether (repo, commitSha) is a real,
@@ -38,7 +30,7 @@ type ChartRepoResolver interface {
 // GetChangeset method.
 //
 // This is the endpoint's security boundary: repo and commitSha arrive on an
-// unauthenticated HTTP request, so they must never reach ChartRepoResolver
+// unauthenticated HTTP request, so they must never reach the subtree.Resolver
 // (and, behind it, cmd/dashboard's sourceCache — which clones/fetches
 // arbitrary git URLs, attaches the live GitHub App installation token to
 // "https://" URLs, and PlainOpens arbitrary local paths) unless the pair is
@@ -52,7 +44,7 @@ type ChangesetExistenceChecker interface {
 // server-rendered HTML fragment.
 type ChartDiffHandler struct {
 	engine   ChartDiffEngine
-	resolver ChartRepoResolver
+	resolver subtree.Resolver
 	checker  ChangesetExistenceChecker
 }
 
@@ -60,7 +52,7 @@ type ChartDiffHandler struct {
 // and checker. checker gates every request: resolver/engine only ever run
 // for a (repo, commitSha) pair checker confirms is an already-ingested
 // Changeset.
-func NewChartDiffHandler(engine ChartDiffEngine, resolver ChartRepoResolver, checker ChangesetExistenceChecker) *ChartDiffHandler {
+func NewChartDiffHandler(engine ChartDiffEngine, resolver subtree.Resolver, checker ChangesetExistenceChecker) *ChartDiffHandler {
 	return &ChartDiffHandler{engine: engine, resolver: resolver, checker: checker}
 }
 
@@ -86,7 +78,7 @@ func (h *ChartDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Security gate: repo/commitSha are unauthenticated, caller-supplied
-	// input. Only proceed to ResolveChartRepo (and the git clone/fetch/
+	// input. Only proceed to ResolveRepo (and the git clone/fetch/
 	// PlainOpen it can trigger) once we've confirmed this exact pair is a
 	// Changeset the poller already ingested from trusted tracker config —
 	// never a repo string an attacker invented on the request. That alone is
@@ -121,10 +113,10 @@ func (h *ChartDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var chartRepo chartdiff.ChartRepo
+	var chartRepo subtree.Repo
 	err = telemetry.WithSpan(r.Context(), tracer, "gitsource.resolve_chart_repo", func(context.Context) error {
 		var err error
-		chartRepo, err = h.resolver.ResolveChartRepo(repo)
+		chartRepo, err = h.resolver.ResolveRepo(repo)
 		return err
 	})
 	if err != nil {

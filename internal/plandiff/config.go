@@ -112,7 +112,7 @@ type Config struct {
 	// and directories combined) a single stack/module subtree
 	// materialization may visit.
 	MaxMaterializedNodes int
-	// MaterializeTimeout bounds a single PlanRepo.MaterializeSubtreeBounded
+	// MaterializeTimeout bounds a single subtree.Repo.MaterializeSubtreeBounded
 	// call.
 	MaterializeTimeout time.Duration
 	// MaterializeConcurrencyCap bounds how many materializations may run

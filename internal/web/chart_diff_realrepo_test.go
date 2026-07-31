@@ -13,6 +13,7 @@ import (
 	"github.com/dackota/change-tracking-dashboard/internal/chartdiff"
 	"github.com/dackota/change-tracking-dashboard/internal/domain"
 	"github.com/dackota/change-tracking-dashboard/internal/gitsource"
+	"github.com/dackota/change-tracking-dashboard/internal/subtree"
 	"github.com/dackota/change-tracking-dashboard/internal/web"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
@@ -211,7 +212,7 @@ func TestChartDiffHandler_RealRepo_SuccessPath_DepBumpAndVendoredChartSwap(t *te
 		t.Fatalf("seed matching changeset: %v", err)
 	}
 
-	resolver := &fakeChartRepoResolver{fn: func(string) (chartdiff.ChartRepo, error) { return src, nil }}
+	resolver := &fakeRepoResolver{fn: func(string) (subtree.Repo, error) { return src, nil }}
 	h := web.NewChartDiffHandler(engine, resolver, st)
 
 	url := "/api/changesets/detail/chart-diff?repo=tenant-repo&commitSha=" + sha2 + "&path=tenant"

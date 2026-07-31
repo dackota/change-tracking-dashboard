@@ -4,7 +4,7 @@
 // "type" "name" { ... }` block into a Resource — no cloud SDK, no
 // `terraform` binary, no state or credentials of any kind are ever touched
 // (acceptance criterion 3): this file's only inputs are the bytes
-// PlanRepo.MaterializeSubtreeBounded already wrote to local disk, and its
+// subtree.Repo.MaterializeSubtreeBounded already wrote to local disk, and its
 // only external dependency is the hashicorp/hcl/v2 parser used purely
 // in-process.
 package plandiff

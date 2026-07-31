@@ -18,6 +18,7 @@ import (
 	"github.com/dackota/change-tracking-dashboard/internal/domain"
 	"github.com/dackota/change-tracking-dashboard/internal/gitsource"
 	"github.com/dackota/change-tracking-dashboard/internal/manifestdiff"
+	"github.com/dackota/change-tracking-dashboard/internal/subtree"
 	"github.com/dackota/change-tracking-dashboard/internal/web"
 )
 
@@ -25,28 +26,34 @@ import (
 // a caller-supplied func, so each test configures exactly the Outcome it
 // needs without a real Helm render.
 type fakeChartDiffEngine struct {
-	fn func(ctx context.Context, repo chartdiff.ChartRepo, req chartdiff.Request) chartdiff.Outcome
+	fn func(ctx context.Context, repo subtree.Repo, req chartdiff.Request) chartdiff.Outcome
 }
 
-func (f *fakeChartDiffEngine) Diff(ctx context.Context, repo chartdiff.ChartRepo, req chartdiff.Request) chartdiff.Outcome {
+func (f *fakeChartDiffEngine) Diff(ctx context.Context, repo subtree.Repo, req chartdiff.Request) chartdiff.Outcome {
 	return f.fn(ctx, repo, req)
 }
 
-// fakeChartRepoResolver is a web.ChartRepoResolver test double.
-type fakeChartRepoResolver struct {
-	fn func(repo string) (chartdiff.ChartRepo, error)
+// fakeRepoResolver is a subtree.Resolver test double, shared by the chart-
+// diff and plan-diff handler tests (both handlers take the same resolver
+// interface). The zero value (fn nil) panics if invoked — relied on by the
+// request-validation tests to prove the handler short-circuits before the
+// resolver is ever reached.
+type fakeRepoResolver struct {
+	fn     func(repo string) (subtree.Repo, error)
+	called bool
 }
 
-func (f *fakeChartRepoResolver) ResolveChartRepo(repo string) (chartdiff.ChartRepo, error) {
+func (f *fakeRepoResolver) ResolveRepo(repo string) (subtree.Repo, error) {
+	f.called = true
 	return f.fn(repo)
 }
 
-// stubChartRepo is a minimal chartdiff.ChartRepo used where the resolver
-// must succeed but the fake engine never actually calls its methods.
-type stubChartRepo struct{}
+// stubRepo is a minimal subtree.Repo used where the resolver must succeed but
+// the fake engine never actually calls its methods.
+type stubRepo struct{}
 
-func (stubChartRepo) FirstParent(string) (string, error) { return "", nil }
-func (stubChartRepo) MaterializeSubtreeBounded(string, string, string, gitsource.MaterializeBounds) error {
+func (stubRepo) FirstParent(string) (string, error) { return "", nil }
+func (stubRepo) MaterializeSubtreeBounded(string, string, string, gitsource.MaterializeBounds) error {
 	return nil
 }
 
@@ -85,26 +92,27 @@ func neverFoundChecker() *fakeChangesetExistenceChecker {
 	}}
 }
 
-// spyChartRepoResolver is a web.ChartRepoResolver test double that records
+// spyRepoResolver is a subtree.Resolver test double that succeeds and records
 // whether it was ever invoked — used to prove the existence gate short-
-// circuits before ResolveChartRepo runs, not just that the HTTP response
-// looks right.
-type spyChartRepoResolver struct {
+// circuits before ResolveRepo runs, not just that the HTTP response
+// looks right. Unlike fakeRepoResolver it never panics, so "was it called"
+// is the assertion rather than a panic.
+type spyRepoResolver struct {
 	called bool
 }
 
-func (s *spyChartRepoResolver) ResolveChartRepo(string) (chartdiff.ChartRepo, error) {
+func (s *spyRepoResolver) ResolveRepo(string) (subtree.Repo, error) {
 	s.called = true
-	return stubChartRepo{}, nil
+	return stubRepo{}, nil
 }
 
 // spyChartDiffEngine is a web.ChartDiffEngine test double that records
-// whether it was ever invoked, for the same reason as spyChartRepoResolver.
+// whether it was ever invoked, for the same reason as spyRepoResolver.
 type spyChartDiffEngine struct {
 	called bool
 }
 
-func (s *spyChartDiffEngine) Diff(context.Context, chartdiff.ChartRepo, chartdiff.Request) chartdiff.Outcome {
+func (s *spyChartDiffEngine) Diff(context.Context, subtree.Repo, chartdiff.Request) chartdiff.Outcome {
 	s.called = true
 	return chartdiff.Outcome{Kind: chartdiff.OK}
 }
@@ -118,8 +126,8 @@ const defaultChartDiffURL = "/api/changesets/detail/chart-diff?repo=r&commitSha=
 // repo — the common shape for every test below that only cares about how one
 // Outcome renders, not about request validation or resolver failure.
 func newChartDiffHandlerForOutcome(outcome chartdiff.Outcome) *web.ChartDiffHandler {
-	engine := &fakeChartDiffEngine{fn: func(context.Context, chartdiff.ChartRepo, chartdiff.Request) chartdiff.Outcome { return outcome }}
-	resolver := &fakeChartRepoResolver{fn: func(string) (chartdiff.ChartRepo, error) { return stubChartRepo{}, nil }}
+	engine := &fakeChartDiffEngine{fn: func(context.Context, subtree.Repo, chartdiff.Request) chartdiff.Outcome { return outcome }}
+	resolver := &fakeRepoResolver{fn: func(string) (subtree.Repo, error) { return stubRepo{}, nil }}
 	return web.NewChartDiffHandler(engine, resolver, alwaysFoundChecker())
 }
 
@@ -142,7 +150,7 @@ func TestChartDiffHandler_MissingRequiredParam_Returns400Generic(t *testing.T) {
 	t.Parallel()
 
 	engine := &fakeChartDiffEngine{}
-	resolver := &fakeChartRepoResolver{}
+	resolver := &fakeRepoResolver{}
 	checker := &fakeChangesetExistenceChecker{}
 	h := web.NewChartDiffHandler(engine, resolver, checker)
 
@@ -171,7 +179,7 @@ func TestChartDiffHandler_MissingRequiredParam_Returns400Generic(t *testing.T) {
 }
 
 // TestChartDiffHandler_ResolverFailure_Returns500GenericWithoutLeakingDetail
-// verifies that a ChartRepoResolver failure (e.g. a clone error) surfaces as
+// verifies that a subtree.Resolver failure (e.g. a clone error) surfaces as
 // a generic 500 — the underlying error text (which could embed a local
 // filesystem path, a clone URL, or another internal detail) must never reach
 // the response body.
@@ -180,7 +188,7 @@ func TestChartDiffHandler_ResolverFailure_Returns500GenericWithoutLeakingDetail(
 
 	engine := &fakeChartDiffEngine{}
 	sentinel := errors.New("clone failed: /var/secret/internal/path unreachable")
-	resolver := &fakeChartRepoResolver{fn: func(string) (chartdiff.ChartRepo, error) { return nil, sentinel }}
+	resolver := &fakeRepoResolver{fn: func(string) (subtree.Repo, error) { return nil, sentinel }}
 	h := web.NewChartDiffHandler(engine, resolver, alwaysFoundChecker())
 
 	rr := serveChartDiff(h, defaultChartDiffURL)
@@ -200,13 +208,13 @@ func TestChartDiffHandler_ResolverFailure_Returns500GenericWithoutLeakingDetail(
 // TestChartDiffHandler_ExistenceCheckError_Returns500GenericWithoutLeakingDetail
 // verifies that a ChangesetExistenceChecker failure (e.g. a store error)
 // surfaces as a generic 500 without leaking the underlying error text, and —
-// critically — never falls through to ResolveChartRepo/Diff on a checker
+// critically — never falls through to ResolveRepo/Diff on a checker
 // error. A checker error means we could not confirm trust, so it must fail
 // closed, not open.
 func TestChartDiffHandler_ExistenceCheckError_Returns500GenericWithoutLeakingDetailAndNeverReachesResolver(t *testing.T) {
 	t.Parallel()
 
-	resolver := &spyChartRepoResolver{}
+	resolver := &spyRepoResolver{}
 	engine := &spyChartDiffEngine{}
 	sentinel := errors.New("store: query changeset: disk I/O error at /var/lib/db/changes.db")
 	checker := &fakeChangesetExistenceChecker{fn: func(string, string) (changeset.Changeset, bool, error) {
@@ -227,7 +235,7 @@ func TestChartDiffHandler_ExistenceCheckError_Returns500GenericWithoutLeakingDet
 		t.Errorf("error body leaks internal detail: %q", body)
 	}
 	if resolver.called {
-		t.Error("ResolveChartRepo was called despite a checker error — must fail closed")
+		t.Error("ResolveRepo was called despite a checker error — must fail closed")
 	}
 	if engine.called {
 		t.Error("engine.Diff was called despite a checker error — must fail closed")
@@ -236,7 +244,7 @@ func TestChartDiffHandler_ExistenceCheckError_Returns500GenericWithoutLeakingDet
 
 // TestChartDiffHandler_UnknownChangeset_RejectsWithoutReachingResolverOrEngine
 // is the core regression test for the CRITICAL finding: repo/commitSha arrive
-// on an unauthenticated request, so ChartRepoResolver (and, behind it,
+// on an unauthenticated request, so the subtree.Resolver (and, behind it,
 // cmd/dashboard's sourceCache — git clone/fetch of an arbitrary URL, GitHub
 // App token attachment, or PlainOpen of an arbitrary local path) must never
 // run for a (repo, commitSha) pair that isn't a real, already-ingested
@@ -265,7 +273,7 @@ func TestChartDiffHandler_UnknownChangeset_RejectsWithoutReachingResolverOrEngin
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			resolver := &spyChartRepoResolver{}
+			resolver := &spyRepoResolver{}
 			engine := &spyChartDiffEngine{}
 			h := web.NewChartDiffHandler(engine, resolver, neverFoundChecker())
 
@@ -278,7 +286,7 @@ func TestChartDiffHandler_UnknownChangeset_RejectsWithoutReachingResolverOrEngin
 			rr := serveChartDiff(h, reqURL)
 
 			if resolver.called {
-				t.Error("ResolveChartRepo was called for a never-ingested (repo, commitSha) pair — security gate bypassed")
+				t.Error("ResolveRepo was called for a never-ingested (repo, commitSha) pair — security gate bypassed")
 			}
 			if engine.called {
 				t.Error("engine.Diff was called for a never-ingested (repo, commitSha) pair — security gate bypassed")
@@ -332,7 +340,7 @@ func TestChartDiffHandler_PathNotInChangeset_RejectsWithoutReachingResolverOrEng
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			resolver := &spyChartRepoResolver{}
+			resolver := &spyRepoResolver{}
 			engine := &spyChartDiffEngine{}
 			checker := &fakeChangesetExistenceChecker{fn: func(string, string) (changeset.Changeset, bool, error) {
 				return tc.changeset, true, nil
@@ -348,7 +356,7 @@ func TestChartDiffHandler_PathNotInChangeset_RejectsWithoutReachingResolverOrEng
 			rr := serveChartDiff(h, reqURL)
 
 			if resolver.called {
-				t.Error("ResolveChartRepo was called for a path with no matching chart-kind Change — security gate bypassed")
+				t.Error("ResolveRepo was called for a path with no matching chart-kind Change — security gate bypassed")
 			}
 			if engine.called {
 				t.Error("engine.Diff was called for a path with no matching chart-kind Change — security gate bypassed")
@@ -404,7 +412,7 @@ func TestChartDiffHandler_NeverIngestedRepoCommitPair_NeverReachesResolverOrEngi
 	t.Parallel()
 
 	property := func(pair unknownRepoCommitPair) bool {
-		resolver := &spyChartRepoResolver{}
+		resolver := &spyRepoResolver{}
 		engine := &spyChartDiffEngine{}
 		h := web.NewChartDiffHandler(engine, resolver, neverFoundChecker())
 
@@ -502,7 +510,7 @@ func TestChartDiffHandler_KnownChangesetWrongPath_NeverReachesResolverOrEngine_P
 	t.Parallel()
 
 	property := func(attempt wrongPathAttempt) bool {
-		resolver := &spyChartRepoResolver{}
+		resolver := &spyRepoResolver{}
 		engine := &spyChartDiffEngine{}
 		checker := &fakeChangesetExistenceChecker{fn: func(string, string) (changeset.Changeset, bool, error) {
 			return attempt.cs, true, nil
@@ -540,12 +548,12 @@ func TestChartDiffHandler_KnownChangesetWrongPath_NeverReachesResolverOrEngine_P
 func TestChartDiffHandler_UnknownCommitAndKnownCommitWrongPath_Produce404sIndistinguishable(t *testing.T) {
 	t.Parallel()
 
-	unknownCommitHandler := web.NewChartDiffHandler(&spyChartDiffEngine{}, &spyChartRepoResolver{}, neverFoundChecker())
+	unknownCommitHandler := web.NewChartDiffHandler(&spyChartDiffEngine{}, &spyRepoResolver{}, neverFoundChecker())
 
 	wrongPathChecker := &fakeChangesetExistenceChecker{fn: func(string, string) (changeset.Changeset, bool, error) {
 		return changeset.Changeset{}, true, nil // found, but no Changes at all -> no path match
 	}}
-	knownCommitWrongPathHandler := web.NewChartDiffHandler(&spyChartDiffEngine{}, &spyChartRepoResolver{}, wrongPathChecker)
+	knownCommitWrongPathHandler := web.NewChartDiffHandler(&spyChartDiffEngine{}, &spyRepoResolver{}, wrongPathChecker)
 
 	unknownRR := serveChartDiff(unknownCommitHandler, defaultChartDiffURL)
 	wrongPathRR := serveChartDiff(knownCommitWrongPathHandler, defaultChartDiffURL)
@@ -703,7 +711,7 @@ func TestChartDiffHandler_SecurityHeaders_PresentOnEveryResponse(t *testing.T) {
 
 	okHandler := newChartDiffHandlerForOutcome(chartdiff.Outcome{Kind: chartdiff.OK})
 	failEngine := &fakeChartDiffEngine{}
-	failResolver := &fakeChartRepoResolver{fn: func(string) (chartdiff.ChartRepo, error) { return nil, errors.New("boom") }}
+	failResolver := &fakeRepoResolver{fn: func(string) (subtree.Repo, error) { return nil, errors.New("boom") }}
 	failHandler := web.NewChartDiffHandler(failEngine, failResolver, alwaysFoundChecker())
 
 	cases := []struct {
