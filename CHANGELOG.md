@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.16.0...app-v0.17.0) (2026-07-31)
+
+
+### Features
+
+* **api:** negotiate JSON representations for chart-diff and plan-diff ([#160](https://github.com/dackota/change-tracking-dashboard/issues/160)) ([4445821](https://github.com/dackota/change-tracking-dashboard/commit/44458210d8a15fcd29d9c314670fc7f7a9e9e9be)), closes [#151](https://github.com/dackota/change-tracking-dashboard/issues/151) [#152](https://github.com/dackota/change-tracking-dashboard/issues/152)
+
 ## [0.16.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.15.0...app-v0.16.0) (2026-07-31)
 
 
