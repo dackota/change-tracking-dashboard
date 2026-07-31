@@ -463,7 +463,14 @@ func toRiskStrings(risks []changeset.Risk) []string {
 	return out
 }
 
-// writeJSON marshals v and writes it with the given status code.
+// writeJSON marshals v and writes it with the given status code, setting the
+// Content-Type itself.
+//
+// Owning the header here rather than relying on the caller to have set it is
+// what makes this safe for handlers that choose their representation at render
+// time: a negotiated handler cannot know at the top of ServeHTTP whether it
+// will emit JSON, and a Content-Type set before the body is chosen is a
+// Content-Type that will eventually describe the wrong body.
 func writeJSON(r *http.Request, w http.ResponseWriter, status int, v any) {
 	body, err := json.Marshal(v)
 	if err != nil {
@@ -471,6 +478,7 @@ func writeJSON(r *http.Request, w http.ResponseWriter, status int, v any) {
 		http.Error(w, genericServerErrorMsg, http.StatusInternalServerError)
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if _, err := w.Write(body); err != nil {
 		// The status code is already on the wire, so there is nothing to do but
