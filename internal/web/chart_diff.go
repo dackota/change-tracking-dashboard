@@ -10,10 +10,10 @@ package web
 import (
 	"context"
 	"net/http"
-	"path"
 
 	"github.com/dackota/change-tracking-dashboard/internal/changeset"
 	"github.com/dackota/change-tracking-dashboard/internal/chartdiff"
+	"github.com/dackota/change-tracking-dashboard/internal/domain"
 	"github.com/dackota/change-tracking-dashboard/internal/subtree"
 	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
 )
@@ -71,7 +71,7 @@ func (h *ChartDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	repo := r.URL.Query().Get("repo")
 	commitSha := r.URL.Query().Get("commitSha")
-	tenantPath := r.URL.Query().Get("path")
+	tenantPath := domain.ParseTenantPath(r.URL.Query().Get("path"))
 	if repo == "" || commitSha == "" || tenantPath == "" {
 		writeDetailError(r, w, json, http.StatusBadRequest, genericBadRequestMsg)
 		return
@@ -127,7 +127,7 @@ func (h *ChartDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	outcome := h.engine.Diff(r.Context(), chartRepo, chartdiff.Request{
 		RepoName:   repo,
-		TenantPath: tenantPath,
+		TenantPath: tenantPath.String(),
 		CommitSha:  commitSha,
 	})
 
@@ -150,15 +150,20 @@ func (h *ChartDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // tenants — tenantPath must name a directory this specific changeset actually
 // recorded a chart change for.
 //
-// The directory is taken with path.Dir, not filepath.Dir: Change.FilePath is a
-// git path, which is forward-slash separated on every platform. filepath.Dir
-// would rewrite the separator to "\" on Windows, so a caller sending the
-// documented forward-slash spelling would be refused — indistinguishably from
-// an unknown changeset, and so with no signal about why. See
-// changeset_detail_render.go, which must derive tenantPath the same way.
-func hasChartChangeAt(cs changeset.Changeset, tenantPath string) bool {
+// The directory comes from domain.TenantPathOf — the same derivation
+// changeset_detail_render.go renders into data-tenant-path — so the value
+// authorized here and the value offered to the client cannot drift. See that
+// function for why the derivation is subtle enough to be worth centralizing.
+func hasChartChangeAt(cs changeset.Changeset, tenantPath domain.TenantPath) bool {
+	return hasChangeAt(cs, tenantPath, func(k changeset.Kind) bool { return k == changeset.KindChart })
+}
+
+// hasChangeAt reports whether cs carries a Change at tenantPath whose Kind
+// satisfies kindMatches. It is the shared body of both diff endpoints'
+// authorization gates, which differ only in that predicate.
+func hasChangeAt(cs changeset.Changeset, tenantPath domain.TenantPath, kindMatches func(changeset.Kind) bool) bool {
 	for _, c := range cs.Changes {
-		if c.Kind == changeset.KindChart && path.Dir(c.FilePath) == tenantPath {
+		if kindMatches(c.Kind) && domain.TenantPathOf(c.Change) == tenantPath {
 			return true
 		}
 	}

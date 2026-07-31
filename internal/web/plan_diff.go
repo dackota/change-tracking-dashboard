@@ -13,9 +13,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"path"
 
 	"github.com/dackota/change-tracking-dashboard/internal/changeset"
+	"github.com/dackota/change-tracking-dashboard/internal/domain"
 	"github.com/dackota/change-tracking-dashboard/internal/plandiff"
 	"github.com/dackota/change-tracking-dashboard/internal/subtree"
 	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
@@ -62,7 +62,7 @@ func (h *PlanDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	repo := r.URL.Query().Get("repo")
 	commitSha := r.URL.Query().Get("commitSha")
-	tenantPath := r.URL.Query().Get("path")
+	tenantPath := domain.ParseTenantPath(r.URL.Query().Get("path"))
 	if repo == "" || commitSha == "" || tenantPath == "" {
 		writeDetailError(r, w, asJSON, http.StatusBadRequest, genericBadRequestMsg)
 		return
@@ -115,7 +115,7 @@ func (h *PlanDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = telemetry.WithSpan(r.Context(), tracer, "plandiff.diff", func(ctx context.Context) error {
 		outcome = h.engine.Diff(ctx, planRepo, plandiff.Request{
 			RepoName:   repo,
-			TenantPath: tenantPath,
+			TenantPath: tenantPath.String(),
 			CommitSha:  commitSha,
 		})
 		return planDiffSpanError(outcome.Kind)
@@ -149,13 +149,7 @@ func planDiffSpanError(kind plandiff.Kind) error {
 // hasTerraformChangeAt reports whether cs contains at least one
 // Terraform-kind Change (c.Kind.IsTerraform()) whose own source file
 // directory equals tenantPath. Mirrors hasChartChangeAt's identical
-// authorization role — including its use of path.Dir over filepath.Dir — for
-// the sibling chart-diff endpoint.
-func hasTerraformChangeAt(cs changeset.Changeset, tenantPath string) bool {
-	for _, c := range cs.Changes {
-		if c.Kind.IsTerraform() && path.Dir(c.FilePath) == tenantPath {
-			return true
-		}
-	}
-	return false
+// authorization role for the sibling chart-diff endpoint.
+func hasTerraformChangeAt(cs changeset.Changeset, tenantPath domain.TenantPath) bool {
+	return hasChangeAt(cs, tenantPath, changeset.Kind.IsTerraform)
 }

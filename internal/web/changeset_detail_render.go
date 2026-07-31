@@ -14,12 +14,12 @@ import (
 	"fmt"
 	"html/template"
 	"io"
-	"path"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/dackota/change-tracking-dashboard/internal/changeset"
+	"github.com/dackota/change-tracking-dashboard/internal/domain"
 )
 
 // gitSuffixPattern matches a trailing ".git" suffix together with any
@@ -125,26 +125,20 @@ var terraformChangeTemplate = template.Must(chartChangeTemplate.New("terraform-c
 </li>
 `))
 
-// changeView is a classified Change plus TenantPath: the directory of the
-// Change's own FilePath (path.Dir), matching the PRD's "Rendering
-// basis" — the tenant chart directory is the directory of the chart
-// Change's source file — and how GET /api/changesets/detail/chart-diff's
-// own TenantPath is documented to be derived. html/template has no
-// path.Dir function of its own, so this is computed here, once, before
+// changeView is a classified Change plus its domain.TenantPath — the
+// directory of the Change's own source file, which is the tenant chart
+// directory for a Helm change and the stack directory for a Terraform one.
+// html/template has no path.Dir of its own, so this is computed once, before
 // Execute, rather than in the template language.
 //
-// path.Dir, not filepath.Dir: FilePath is a git path and so is forward-slash
-// separated on every platform, whereas filepath.Dir rewrites the separator to
-// "\\" on Windows. This value is rendered into data-tenant-path, read back by
-// timeline.js, and compared against the same FilePath by the diff endpoints'
-// security gates (hasChartChangeAt / hasTerraformChangeAt) — so it must be
-// derived exactly as they derive it. The two were previously wrong in
-// lockstep, which made the round-trip appear to work while the documented
-// forward-slash API spelling was refused. Every Change carries a
-// TenantPath, though only the chart-change partial renders it.
+// The value is rendered into data-tenant-path, read back by timeline.js, and
+// compared by the diff endpoints' security gates — so it must be derived
+// exactly as they derive it. Both now go through domain.TenantPathOf, which
+// is what keeps them from drifting. Every Change carries a TenantPath, though
+// only the chart and terraform partials render it.
 type changeView struct {
 	changeset.Change
-	TenantPath string
+	TenantPath domain.TenantPath
 	// IsTerraformKind precomputes Change.Kind.IsTerraform() (true for any of
 	// the four Terraform sub-Kinds: provider/module/resource/variable) since
 	// html/template's {{eq}} can't express a set membership test.
@@ -227,7 +221,7 @@ func newChangesetView(cs changeset.Changeset, rules []changeset.RiskRule) change
 	for _, c := range cs.Changes {
 		changes = append(changes, changeView{
 			Change:          c,
-			TenantPath:      path.Dir(c.FilePath),
+			TenantPath:      domain.TenantPathOf(c.Change),
 			IsTerraformKind: c.Kind.IsTerraform(),
 			Impact:          string(changeset.ClassifyChangeImpact(c)),
 		})
