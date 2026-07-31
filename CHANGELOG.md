@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.15.0...app-v0.16.0) (2026-07-31)
+
+
+### Features
+
+* **api:** negotiate JSON representation for changeset detail ([#158](https://github.com/dackota/change-tracking-dashboard/issues/158)) ([b04fe86](https://github.com/dackota/change-tracking-dashboard/commit/b04fe8641be216300d5007b563dff1fb6db5529f)), closes [#149](https://github.com/dackota/change-tracking-dashboard/issues/149)
+
 ## [0.15.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.14.0...app-v0.15.0) (2026-07-31)
 
 
