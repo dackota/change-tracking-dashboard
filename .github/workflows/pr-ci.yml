@@ -8,8 +8,9 @@ name: PR CI
 #                  check-run, not an absent one) on a CI-only PR --
 #                  release-please.yml's auto-merge check-runs poll already
 #                  treats "skipped" as passing.
-# - go-verify   -> go build ./..., go vet ./..., go test ./... (fails the
-#                  check on the first failing step). Only runs when the PR
+# - go-verify   -> go build ./..., go vet ./..., go test ./..., then
+#                  go test -race over the concurrency-heavy packages (fails
+#                  the check on the first failing step). Only runs when the PR
 #                  touches Go source or module files -- a workflow-only PR
 #                  has nothing for it to verify.
 # - grype-fs    -> scans the working tree's dependency graph (go.sum, etc.)
@@ -84,6 +85,38 @@ jobs:
 
       - name: go test
         run: go test ./...
+
+      # The race detector, scoped to the packages that actually run
+      # concurrent code. internal/chartdiff and internal/plandiff sit on
+      # the internal/subtree seam and carry the repo's concurrency-dense
+      # logic (two semaphores, singleflight coalescing, per-call timeouts,
+      # recover() blocks, and background "abandoned goroutine" waiters
+      # whose temp-dir cleanup handoff must happen exactly once and only
+      # after the goroutine has stopped touching the directory); poller
+      # and scheduler drive them from background loops, and store/web are
+      # the shared state those loops write through.
+      #
+      # Scoped rather than ./... because -race costs roughly 2-10x per
+      # package and internal/store alone is already ~20s -- the packages
+      # left out (pure parsers, renderers, formatters) have no goroutines
+      # for the detector to find anything in.
+      #
+      # ubuntu-latest ships gcc and defaults to CGO_ENABLED=1, which
+      # -race requires; CGO_ENABLED is set explicitly so a future change
+      # to the runner image or the toolchain default fails loudly here
+      # instead of silently dropping the check.
+      - name: go test -race (concurrency-heavy packages)
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          go test -race -count=1 \
+            ./internal/chartdiff/... \
+            ./internal/plandiff/... \
+            ./internal/subtree/... \
+            ./internal/poller/... \
+            ./internal/scheduler/... \
+            ./internal/store/... \
+            ./internal/web/...
 
   grype-fs-scan:
     name: Grype filesystem/dependency scan

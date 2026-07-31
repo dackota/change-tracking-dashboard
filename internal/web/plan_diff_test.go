@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/dackota/change-tracking-dashboard/internal/changeset"
@@ -20,11 +21,11 @@ import (
 // fakePlanDiffEngine is a web.PlanDiffEngine test double.
 type fakePlanDiffEngine struct {
 	fn     func(ctx context.Context, repo subtree.Repo, req plandiff.Request) plandiff.Outcome
-	called bool
+	called atomic.Bool
 }
 
 func (f *fakePlanDiffEngine) Diff(ctx context.Context, repo subtree.Repo, req plandiff.Request) plandiff.Outcome {
-	f.called = true
+	f.called.Store(true)
 	return f.fn(ctx, repo, req)
 }
 
@@ -95,7 +96,7 @@ func TestPlanDiffHandler_UnknownChangeset_RejectsWithoutReachingResolverOrEngine
 
 	rr := servePlanDiff(h, defaultPlanDiffURL)
 
-	if resolver.called || engine.called {
+	if resolver.called.Load() || engine.called.Load() {
 		t.Error("resolver/engine invoked for a never-ingested changeset — security gate bypassed")
 	}
 	if rr.Code != http.StatusNotFound {
@@ -124,7 +125,7 @@ func TestPlanDiffHandler_PathNotTerraformKind_RejectsWithoutReachingResolverOrEn
 
 	rr := servePlanDiff(h, defaultPlanDiffURL)
 
-	if resolver.called || engine.called {
+	if resolver.called.Load() || engine.called.Load() {
 		t.Error("resolver/engine invoked for a path with no Terraform-kind Change — security gate bypassed")
 	}
 	if rr.Code != http.StatusNotFound {
