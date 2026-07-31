@@ -307,7 +307,7 @@ func TestPoller_ResumesFromHighWaterMark(t *testing.T) {
 	st := newTestStore(t)
 
 	// Pre-seed the high-water mark to sha1, simulating a prior run that stopped there.
-	if err := st.SetHighWaterMark(repoPath, "Chart.yaml", "chart-version", sha1); err != nil {
+	if err := st.SetHighWaterMark(repoPath, "Chart.yaml", "chart-version", store.HighWaterMark{Sha: sha1}); err != nil {
 		t.Fatalf("SetHighWaterMark: %v", err)
 	}
 
@@ -443,7 +443,7 @@ func TestPoller_FirstRun_BackfillWindowExcludesOldCommits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetHighWaterMark: %v", err)
 	}
-	if hwm != sha3 {
+	if hwm.Sha != sha3 {
 		t.Errorf("HWM = %q, want sha3=%q", hwm, sha3)
 	}
 }
@@ -470,7 +470,7 @@ func TestPoller_IncrementalRun_UnaffectedByBackfillWindow(t *testing.T) {
 	}
 
 	st := newTestStore(t)
-	if err := st.SetHighWaterMark(repoPath, "Chart.yaml", "chart-version", sha1); err != nil {
+	if err := st.SetHighWaterMark(repoPath, "Chart.yaml", "chart-version", store.HighWaterMark{Sha: sha1}); err != nil {
 		t.Fatalf("SetHighWaterMark: %v", err)
 	}
 
@@ -509,7 +509,7 @@ func TestPoller_IncrementalRun_UnaffectedByBackfillWindow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetHighWaterMark: %v", err)
 	}
-	if hwm != sha3 {
+	if hwm.Sha != sha3 {
 		t.Errorf("HWM = %q, want sha3=%q", hwm, sha3)
 	}
 }
@@ -532,7 +532,7 @@ func TestPoller_HWMContentLookup_WorksForOutOfWindowHWM(t *testing.T) {
 	}
 
 	st := newTestStore(t)
-	if err := st.SetHighWaterMark(repoPath, "Chart.yaml", "chart-version", sha1); err != nil {
+	if err := st.SetHighWaterMark(repoPath, "Chart.yaml", "chart-version", store.HighWaterMark{Sha: sha1}); err != nil {
 		t.Fatalf("SetHighWaterMark: %v", err)
 	}
 
@@ -563,7 +563,7 @@ func TestPoller_HWMContentLookup_WorksForOutOfWindowHWM(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetHighWaterMark: %v", err)
 	}
-	if hwm != sha3 {
+	if hwm.Sha != sha3 {
 		t.Errorf("HWM = %q, want sha3=%q", hwm, sha3)
 	}
 
@@ -1049,7 +1049,7 @@ func TestPoller_GlobFanOut_ResumePerFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetHighWaterMark (y): %v", err)
 	}
-	if hwmY == "" {
+	if hwmY.Sha == "" {
 		t.Error("HWM for a/y/Chart.yaml is empty after polls — per-file HWM not being set")
 	}
 
@@ -1058,7 +1058,7 @@ func TestPoller_GlobFanOut_ResumePerFile(t *testing.T) {
 		t.Fatalf("GetHighWaterMark (x): %v", err)
 	}
 	if hwmX == hwmY {
-		t.Errorf("HWM for x (%q) and y (%q) must differ — they are independent per-file cursors", hwmX, hwmY)
+		t.Errorf("HWM for x (%q) and y (%q) must differ — they are independent per-file cursors", hwmX, hwmY.Sha)
 	}
 }
 

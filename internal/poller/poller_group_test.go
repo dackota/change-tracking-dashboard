@@ -428,3 +428,157 @@ func TestPollGroup_Empty(t *testing.T) {
 		t.Errorf("WalkCommits calls = %d, want 0", got)
 	}
 }
+
+// TestPollGroup_RecordsCursorTimestamps verifies a real poll cycle writes each
+// field's cursor with the timestamp of the commit it marks (#180). Without it
+// every subsequent cycle walks that file's history to the root to find a SHA.
+//
+// It also pins the pairing: the recorded timestamp must be the recorded SHA's
+// own commit time. A mismatch would bound the next walk somewhere other than
+// where the cursor actually sits.
+func TestPollGroup_RecordsCursorTimestamps(t *testing.T) {
+	t.Parallel()
+
+	repoPath := multiFieldGlobRepo(t)
+	trackers := groupTrackers(repoPath)
+
+	p, _, st := tracingPoller(t, repoPath)
+	for i, err := range p.PollGroup(trackers) {
+		if err != nil {
+			t.Fatalf("PollGroup[%d]: %v", i, err)
+		}
+	}
+
+	// Every Change the poll recorded, indexed by commit, so each cursor's
+	// timestamp can be checked against its own commit's time.
+	commitTimes := map[string]time.Time{}
+	for _, c := range queryFeed(t, st) {
+		commitTimes[c.CommitSha] = c.CommittedAt
+	}
+
+	for _, tr := range trackers {
+		for _, file := range []string{"app/x.yaml", "app/y.yaml"} {
+			hwm, err := st.GetHighWaterMark(repoPath, file, tr.Field)
+			if err != nil {
+				t.Fatalf("GetHighWaterMark(%s, %s): %v", file, tr.Field, err)
+			}
+			if hwm.IsZero() {
+				t.Errorf("%s/%s: no cursor recorded after a successful poll", file, tr.Field)
+				continue
+			}
+			if !hwm.TimeKnown() {
+				t.Errorf("%s/%s: cursor %s recorded with no timestamp — the next cycle will walk unbounded",
+					file, tr.Field, hwm.Sha)
+				continue
+			}
+			want, ok := commitTimes[hwm.Sha]
+			if !ok {
+				continue // cursor commit produced no Change for this field
+			}
+			if !hwm.CommittedAt.Equal(want) {
+				t.Errorf("%s/%s: cursor %s recorded at %v, but that commit is at %v — the SHA and its timestamp describe different commits",
+					file, tr.Field, hwm.Sha, hwm.CommittedAt, want)
+			}
+		}
+	}
+}
+
+// TestPollGroup_SecondCycleWithTimestampedCursorsIsUnchanged is the
+// no-behavior-change guarantee for #180: bounding the walk must not alter what
+// a steady-state cycle records. A second poll over an unchanged repo produced
+// nothing new before the bound existed, and must still produce nothing new
+// now that cursors bound the walk.
+func TestPollGroup_SecondCycleWithTimestampedCursorsIsUnchanged(t *testing.T) {
+	t.Parallel()
+
+	repoPath := multiFieldGlobRepo(t)
+	trackers := groupTrackers(repoPath)
+
+	p, _, st := tracingPoller(t, repoPath)
+	for i, err := range p.PollGroup(trackers) {
+		if err != nil {
+			t.Fatalf("PollGroup (first)[%d]: %v", i, err)
+		}
+	}
+	afterFirst := feedKeys(t, st)
+
+	// Every cursor now carries a timestamp, so this cycle takes the bounded
+	// path rather than the unbounded one the first cycle used.
+	for i, err := range p.PollGroup(trackers) {
+		if err != nil {
+			t.Fatalf("PollGroup (second)[%d]: %v", i, err)
+		}
+	}
+	afterSecond := feedKeys(t, st)
+
+	if len(afterFirst) != len(afterSecond) {
+		t.Fatalf("second cycle changed the feed: %d changes then %d\n first: %v\nsecond: %v",
+			len(afterFirst), len(afterSecond), afterFirst, afterSecond)
+	}
+	for i := range afterFirst {
+		if afterFirst[i] != afterSecond[i] {
+			t.Errorf("second cycle changed feed[%d]: %q -> %q", i, afterFirst[i], afterSecond[i])
+		}
+	}
+}
+
+// TestPollGroup_BoundedCycleStillSeesNewCommits is the other half: bounding
+// the walk must not blind a cycle to commits pushed since the last one. A
+// bound computed from the cursor has to leave room for everything newer than
+// it, which is the whole history a resuming poll cares about.
+func TestPollGroup_BoundedCycleStillSeesNewCommits(t *testing.T) {
+	t.Parallel()
+
+	repoPath := multiFieldGlobRepo(t)
+	trackers := groupTrackers(repoPath)
+
+	p, _, st := tracingPoller(t, repoPath)
+	for i, err := range p.PollGroup(trackers) {
+		if err != nil {
+			t.Fatalf("PollGroup (first)[%d]: %v", i, err)
+		}
+	}
+	before := len(feedKeys(t, st))
+
+	// A new commit lands after every field has a timestamped cursor.
+	appendCommit(t, repoPath, "app/x.yaml", "a: 3\nb: 2\n")
+
+	for i, err := range p.PollGroup(trackers) {
+		if err != nil {
+			t.Fatalf("PollGroup (second)[%d]: %v", i, err)
+		}
+	}
+	after := feedKeys(t, st)
+
+	if len(after) <= before {
+		t.Errorf("feed went from %d to %d changes — the bounded cycle did not see the new commit\n%v",
+			before, len(after), after)
+	}
+}
+
+// appendCommit writes content to relPath in repoPath and commits it with a
+// timestamp after every existing commit.
+func appendCommit(t *testing.T, repoPath, relPath, content string) {
+	t.Helper()
+
+	repo, err := git.PlainOpen(repoPath)
+	if err != nil {
+		t.Fatalf("git open: %v", err)
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("worktree: %v", err)
+	}
+	full := filepath.Join(repoPath, relPath)
+	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %q: %v", relPath, err)
+	}
+	if _, err := wt.Add(relPath); err != nil {
+		t.Fatalf("git add %q: %v", relPath, err)
+	}
+	if _, err := wt.Commit("new commit", &git.CommitOptions{
+		Author: &object.Signature{Name: "dev", Email: "d@x.com", When: time.Now()},
+	}); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+}
