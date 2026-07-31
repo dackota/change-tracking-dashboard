@@ -67,12 +67,19 @@ CREATE TABLE IF NOT EXISTS changes (
 // every other field on that file saw a non-empty cursor, skipped its first-run
 // backfill, and silently never recorded its history — see the per-field
 // backfill regression test.
+//
+// committed_at is the cursor commit's own timestamp, recorded so a resuming
+// poll can bound how far back it walks: without it, a walk has no way to know
+// where its cursor sits in time and must walk to the root to find it. An empty
+// string means "unknown", which is what a row written before this column
+// existed reads back as.
 const schemaHWM = `
 CREATE TABLE IF NOT EXISTS high_water_marks (
-    repo      TEXT NOT NULL,
-    file_path TEXT NOT NULL,
-    field     TEXT NOT NULL,
-    sha       TEXT NOT NULL,
+    repo         TEXT NOT NULL,
+    file_path    TEXT NOT NULL,
+    field        TEXT NOT NULL,
+    sha          TEXT NOT NULL,
+    committed_at TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (repo, file_path, field)
 );`
 
@@ -116,6 +123,12 @@ func (s *Store) migrate() error {
 	// the empty-string default (the web layer falls back to the SHA).
 	if err := s.ensureColumn("changes", "commit_subject", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return fmt.Errorf("add changes.commit_subject column: %w", err)
+	}
+	// See #180: cursors written before this column existed have no timestamp
+	// and read back as unknown, which costs those fields one unbounded walk
+	// each until their next poll records one.
+	if err := s.ensureColumn("high_water_marks", "committed_at", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return fmt.Errorf("add high_water_marks.committed_at column: %w", err)
 	}
 	// Collapse any duplicate change rows a prior (non-idempotent) re-backfill
 	// may have left, keeping the earliest id per identity, before enforcing the
@@ -268,31 +281,77 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	return nil
 }
 
-// GetHighWaterMark returns the last persisted commit SHA for the given
-// (repo, filePath, field) triple, or an empty string if none has been set yet.
+// HighWaterMark is a field's polling cursor: the last commit whose Changes
+// were recorded, and when that commit happened.
+//
+// The timestamp is what lets a resuming poll bound its walk — a walk that
+// knows only the cursor's SHA has to walk to the repo root to find it, since
+// SHAs carry no ordering. It is the commit's author time, matching the
+// timestamp gitsource.WalkCommits bounds on; recording committer time here
+// and bounding on author time would truncate histories under skew.
+//
+// The zero value means "no cursor yet" (first run). A non-empty Sha with a
+// zero CommittedAt means "cursor known, its time is not" — a row written
+// before the timestamp was persisted; see #180.
+type HighWaterMark struct {
+	Sha         string
+	CommittedAt time.Time
+}
+
+// IsZero reports whether no cursor has been recorded yet, i.e. this field has
+// never completed a poll and its next one is a first run.
+func (m HighWaterMark) IsZero() bool { return m.Sha == "" }
+
+// TimeKnown reports whether this cursor carries a usable timestamp. False for
+// a legacy row, whose field must fall back to an unbounded walk until its next
+// poll records one.
+func (m HighWaterMark) TimeKnown() bool { return !m.CommittedAt.IsZero() }
+
+// GetHighWaterMark returns the polling cursor for the given (repo, filePath,
+// field) triple, or the zero HighWaterMark if none has been set yet.
 // Keying by field (not just repo+path) lets multiple trackers extracting
 // different fields from the same file each resume — and, on first run,
 // backfill — independently.
-func (s *Store) GetHighWaterMark(repo, filePath, field string) (string, error) {
-	const query = `SELECT sha FROM high_water_marks WHERE repo = ? AND file_path = ? AND field = ?`
-	var sha string
-	err := s.db.QueryRow(query, repo, filePath, field).Scan(&sha)
+func (s *Store) GetHighWaterMark(repo, filePath, field string) (HighWaterMark, error) {
+	const query = `SELECT sha, committed_at FROM high_water_marks WHERE repo = ? AND file_path = ? AND field = ?`
+	var (
+		sha         string
+		committedAt string
+	)
+	err := s.db.QueryRow(query, repo, filePath, field).Scan(&sha, &committedAt)
 	if err == sql.ErrNoRows {
-		return "", nil
+		return HighWaterMark{}, nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("store: get high water mark for %q/%q/%q: %w", repo, filePath, field, err)
+		return HighWaterMark{}, fmt.Errorf("store: get high water mark for %q/%q/%q: %w", repo, filePath, field, err)
 	}
-	return sha, nil
+
+	m := HighWaterMark{Sha: sha}
+	if committedAt != "" {
+		t, err := time.Parse(time.RFC3339Nano, committedAt)
+		if err != nil {
+			// An unparseable timestamp is treated as unknown rather than
+			// failing the poll: the cursor itself is still good, and the only
+			// cost is one unbounded walk.
+			return m, nil
+		}
+		m.CommittedAt = t
+	}
+	return m, nil
 }
 
-// SetHighWaterMark records or overwrites the high-water-mark commit SHA for
-// the given (repo, filePath, field) triple.
-func (s *Store) SetHighWaterMark(repo, filePath, field, sha string) error {
+// SetHighWaterMark records or overwrites the polling cursor for the given
+// (repo, filePath, field) triple. A zero CommittedAt is stored as unknown.
+func (s *Store) SetHighWaterMark(repo, filePath, field string, m HighWaterMark) error {
 	const query = `
-INSERT INTO high_water_marks (repo, file_path, field, sha) VALUES (?, ?, ?, ?)
-ON CONFLICT(repo, file_path, field) DO UPDATE SET sha = excluded.sha`
-	if _, err := s.db.Exec(query, repo, filePath, field, sha); err != nil {
+INSERT INTO high_water_marks (repo, file_path, field, sha, committed_at) VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(repo, file_path, field) DO UPDATE SET sha = excluded.sha, committed_at = excluded.committed_at`
+
+	var committedAt string
+	if !m.CommittedAt.IsZero() {
+		committedAt = m.CommittedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if _, err := s.db.Exec(query, repo, filePath, field, m.Sha, committedAt); err != nil {
 		return fmt.Errorf("store: set high water mark for %q/%q/%q: %w", repo, filePath, field, err)
 	}
 	return nil

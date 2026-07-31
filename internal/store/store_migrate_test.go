@@ -229,10 +229,10 @@ func TestOpen_MigratesLegacyHWMTableToPerField(t *testing.T) {
 
 	const repo = "infra-repo"
 	const file = "terraform/versions.tf"
-	if err := s.SetHighWaterMark(repo, file, "kubernetes-version", "sha-k8s"); err != nil {
+	if err := s.SetHighWaterMark(repo, file, "kubernetes-version", store.HighWaterMark{Sha: "sha-k8s"}); err != nil {
 		t.Fatalf("SetHighWaterMark (field A): %v", err)
 	}
-	if err := s.SetHighWaterMark(repo, file, "oci-provider-version", "sha-oci"); err != nil {
+	if err := s.SetHighWaterMark(repo, file, "oci-provider-version", store.HighWaterMark{Sha: "sha-oci"}); err != nil {
 		t.Fatalf("SetHighWaterMark (field B): %v", err)
 	}
 
@@ -244,8 +244,8 @@ func TestOpen_MigratesLegacyHWMTableToPerField(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetHighWaterMark (field B): %v", err)
 	}
-	if gotA != "sha-k8s" || gotB != "sha-oci" {
-		t.Errorf("per-field HWM after migration: A=%q B=%q, want sha-k8s / sha-oci (independent per-field cursors)", gotA, gotB)
+	if gotA.Sha != "sha-k8s" || gotB.Sha != "sha-oci" {
+		t.Errorf("per-field HWM after migration: A=%q B=%q, want sha-k8s / sha-oci (independent per-field cursors)", gotA, gotB.Sha)
 	}
 }
 
@@ -302,5 +302,81 @@ func TestOpen_DedupesLegacyDuplicateChanges(t *testing.T) {
 	feed = queryFeed(t, s)
 	if len(feed) != 1 {
 		t.Fatalf("after idempotent re-save: got %d rows, want 1", len(feed))
+	}
+}
+
+// preTimestampHWMSchema is the high_water_marks table as it existed before
+// #180 added committed_at: per-field keyed (post the earlier rebuild) but with
+// no timestamp column. A production database created between those two
+// changes looks exactly like this.
+const preTimestampHWMSchema = `
+CREATE TABLE high_water_marks (
+    repo      TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    field     TEXT NOT NULL,
+    sha       TEXT NOT NULL,
+    PRIMARY KEY (repo, file_path, field)
+);`
+
+// TestOpen_MigratesLegacyHWMTableMissingCommittedAt reproduces a pre-#180
+// database: cursors exist and are per-field, but carry no timestamp. Opening
+// the store must add the column without discarding those cursors — dropping
+// them would force a full re-backfill of every tracked field — and the
+// recovered cursors must read back as "known SHA, unknown time" so the poller
+// falls back to an unbounded walk for them rather than bounding a walk at the
+// zero time and finding nothing.
+func TestOpen_MigratesLegacyHWMTableMissingCommittedAt(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pre-timestamp-hwm.db")
+
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open legacy db: %v", err)
+	}
+	if _, err := legacy.Exec(preTimestampHWMSchema); err != nil {
+		t.Fatalf("create pre-timestamp high_water_marks table: %v", err)
+	}
+	if _, err := legacy.Exec(
+		`INSERT INTO high_water_marks (repo, file_path, field, sha) VALUES (?, ?, ?, ?)`,
+		"apps-repo", "Chart.yaml", "chart-version", "sha-legacy-cursor",
+	); err != nil {
+		t.Fatalf("insert legacy cursor: %v", err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatalf("close legacy db: %v", err)
+	}
+
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("store.Open on pre-timestamp db: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	got, err := s.GetHighWaterMark("apps-repo", "Chart.yaml", "chart-version")
+	if err != nil {
+		t.Fatalf("GetHighWaterMark after migration: %v", err)
+	}
+	if got.Sha != "sha-legacy-cursor" {
+		t.Errorf("Sha = %q, want the preserved legacy cursor — the migration discarded it, forcing a full re-backfill", got.Sha)
+	}
+	if got.TimeKnown() {
+		t.Errorf("TimeKnown() = true with CommittedAt %v, want false for a migrated legacy cursor", got.CommittedAt)
+	}
+
+	// The migrated table must accept a timestamped write, which is how a
+	// legacy cursor heals on its field's next poll.
+	at := time.Date(2024, 5, 1, 0, 0, 0, 0, time.UTC)
+	if err := s.SetHighWaterMark("apps-repo", "Chart.yaml", "chart-version", store.HighWaterMark{
+		Sha: "sha-new-cursor", CommittedAt: at,
+	}); err != nil {
+		t.Fatalf("SetHighWaterMark after migration: %v", err)
+	}
+	healed, err := s.GetHighWaterMark("apps-repo", "Chart.yaml", "chart-version")
+	if err != nil {
+		t.Fatalf("GetHighWaterMark after heal: %v", err)
+	}
+	if !healed.TimeKnown() || !healed.CommittedAt.Equal(at) {
+		t.Errorf("healed cursor = %+v, want CommittedAt %v", healed, at)
 	}
 }

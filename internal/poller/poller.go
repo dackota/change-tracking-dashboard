@@ -410,7 +410,7 @@ func (p *Poller) resolveFilePaths(ctx context.Context, glob string) ([]string, e
 func (p *Poller) pollFileGroup(ctx context.Context, logger *slog.Logger, filePath string, members []groupMember, errs []error) {
 	// Read every field's cursor first: the set of cursors decides how far back
 	// the single shared walk has to reach.
-	hwms := make([]string, len(members))
+	hwms := make([]store.HighWaterMark, len(members))
 	live := make([]int, 0, len(members))
 	for i, m := range members {
 		hwm, err := p.getHighWaterMark(ctx, logger, m.tracker, filePath)
@@ -425,12 +425,35 @@ func (p *Poller) pollFileGroup(ctx context.Context, logger *slog.Logger, filePat
 		return
 	}
 
-	history, err := p.walkHistory(ctx, logger, members[live[0]].tracker, filePath, p.groupWalkBound(members, hwms, live))
+	walkTracker := members[live[0]].tracker
+	bound := p.groupWalkBound(members, hwms, live)
+
+	history, err := p.walkHistory(ctx, logger, walkTracker, filePath, bound)
 	if err != nil {
 		for _, i := range live {
 			errs[members[i].idx] = errors.Join(errs[members[i].idx], fmt.Errorf("file %q: %w", filePath, err))
 		}
 		return
+	}
+
+	// A bounded walk is an optimization, and it is only sound if every cursor
+	// it was supposed to reach is actually in the result. It can fall short:
+	// the walk breaks on author time but proceeds in committer order, so a
+	// commit newer in walk order but older in author time truncates the walk
+	// early — possibly before a cursor the bound was computed to include.
+	// Rather than reason about how much margin would be enough, check, and
+	// re-walk unbounded when the check fails. That is the pre-#180 behavior,
+	// paid only in the rare skewed case instead of on every cycle.
+	if !bound.IsZero() && !cursorsPresent(history, hwms, live) {
+		logger.Debug("poller: bounded walk missed a cursor; re-walking unbounded",
+			slog.String("repo", walkTracker.Repo), slog.String("filePath", filePath))
+		history, err = p.walkHistory(ctx, logger, walkTracker, filePath, time.Time{})
+		if err != nil {
+			for _, i := range live {
+				errs[members[i].idx] = errors.Join(errs[members[i].idx], fmt.Errorf("file %q: %w", filePath, err))
+			}
+			return
+		}
 	}
 	if len(history) == 0 {
 		return // no history in range — nothing for any field to do
@@ -445,16 +468,35 @@ func (p *Poller) pollFileGroup(ctx context.Context, logger *slog.Logger, filePat
 }
 
 // groupWalkBound is the lower time bound for the group's single shared walk:
-// the oldest boundary any live field still needs. A field that already has a
-// cursor needs the unbounded history — its cursor commit may predate every
-// configured backfill window — so one such field drops the bound entirely.
-func (p *Poller) groupWalkBound(members []groupMember, hwms []string, live []int) time.Time {
+// the oldest boundary any live field still needs, so one walk can serve them
+// all and each field narrows its own range out of the result.
+//
+// A field's own boundary is its cursor's timestamp when it has one (it needs
+// history back to there, and the cursor commit itself as a diff baseline), or
+// its backfill window when it does not (first run). The zero time means "no
+// bound" and wins over everything: a field with an unbounded backfill window,
+// or a cursor whose timestamp is unknown, forces the whole group's walk to
+// run to the root.
+//
+// The returned bound is not guaranteed to reach every cursor — see
+// cursorsPresent, which is why the caller verifies rather than trusts it.
+func (p *Poller) groupWalkBound(members []groupMember, hwms []store.HighWaterMark, live []int) time.Time {
 	var oldest time.Time
 	for _, i := range live {
-		if hwms[i] != "" {
+		var bound time.Time
+		switch {
+		case hwms[i].IsZero():
+			// First run: this field needs its whole backfill window.
+			bound = p.backfillBound(members[i].tracker)
+		case hwms[i].TimeKnown():
+			bound = hwms[i].CommittedAt
+		default:
+			// A cursor written before its timestamp was persisted (#180).
+			// Nothing localizes it in time, so the walk must find it by
+			// walking. Self-healing: this field's next poll records one.
 			return time.Time{}
 		}
-		bound := p.backfillBound(members[i].tracker)
+
 		if bound.IsZero() {
 			return time.Time{}
 		}
@@ -463,6 +505,27 @@ func (p *Poller) groupWalkBound(members []groupMember, hwms []string, live []int
 		}
 	}
 	return oldest
+}
+
+// cursorsPresent reports whether history contains every live field's cursor
+// commit. A cursor legitimately absent from the repo — its commit rewritten
+// away by a force-push — also reports false here, which costs one unbounded
+// re-walk and then resolves the same way it always has (History.Since reports
+// no baseline, and the field re-reads what it can see).
+func cursorsPresent(history gitsource.History, hwms []store.HighWaterMark, live []int) bool {
+	shas := make(map[string]struct{}, len(history))
+	for _, snap := range history {
+		shas[snap.CommitSha] = struct{}{}
+	}
+	for _, i := range live {
+		if hwms[i].IsZero() {
+			continue // first run: no cursor to find
+		}
+		if _, ok := shas[hwms[i].Sha]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // backfillBound is t's first-run walk boundary: BackfillDays before now. A
@@ -475,8 +538,8 @@ func (p *Poller) backfillBound(t domain.Tracker) time.Time {
 }
 
 // getHighWaterMark wraps one store.GetHighWaterMark call in its own span.
-func (p *Poller) getHighWaterMark(ctx context.Context, logger *slog.Logger, t domain.Tracker, filePath string) (string, error) {
-	var hwm string
+func (p *Poller) getHighWaterMark(ctx context.Context, logger *slog.Logger, t domain.Tracker, filePath string) (store.HighWaterMark, error) {
+	var hwm store.HighWaterMark
 	err := telemetry.WithSpan(ctx, p.tracer, "store.get_high_water_mark", func(context.Context) error {
 		v, err := p.st.GetHighWaterMark(t.Repo, filePath, t.Field)
 		hwm = v
@@ -484,7 +547,7 @@ func (p *Poller) getHighWaterMark(ctx context.Context, logger *slog.Logger, t do
 	})
 	if err != nil {
 		logger.Error("poller: get high-water mark failed", slog.String("repo", t.Repo), slog.String("filePath", filePath), slog.Any("error", err))
-		return "", fmt.Errorf("poller: get HWM for %q/%q: %w", t.Repo, filePath, err)
+		return store.HighWaterMark{}, fmt.Errorf("poller: get HWM for %q/%q: %w", t.Repo, filePath, err)
 	}
 	return hwm, nil
 }
@@ -511,13 +574,13 @@ func (p *Poller) walkHistory(ctx context.Context, logger *slog.Logger, t domain.
 // file history: pick out the field's own range (from its cursor, or from its
 // backfill boundary on first run), diff consecutive snapshots, attach facets
 // from this file's own path, and persist Changes plus the field's new HWM.
-func (p *Poller) pollFieldHistory(ctx context.Context, logger *slog.Logger, m groupMember, filePath, hwm string, history gitsource.History) error {
+func (p *Poller) pollFieldHistory(ctx context.Context, logger *slog.Logger, m groupMember, filePath string, hwm store.HighWaterMark, history gitsource.History) error {
 	// We need a "before" snapshot to diff against. When there is no HWM yet
 	// (first run), we treat the state before the oldest snapshot as absent.
 	var prevField domain.TrackedField
 	var snapshots gitsource.History
 
-	if hwm == "" {
+	if hwm.IsZero() {
 		// First run: bound this field to its own backfill window, which may be
 		// narrower than the shared walk's.
 		snapshots = history.NotBefore(p.backfillBound(m.tracker))
@@ -537,7 +600,7 @@ func (p *Poller) pollFieldHistory(ctx context.Context, logger *slog.Logger, m gr
 			if err := p.emitChanges(ctx, logger, m, filePath, snapshots[0], domain.TrackedField{Present: false}, prevField); err != nil {
 				return err
 			}
-			return p.setHighWaterMark(ctx, logger, m.tracker, filePath, snapshots[0].CommitSha)
+			return p.setHighWaterMark(ctx, logger, m.tracker, filePath, snapshots[0])
 		}
 		snapshots = snapshots[1:]
 	} else {
@@ -545,7 +608,7 @@ func (p *Poller) pollFieldHistory(ctx context.Context, logger *slog.Logger, m gr
 		// state at the HWM commit to compute the diff for the first new commit.
 		// The shared walk is unbounded whenever any field has a cursor, so an
 		// HWM commit predating every backfill window is still present here.
-		rest, at, found := history.Since(hwm)
+		rest, at, found := history.Since(hwm.Sha)
 		if len(rest) == 0 {
 			return nil // nothing new since last poll
 		}
@@ -559,7 +622,7 @@ func (p *Poller) pollFieldHistory(ctx context.Context, logger *slog.Logger, m gr
 		}
 	}
 
-	var lastSha string
+	var last domain.CommitSnapshot
 	for _, snap := range snapshots {
 		newField, err := p.extractField(logger, m, filePath, snap)
 		if err != nil {
@@ -569,11 +632,11 @@ func (p *Poller) pollFieldHistory(ctx context.Context, logger *slog.Logger, m gr
 			return err
 		}
 		prevField = newField
-		lastSha = snap.CommitSha
+		last = snap
 	}
 
-	if lastSha != "" {
-		return p.setHighWaterMark(ctx, logger, m.tracker, filePath, lastSha)
+	if last.CommitSha != "" {
+		return p.setHighWaterMark(ctx, logger, m.tracker, filePath, last)
 	}
 
 	return nil
@@ -640,10 +703,16 @@ func (p *Poller) saveChange(ctx context.Context, logger *slog.Logger, t domain.T
 	return nil
 }
 
-// setHighWaterMark wraps one store.SetHighWaterMark call in its own span.
-func (p *Poller) setHighWaterMark(ctx context.Context, logger *slog.Logger, t domain.Tracker, filePath, sha string) error {
+// setHighWaterMark wraps one store.SetHighWaterMark call in its own span. It
+// takes the snapshot rather than its SHA so the cursor's timestamp is recorded
+// from the same commit that supplied the SHA — the two must describe one
+// commit for the next cycle's walk bound to be sound (#180).
+func (p *Poller) setHighWaterMark(ctx context.Context, logger *slog.Logger, t domain.Tracker, filePath string, snap domain.CommitSnapshot) error {
 	err := telemetry.WithSpan(ctx, p.tracer, "store.set_high_water_mark", func(context.Context) error {
-		return p.st.SetHighWaterMark(t.Repo, filePath, t.Field, sha)
+		return p.st.SetHighWaterMark(t.Repo, filePath, t.Field, store.HighWaterMark{
+			Sha:         snap.CommitSha,
+			CommittedAt: snap.CommittedAt,
+		})
 	})
 	if err != nil {
 		logger.Error("poller: set high-water mark failed", slog.String("repo", t.Repo), slog.String("filePath", filePath), slog.Any("error", err))

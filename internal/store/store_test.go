@@ -134,12 +134,12 @@ func TestHighWaterMark(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetHighWaterMark (empty): %v", err)
 	}
-	if sha != "" {
-		t.Errorf("GetHighWaterMark (empty): got %q, want empty string", sha)
+	if sha.Sha != "" {
+		t.Errorf("GetHighWaterMark (empty): got %q, want empty string", sha.Sha)
 	}
 
 	// Write a mark.
-	if err := s.SetHighWaterMark("apps-repo", filePath, field, "abc123"); err != nil {
+	if err := s.SetHighWaterMark("apps-repo", filePath, field, store.HighWaterMark{Sha: "abc123"}); err != nil {
 		t.Fatalf("SetHighWaterMark: %v", err)
 	}
 
@@ -148,20 +148,20 @@ func TestHighWaterMark(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetHighWaterMark (after set): %v", err)
 	}
-	if sha != "abc123" {
-		t.Errorf("GetHighWaterMark: got %q, want abc123", sha)
+	if sha.Sha != "abc123" {
+		t.Errorf("GetHighWaterMark: got %q, want abc123", sha.Sha)
 	}
 
 	// Overwrite the mark.
-	if err := s.SetHighWaterMark("apps-repo", filePath, field, "def456"); err != nil {
+	if err := s.SetHighWaterMark("apps-repo", filePath, field, store.HighWaterMark{Sha: "def456"}); err != nil {
 		t.Fatalf("SetHighWaterMark (overwrite): %v", err)
 	}
 	sha, err = s.GetHighWaterMark("apps-repo", filePath, field)
 	if err != nil {
 		t.Fatalf("GetHighWaterMark (overwrite): %v", err)
 	}
-	if sha != "def456" {
-		t.Errorf("GetHighWaterMark (overwrite): got %q, want def456", sha)
+	if sha.Sha != "def456" {
+		t.Errorf("GetHighWaterMark (overwrite): got %q, want def456", sha.Sha)
 	}
 }
 
@@ -179,10 +179,10 @@ func TestHighWaterMark_PerFileGranularity(t *testing.T) {
 	const fileB = "a/y/Chart.yaml"
 	const field = "chart-version"
 
-	if err := s.SetHighWaterMark(repo, fileA, field, "sha-a-1"); err != nil {
+	if err := s.SetHighWaterMark(repo, fileA, field, store.HighWaterMark{Sha: "sha-a-1"}); err != nil {
 		t.Fatalf("SetHighWaterMark (fileA): %v", err)
 	}
-	if err := s.SetHighWaterMark(repo, fileB, field, "sha-b-1"); err != nil {
+	if err := s.SetHighWaterMark(repo, fileB, field, store.HighWaterMark{Sha: "sha-b-1"}); err != nil {
 		t.Fatalf("SetHighWaterMark (fileB): %v", err)
 	}
 
@@ -190,28 +190,28 @@ func TestHighWaterMark_PerFileGranularity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetHighWaterMark (fileA): %v", err)
 	}
-	if gotA != "sha-a-1" {
-		t.Errorf("GetHighWaterMark(fileA) = %q, want sha-a-1 (must not be clobbered by fileB)", gotA)
+	if gotA.Sha != "sha-a-1" {
+		t.Errorf("GetHighWaterMark(fileA) = %q, want sha-a-1 (must not be clobbered by fileB)", gotA.Sha)
 	}
 
 	gotB, err := s.GetHighWaterMark(repo, fileB, field)
 	if err != nil {
 		t.Fatalf("GetHighWaterMark (fileB): %v", err)
 	}
-	if gotB != "sha-b-1" {
-		t.Errorf("GetHighWaterMark(fileB) = %q, want sha-b-1", gotB)
+	if gotB.Sha != "sha-b-1" {
+		t.Errorf("GetHighWaterMark(fileB) = %q, want sha-b-1", gotB.Sha)
 	}
 
 	// Advancing fileA's mark must not affect fileB's.
-	if err := s.SetHighWaterMark(repo, fileA, field, "sha-a-2"); err != nil {
+	if err := s.SetHighWaterMark(repo, fileA, field, store.HighWaterMark{Sha: "sha-a-2"}); err != nil {
 		t.Fatalf("SetHighWaterMark (fileA advance): %v", err)
 	}
 	gotB2, err := s.GetHighWaterMark(repo, fileB, field)
 	if err != nil {
 		t.Fatalf("GetHighWaterMark (fileB after fileA advance): %v", err)
 	}
-	if gotB2 != "sha-b-1" {
-		t.Errorf("GetHighWaterMark(fileB) after advancing fileA = %q, want unchanged sha-b-1", gotB2)
+	if gotB2.Sha != "sha-b-1" {
+		t.Errorf("GetHighWaterMark(fileB) after advancing fileA = %q, want unchanged sha-b-1", gotB2.Sha)
 	}
 }
 
@@ -229,10 +229,10 @@ func TestHighWaterMark_PerFieldGranularity(t *testing.T) {
 	const fieldA = "kubernetes-version"
 	const fieldB = "oci-provider-version"
 
-	if err := s.SetHighWaterMark(repo, file, fieldA, "sha-a-1"); err != nil {
+	if err := s.SetHighWaterMark(repo, file, fieldA, store.HighWaterMark{Sha: "sha-a-1"}); err != nil {
 		t.Fatalf("SetHighWaterMark (fieldA): %v", err)
 	}
-	if err := s.SetHighWaterMark(repo, file, fieldB, "sha-b-1"); err != nil {
+	if err := s.SetHighWaterMark(repo, file, fieldB, store.HighWaterMark{Sha: "sha-b-1"}); err != nil {
 		t.Fatalf("SetHighWaterMark (fieldB): %v", err)
 	}
 
@@ -240,28 +240,28 @@ func TestHighWaterMark_PerFieldGranularity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetHighWaterMark (fieldA): %v", err)
 	}
-	if gotA != "sha-a-1" {
-		t.Errorf("GetHighWaterMark(fieldA) = %q, want sha-a-1 (must not be clobbered by fieldB on the same file)", gotA)
+	if gotA.Sha != "sha-a-1" {
+		t.Errorf("GetHighWaterMark(fieldA) = %q, want sha-a-1 (must not be clobbered by fieldB on the same file)", gotA.Sha)
 	}
 
 	gotB, err := s.GetHighWaterMark(repo, file, fieldB)
 	if err != nil {
 		t.Fatalf("GetHighWaterMark (fieldB): %v", err)
 	}
-	if gotB != "sha-b-1" {
-		t.Errorf("GetHighWaterMark(fieldB) = %q, want sha-b-1", gotB)
+	if gotB.Sha != "sha-b-1" {
+		t.Errorf("GetHighWaterMark(fieldB) = %q, want sha-b-1", gotB.Sha)
 	}
 
 	// Advancing fieldA's mark on the shared file must not touch fieldB's.
-	if err := s.SetHighWaterMark(repo, file, fieldA, "sha-a-2"); err != nil {
+	if err := s.SetHighWaterMark(repo, file, fieldA, store.HighWaterMark{Sha: "sha-a-2"}); err != nil {
 		t.Fatalf("SetHighWaterMark (fieldA advance): %v", err)
 	}
 	gotB2, err := s.GetHighWaterMark(repo, file, fieldB)
 	if err != nil {
 		t.Fatalf("GetHighWaterMark (fieldB after fieldA advance): %v", err)
 	}
-	if gotB2 != "sha-b-1" {
-		t.Errorf("GetHighWaterMark(fieldB) after advancing fieldA on the same file = %q, want unchanged sha-b-1", gotB2)
+	if gotB2.Sha != "sha-b-1" {
+		t.Errorf("GetHighWaterMark(fieldB) after advancing fieldA on the same file = %q, want unchanged sha-b-1", gotB2.Sha)
 	}
 }
 
@@ -481,5 +481,113 @@ func TestSubjectRoundTrip(t *testing.T) {
 	}
 	if got := feed[1].Subject; got != "bump google provider to 5.10.0" {
 		t.Errorf("feed[1] (sha-with-subject) Subject = %q, want %q", got, "bump google provider to 5.10.0")
+	}
+}
+
+// TestHighWaterMark_RoundTripsTheCursorTimestamp verifies the cursor's
+// timestamp survives a write/read cycle. That timestamp is what lets a
+// resuming poll bound its walk instead of walking to the repo root to find a
+// SHA that carries no ordering (#180), so losing it silently costs
+// performance rather than correctness — exactly the kind of regression a
+// round-trip assertion is for.
+func TestHighWaterMark_RoundTripsTheCursorTimestamp(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+
+	// A timestamp with sub-second precision, to prove the stored format does
+	// not truncate it: the walk bound compares against commit times exactly.
+	at := time.Date(2024, 3, 15, 12, 30, 45, 123456789, time.UTC)
+
+	if err := s.SetHighWaterMark("apps-repo", "Chart.yaml", "version", store.HighWaterMark{
+		Sha: "sha-with-time", CommittedAt: at,
+	}); err != nil {
+		t.Fatalf("SetHighWaterMark: %v", err)
+	}
+
+	got, err := s.GetHighWaterMark("apps-repo", "Chart.yaml", "version")
+	if err != nil {
+		t.Fatalf("GetHighWaterMark: %v", err)
+	}
+	if got.Sha != "sha-with-time" {
+		t.Errorf("Sha = %q, want sha-with-time", got.Sha)
+	}
+	if !got.CommittedAt.Equal(at) {
+		t.Errorf("CommittedAt = %v, want %v", got.CommittedAt, at)
+	}
+	if !got.TimeKnown() {
+		t.Error("TimeKnown() = false for a cursor written with a timestamp")
+	}
+}
+
+// TestHighWaterMark_WithoutATimestampReadsBackAsUnknown covers the cursor
+// whose time is not known: it is a usable cursor (the SHA is good) that simply
+// cannot bound a walk. Distinguishing this from "no cursor at all" matters —
+// the first still resumes, it just resumes the slow way.
+func TestHighWaterMark_WithoutATimestampReadsBackAsUnknown(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+
+	if err := s.SetHighWaterMark("apps-repo", "Chart.yaml", "version", store.HighWaterMark{
+		Sha: "sha-no-time",
+	}); err != nil {
+		t.Fatalf("SetHighWaterMark: %v", err)
+	}
+
+	got, err := s.GetHighWaterMark("apps-repo", "Chart.yaml", "version")
+	if err != nil {
+		t.Fatalf("GetHighWaterMark: %v", err)
+	}
+	if got.IsZero() {
+		t.Error("IsZero() = true, want false — the cursor's SHA is known and it must still resume")
+	}
+	if got.TimeKnown() {
+		t.Errorf("TimeKnown() = true with CommittedAt %v, want false", got.CommittedAt)
+	}
+}
+
+// TestHighWaterMark_UnsetReadsBackAsZero pins the first-run signal: a field
+// that has never polled must be distinguishable from one holding a cursor, or
+// it would skip its backfill.
+func TestHighWaterMark_UnsetReadsBackAsZero(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+
+	got, err := s.GetHighWaterMark("apps-repo", "never-polled.yaml", "version")
+	if err != nil {
+		t.Fatalf("GetHighWaterMark: %v", err)
+	}
+	if !got.IsZero() {
+		t.Errorf("IsZero() = false for an unset cursor (got %+v)", got)
+	}
+	if got.TimeKnown() {
+		t.Error("TimeKnown() = true for an unset cursor")
+	}
+}
+
+// TestHighWaterMark_AdvancingReplacesTheTimestamp verifies the SHA and its
+// timestamp advance together. A stale timestamp paired with a fresh SHA would
+// bound the next walk further back than necessary — harmless — but the
+// reverse, a fresh timestamp with a stale SHA, would bound it past the cursor
+// and hide history. They must move as one.
+func TestHighWaterMark_AdvancingReplacesTheTimestamp(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+
+	first := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	second := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+
+	if err := s.SetHighWaterMark("r", "f", "x", store.HighWaterMark{Sha: "old", CommittedAt: first}); err != nil {
+		t.Fatalf("SetHighWaterMark (first): %v", err)
+	}
+	if err := s.SetHighWaterMark("r", "f", "x", store.HighWaterMark{Sha: "new", CommittedAt: second}); err != nil {
+		t.Fatalf("SetHighWaterMark (advance): %v", err)
+	}
+
+	got, err := s.GetHighWaterMark("r", "f", "x")
+	if err != nil {
+		t.Fatalf("GetHighWaterMark: %v", err)
+	}
+	if got.Sha != "new" || !got.CommittedAt.Equal(second) {
+		t.Errorf("cursor = {%q, %v}, want {new, %v}", got.Sha, got.CommittedAt, second)
 	}
 }
