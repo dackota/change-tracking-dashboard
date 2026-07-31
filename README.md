@@ -360,6 +360,46 @@ that the built-in default rules produce only `replace-destroy`, `security`,
 and `cost-tripwire`; `major-version-bump` requires a configured rule using
 `semverBump`.
 
+### `GET /api/changesets/detail`
+
+Returns a single changeset — every change that commit produced — identified by
+`repo` and `commitSha` (both required).
+
+This endpoint serves **two representations, selected by the `Accept` header**:
+
+| `Accept` contains                   | Response                        |
+| ----------------------------------- | ------------------------------- |
+| `application/json` (explicitly)     | JSON                            |
+| anything else, including `*/*`      | HTML fragment (the default)     |
+
+```bash
+curl -H "Accept: application/json" \
+  "https://changes.dackota.com/api/changesets/detail?repo=infra-repo&commitSha=abc123"
+```
+
+**A wildcard is deliberately not treated as opting in.** `*/*` gets HTML, and
+so does an absent `Accept` header. This is not strict-by-pedantry: the
+dashboard's own UI fetches this endpoint with `XMLHttpRequest` and never sets
+an `Accept` header, so the browser sends `*/*`. If a wildcard counted as
+asking for JSON, the live UI would receive JSON where it expects HTML
+fragments to splice into the page. If you want JSON, name it.
+
+The JSON body is the **same changeset shape the list endpoint emits** —
+identical field names, including the computed `risk[]` and `impact`
+projections — so one parser handles both endpoints.
+
+When JSON is negotiated, errors are JSON objects too, so a single code path
+parses every response:
+
+```json
+{ "error": "not found" }
+```
+
+Status codes are the same in both representations: `400` when `repo` or
+`commitSha` is missing, `404` for an unknown changeset, `500` on an internal
+failure. Error messages are generic and never echo request values back, and a
+`404` reveals nothing about whether the repo or the commit exists.
+
 ## Private repositories (GitHub App)
 
 To track private repos, set `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, and

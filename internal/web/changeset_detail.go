@@ -43,14 +43,28 @@ func NewChangesetDetailHandler(st *store.Store, opts ...ChangesetDetailOption) *
 }
 
 // ServeHTTP satisfies http.Handler.
+//
+// One set of parameter parsing, one store lookup, and one existence gate serve
+// both representations; the handler branches only at the final render step.
+// The gates are deliberately not duplicated per representation — a security or
+// existence check written twice is a check that will eventually be fixed once,
+// and the two representations would then disagree about what exists.
 func (h *ChangesetDetailHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Security headers apply to every response regardless of representation or
+	// status, so they are set before anything can return.
 	setSecurityHeaders(w.Header())
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	// Negotiation depends only on the Accept header, so it is decided up front
+	// and every exit path below — including the error paths — honors it.
+	// Content-Type is deliberately NOT set here: it is set by whichever
+	// renderer actually runs, so it can never describe a body that was not
+	// produced.
+	json := wantsJSON(r.Header.Get("Accept"))
 
 	repo := r.URL.Query().Get("repo")
 	commitSha := r.URL.Query().Get("commitSha")
 	if repo == "" || commitSha == "" {
-		http.Error(w, genericBadRequestMsg, http.StatusBadRequest)
+		writeDetailError(r, w, json, http.StatusBadRequest, genericBadRequestMsg)
 		return
 	}
 
@@ -65,15 +79,55 @@ func (h *ChangesetDetailHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 	})
 	if err != nil {
 		logger.Error("web: get changeset detail", "error", err)
-		http.Error(w, genericServerErrorMsg, http.StatusInternalServerError)
+		writeDetailError(r, w, json, http.StatusInternalServerError, genericServerErrorMsg)
 		return
 	}
 	if !found {
-		http.NotFound(w, r)
+		// The existence gate runs before any representation is chosen, so an
+		// unknown changeset is a 404 in both forms with no extra distinguishing
+		// signal in either — a caller cannot probe for which commits exist by
+		// switching representations.
+		writeDetailError(r, w, json, http.StatusNotFound, genericNotFoundMsg)
 		return
 	}
 
-	if err := renderChangesetDetail(w, cs, riskRulesOrDefault(h.risk)); err != nil {
+	rules := riskRulesOrDefault(h.risk)
+
+	if json {
+		// The same wire shape the list endpoint emits, including the computed
+		// risk[] and impact projections, so a client parses one changeset type
+		// everywhere rather than a detail-specific variant.
+		writeJSON(r, w, http.StatusOK, toChangesetJSON(cs, rules))
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := renderChangesetDetail(w, cs, rules); err != nil {
 		logResponseWriteError(r.Context(), "web: render changeset detail", err)
 	}
+}
+
+// genericNotFoundMsg is the only text sent for an unknown changeset. It says
+// nothing about whether the repo exists, the commit exists, or neither.
+const genericNotFoundMsg = "not found"
+
+// errorJSON is the wire shape for an error when JSON was negotiated, so a
+// client parses every response — success or failure — with one code path.
+// The message is always one of the package's generic constants; caller input
+// is never interpolated into it.
+type errorJSON struct {
+	Error string `json:"error"`
+}
+
+// writeDetailError responds with status and a generic message in whichever
+// representation was negotiated. The HTML form keeps http.Error's existing
+// plain-text body byte-for-byte, so non-JSON clients see exactly what they
+// saw before negotiation existed.
+func writeDetailError(r *http.Request, w http.ResponseWriter, asJSON bool, status int, msg string) {
+	if asJSON {
+		writeJSON(r, w, status, errorJSON{Error: msg})
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	http.Error(w, msg, status)
 }
