@@ -66,14 +66,22 @@ func NewChartDiffHandler(engine ChartDiffEngine, resolver ChartRepoResolver, che
 
 // ServeHTTP satisfies http.Handler.
 func (h *ChartDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Security headers apply to every response regardless of representation or
+	// status, so they are set before anything can return.
 	setSecurityHeaders(w.Header())
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	// Negotiation depends only on the Accept header, so it is decided up front
+	// and every exit path below — including the error paths — honors it.
+	// Content-Type is deliberately NOT set here: it is set by whichever
+	// renderer actually runs, so it can never describe a body that was not
+	// produced.
+	json := wantsJSON(r.Header.Get("Accept"))
 
 	repo := r.URL.Query().Get("repo")
 	commitSha := r.URL.Query().Get("commitSha")
 	path := r.URL.Query().Get("path")
 	if repo == "" || commitSha == "" || path == "" {
-		http.Error(w, genericBadRequestMsg, http.StatusBadRequest)
+		writeDetailError(r, w, json, http.StatusBadRequest, genericBadRequestMsg)
 		return
 	}
 
@@ -90,9 +98,10 @@ func (h *ChartDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// itself rendered from (see changeset_detail_render.go's TenantPath). A
 	// path with no matching chart-kind Change (wrong tenant, a value-only
 	// change, or nothing at all) is rejected exactly like an unknown
-	// changeset — same http.NotFound call, no distinguishing signal — so a
-	// caller can't tell "unknown commit" apart from "known commit, wrong
-	// path".
+	// changeset — same writeDiffNotFound call, no distinguishing signal, in
+	// whichever representation was negotiated — so a caller can't tell
+	// "unknown commit" apart from "known commit, wrong path", and can't learn
+	// the difference by switching Accept headers either.
 	logger := telemetry.LoggerFromContext(r.Context())
 
 	var cs changeset.Changeset
@@ -104,11 +113,11 @@ func (h *ChartDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		logger.Error("web: check changeset existence for chart diff", "repo", repo, "tenant", path, "commitSha", commitSha, "error", err)
-		http.Error(w, genericServerErrorMsg, http.StatusInternalServerError)
+		writeDetailError(r, w, json, http.StatusInternalServerError, genericServerErrorMsg)
 		return
 	}
 	if !found || !hasChartChangeAt(cs, path) {
-		http.NotFound(w, r)
+		writeDiffNotFound(r, w, json)
 		return
 	}
 
@@ -120,7 +129,7 @@ func (h *ChartDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		logger.Error("web: resolve chart repo for chart diff", "repo", repo, "tenant", path, "commitSha", commitSha, "error", err)
-		http.Error(w, genericServerErrorMsg, http.StatusInternalServerError)
+		writeDetailError(r, w, json, http.StatusInternalServerError, genericServerErrorMsg)
 		return
 	}
 
@@ -130,6 +139,12 @@ func (h *ChartDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		CommitSha:  commitSha,
 	})
 
+	if json {
+		writeJSON(r, w, http.StatusOK, toChartDiffJSON(outcome))
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := renderChartDiff(w, outcome); err != nil {
 		logResponseWriteError(r.Context(), "web: render chart diff", err, "repo", repo, "tenant", path, "commitSha", commitSha)
 	}

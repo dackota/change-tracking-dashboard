@@ -4,7 +4,10 @@
 // endpoints learn to speak JSON.
 package web
 
-import "strings"
+import (
+	"net/http"
+	"strings"
+)
 
 // jsonMediaType is the one media type that opts a request into JSON.
 const jsonMediaType = "application/json"
@@ -41,4 +44,25 @@ func wantsJSON(accept string) bool {
 		}
 	}
 	return false
+}
+
+// writeDiffNotFound responds 404 in whichever representation was negotiated,
+// for the two diff endpoints (chart-diff, plan-diff).
+//
+// It exists alongside writeDetailError rather than reusing it because the diff
+// endpoints' HTML 404 has always been http.NotFound's body ("404 page not
+// found"), not the detail endpoint's generic message. Adding a JSON
+// representation must not disturb what a non-JSON caller sees, so the HTML
+// branch keeps calling http.NotFound and stays byte-for-byte what it was.
+//
+// Both of the endpoints' 404 causes — an unknown changeset, and a known
+// changeset whose Changes contain no matching path — route through this one
+// function in both representations, so the two remain indistinguishable and a
+// caller cannot enumerate ingested commits by switching Accept headers.
+func writeDiffNotFound(r *http.Request, w http.ResponseWriter, asJSON bool) {
+	if asJSON {
+		writeJSON(r, w, http.StatusNotFound, errorJSON{Error: genericNotFoundMsg})
+		return
+	}
+	http.NotFound(w, r)
 }
