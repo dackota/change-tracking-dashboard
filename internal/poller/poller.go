@@ -401,41 +401,6 @@ func (p *Poller) resolveFilePaths(ctx context.Context, glob string) ([]string, e
 	return paths, err
 }
 
-// fileHistory is one file's walked commit history, oldest first — the single
-// shared walk result every field in a tracker group replays against.
-type fileHistory []domain.CommitSnapshot
-
-// since returns the commits strictly after sha, plus the snapshot at sha.
-// When sha is absent from the history (e.g. the cursor's commit was rewritten
-// away) the whole history is returned with found=false, matching
-// gitsource.WalkCommits — which walks to the root when it never meets its stop
-// commit, leaving the caller with no baseline to diff from.
-func (h fileHistory) since(sha string) (rest fileHistory, at domain.CommitSnapshot, found bool) {
-	for i, snap := range h {
-		if snap.CommitSha == sha {
-			return h[i+1:], snap, true
-		}
-	}
-	return h, domain.CommitSnapshot{}, false
-}
-
-// notBefore returns the commits from HEAD back to — but excluding — the first
-// commit older than bound. It stops at the boundary rather than filtering
-// across it, reproducing gitsource.WalkCommits' own break-on-boundary
-// semantics exactly, so a non-monotonic author date truncates identically
-// whether the bound was applied during the walk or afterwards here.
-func (h fileHistory) notBefore(bound time.Time) fileHistory {
-	if bound.IsZero() {
-		return h
-	}
-	for i := len(h) - 1; i >= 0; i-- {
-		if h[i].CommittedAt.Before(bound) {
-			return h[i+1:]
-		}
-	}
-	return h
-}
-
 // pollFileGroup runs one polling cycle for a single concrete file path across
 // every field in the group: read each field's own HWM, walk the file's commit
 // history ONCE (bounded by the oldest boundary any field still needs), then
@@ -525,13 +490,13 @@ func (p *Poller) getHighWaterMark(ctx context.Context, logger *slog.Logger, t do
 }
 
 // walkHistory wraps the group's one gitsource.WalkCommits call in its own
-// child span. It always walks from HEAD with no stop commit: the group's
-// fields have independent cursors, so the shared walk carries the union of
-// what any of them needs and each field slices its own range out of it.
-func (p *Poller) walkHistory(ctx context.Context, logger *slog.Logger, t domain.Tracker, filePath string, bound time.Time) (fileHistory, error) {
-	var history fileHistory
+// child span. The group's fields have independent cursors and backfill
+// windows, so this one walk carries the union of what any of them needs and
+// each field takes its own slice out of it via History.Since/NotBefore.
+func (p *Poller) walkHistory(ctx context.Context, logger *slog.Logger, t domain.Tracker, filePath string, bound time.Time) (gitsource.History, error) {
+	var history gitsource.History
 	err := telemetry.WithSpan(ctx, p.tracer, "gitsource.walk_commits", func(ctx context.Context) error {
-		v, err := p.src.WalkCommits(ctx, filePath, "", bound)
+		v, err := p.src.WalkCommits(ctx, filePath, bound)
 		history = v
 		return err
 	})
@@ -546,16 +511,16 @@ func (p *Poller) walkHistory(ctx context.Context, logger *slog.Logger, t domain.
 // file history: pick out the field's own range (from its cursor, or from its
 // backfill boundary on first run), diff consecutive snapshots, attach facets
 // from this file's own path, and persist Changes plus the field's new HWM.
-func (p *Poller) pollFieldHistory(ctx context.Context, logger *slog.Logger, m groupMember, filePath, hwm string, history fileHistory) error {
+func (p *Poller) pollFieldHistory(ctx context.Context, logger *slog.Logger, m groupMember, filePath, hwm string, history gitsource.History) error {
 	// We need a "before" snapshot to diff against. When there is no HWM yet
 	// (first run), we treat the state before the oldest snapshot as absent.
 	var prevField domain.TrackedField
-	var snapshots fileHistory
+	var snapshots gitsource.History
 
 	if hwm == "" {
 		// First run: bound this field to its own backfill window, which may be
 		// narrower than the shared walk's.
-		snapshots = history.notBefore(p.backfillBound(m.tracker))
+		snapshots = history.NotBefore(p.backfillBound(m.tracker))
 		if len(snapshots) == 0 {
 			return nil
 		}
@@ -580,7 +545,7 @@ func (p *Poller) pollFieldHistory(ctx context.Context, logger *slog.Logger, m gr
 		// state at the HWM commit to compute the diff for the first new commit.
 		// The shared walk is unbounded whenever any field has a cursor, so an
 		// HWM commit predating every backfill window is still present here.
-		rest, at, found := history.since(hwm)
+		rest, at, found := history.Since(hwm)
 		if len(rest) == 0 {
 			return nil // nothing new since last poll
 		}

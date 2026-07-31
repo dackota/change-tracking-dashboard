@@ -193,11 +193,14 @@ func isGitRepo(path string) bool {
 }
 
 // WalkCommits returns all commits that touched filePath, in chronological
-// order (oldest first). If sinceCommitSha is non-empty, only commits strictly
-// after that SHA are returned (used for incremental polling). If notBefore is
-// non-zero, commits whose author-time is strictly before notBefore are excluded
-// (used to bound the backfill window on first run). Pass a zero time.Time for
-// notBefore to apply no lower time bound.
+// order (oldest first). If notBefore is non-zero, the walk stops at the first
+// commit whose author-time is before it, bounding how far back the history
+// goes. Pass a zero time.Time to apply no lower bound.
+//
+// notBefore is the only bound the walk itself takes. A caller wanting a
+// narrower range than it asked for — several fields resuming from different
+// cursors out of one shared walk, say — narrows the returned History with
+// Since or NotBefore, which stop on the same terms this walk does.
 //
 // ctx is used only for log correlation: the commit-cap warning below is
 // logged via telemetry.LoggerFromContext(ctx) so it carries the trace_id/
@@ -213,7 +216,7 @@ func isGitRepo(path string) bool {
 //
 // This skeleton handles a single explicit file path. Glob expansion across many
 // files (fan-out from a Tracker.FileGlob) is a seam left for the poller layer.
-func (s *Source) WalkCommits(ctx context.Context, filePath, sinceCommitSha string, notBefore time.Time) ([]domain.CommitSnapshot, error) {
+func (s *Source) WalkCommits(ctx context.Context, filePath string, notBefore time.Time) (History, error) {
 	head, err := s.repo.Head()
 	if err != nil {
 		return nil, fmt.Errorf("gitsource: get HEAD: %w", err)
@@ -233,8 +236,7 @@ func (s *Source) WalkCommits(ctx context.Context, filePath, sinceCommitSha strin
 
 	// Collect all qualifying commits. git.Log returns newest first; we reverse
 	// at the end to give the caller oldest-first ordering.
-	var raw []domain.CommitSnapshot
-	stopAt := plumbing.NewHash(sinceCommitSha)
+	var raw History
 
 	for {
 		commit, err := iter.Next()
@@ -245,16 +247,11 @@ func (s *Source) WalkCommits(ctx context.Context, filePath, sinceCommitSha strin
 			return nil, fmt.Errorf("gitsource: iterate commits: %w", err)
 		}
 
-		// Stop at the high-water mark (exclusive — the HWM commit was already
-		// processed in a prior run).
-		if sinceCommitSha != "" && commit.Hash == stopAt {
-			break
-		}
-
-		// Skip (stop walking) once we reach commits older than the backfill
-		// window. The walk is newest-first, so once we cross the boundary all
-		// subsequent commits are also out-of-window.
-		if !notBefore.IsZero() && commit.Author.When.Before(notBefore) {
+		// Stop once we reach commits older than the backfill window. The walk
+		// is newest-first, so once we cross the boundary all subsequent
+		// commits are also out-of-window. NotBefore applies this same
+		// predicate to an already-walked History.
+		if outOfWindow(commit.Author.When, notBefore) {
 			break
 		}
 
