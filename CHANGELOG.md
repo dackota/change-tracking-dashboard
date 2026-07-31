@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.1](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.17.0...app-v0.17.1) (2026-07-31)
+
+
+### Bug Fixes
+
+* **web:** derive tenant paths with path.Dir, not filepath.Dir ([#163](https://github.com/dackota/change-tracking-dashboard/issues/163)) ([fb8cddc](https://github.com/dackota/change-tracking-dashboard/commit/fb8cddc16dedee65d398eaab97564db0ce5e05b8)), closes [#162](https://github.com/dackota/change-tracking-dashboard/issues/162)
+
 ## [0.17.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.16.0...app-v0.17.0) (2026-07-31)
 
 
