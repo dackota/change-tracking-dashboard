@@ -1,15 +1,15 @@
-package chartdiff
+package subtree
 
 import (
 	"encoding/binary"
 	"strings"
 )
 
-// cacheKey identifies one Chart diff computation: the repo, the tenant chart
-// directory, and both sides of the diff (the resolved first-parent SHA and
-// the change commit SHA). Per ADR 0002, the cache stores the Outcome —
+// cacheKey identifies one diff computation: the repo, the tenant subtree
+// path, and both sides of the diff (the resolved first-parent SHA and
+// the change commit SHA). The cache stores the domain Outcome —
 // including a classified failure — keyed on this tuple, so a known-bad,
-// known-unavailable, or known-exceeded-limits render is never re-attempted.
+// known-unavailable, or known-exceeded-limits computation is never retried.
 //
 // A root commit (no first parent) never has a parentSha to key on; Engine.Diff
 // classifies that case as NoPriorVersion before a cacheKey is ever

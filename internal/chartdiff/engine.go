@@ -1,38 +1,38 @@
-// Package chartdiff is the lazy compute engine for a Chart diff (see
-// CONTEXT.md and ADR 0002). Given a chart-kind Change (repo, tenant chart
-// directory, commit SHA), Engine.Diff resolves old = the commit's first
-// parent tree and new = the commit tree via a subtree.Repo (gitsource), renders
-// both via a Renderer (chartrender), diffs the result via manifestdiff, and
-// classifies any unavailability into one of a fixed, safe set of Outcome
-// Kinds — never leaking internal Helm/git error detail to the caller.
+// Package chartdiff is the lazy compute engine for a Chart diff. Given a
+// chart-kind Change (repo, tenant chart directory, commit SHA), Engine.Diff
+// resolves old = the commit's first parent tree and new = the commit tree,
+// renders both via a Renderer (chartrender), diffs the result via
+// manifestdiff, and classifies any unavailability into one of a fixed, safe
+// set of Outcome Kinds — never leaking internal Helm/git error detail to the
+// caller.
 //
-// Engine owns ADR 0002's resource bounds: an in-memory LRU cache (keyed by
-// repo/tenant/parent-SHA/commit-SHA, storing failures too, so a known-bad
-// render is never re-attempted), a per-render timeout, a render concurrency
-// cap (semaphore), and the manifestdiff output size ceiling. See Config.
+// The materialize/cache/bounds orchestration behind that — an in-memory LRU
+// cache (keyed by repo/tenant/parent-SHA/commit-SHA, storing failures too, so
+// a known-bad render is never re-attempted), single-flight coalescing, a
+// per-render timeout, a render concurrency cap, a dedicated materialize
+// timeout and concurrency cap, and the materialization ceilings enforced in
+// gitsource — lives in internal/subtree and is shared with plandiff. This
+// package supplies only what is specific to a Chart diff: how to render a
+// directory, how to diff two rendered manifest sets, and what this package's
+// Outcome Kinds mean (see chartDomain in domain.go). Config below is this
+// package's own public, documented bounds, translated into the engine's at
+// construction.
 package chartdiff
 
 import (
 	"context"
-	"errors"
-	"fmt"
 
-	"golang.org/x/sync/singleflight"
-
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/dackota/change-tracking-dashboard/internal/gitsource"
-	"github.com/dackota/change-tracking-dashboard/internal/lru"
 	"github.com/dackota/change-tracking-dashboard/internal/manifestdiff"
 	"github.com/dackota/change-tracking-dashboard/internal/subtree"
-	"github.com/dackota/change-tracking-dashboard/internal/telemetry"
 )
 
 // instrumentationName scopes the tracer Engine obtains from the injected (or
 // default global) TracerProvider — used for every downstream git/render call
 // Engine.Diff's call graph makes (gitsource.first_parent,
-// gitsource.materialize_subtree, chartrender.render; criterion 5).
+// gitsource.materialize_subtree, chartrender.render).
 const instrumentationName = "github.com/dackota/change-tracking-dashboard/internal/chartdiff"
 
 // Request identifies one Chart diff to compute: the tenant chart directory
@@ -49,40 +49,26 @@ type Request struct {
 }
 
 // Engine is the Chart diff compute engine. Construct one with NewEngine; it
-// is safe for concurrent use by multiple goroutines (its cache, semaphores,
-// and single-flight group are all internally synchronized).
+// is safe for concurrent use by multiple goroutines.
 type Engine struct {
-	cfg      Config
-	renderer Renderer
-	cache    *lru.Cache[cacheKey, Outcome]
-	// sem bounds concurrent render invocations (Config.ConcurrencyCap).
-	sem chan struct{}
-	// materializeSem bounds concurrent subtree.Repo.MaterializeSubtreeBounded
-	// invocations (Config.MaterializeConcurrencyCap) — a dedicated
-	// semaphore, not shared with sem, because materialize (a disk/CPU tree
-	// walk) and render (a CPU-bound Helm template execution) have different
-	// resource profiles; see Config.MaterializeConcurrencyCap's doc for the
-	// full rationale.
-	materializeSem chan struct{}
-	group          singleflight.Group
-	// tracer wraps every downstream git/render call Diff's call graph makes
-	// in its own child span (telemetry.WithSpan) — see WithTracerProvider.
-	tracer trace.Tracer
+	inner *subtree.Engine[manifestdiff.Manifest, Outcome]
 }
 
 // Option configures optional Engine dependencies (telemetry providers) at
 // construction time. See WithTracerProvider.
-type Option func(*Engine)
+type Option func(*options)
+
+type options struct {
+	tracerProvider trace.TracerProvider
+}
 
 // WithTracerProvider wires tp as the source of the tracer Engine.Diff uses
 // for its own span and for every downstream git/render call's child span
-// (gitsource.first_parent, gitsource.materialize_subtree, chartrender.render
-// — criterion 5). Tests inject an sdktrace.TracerProvider backed by an
+// (gitsource.first_parent, gitsource.materialize_subtree,
+// chartrender.render). Tests inject an sdktrace.TracerProvider backed by an
 // in-memory exporter to assert on emitted spans without a real OTLP backend.
 func WithTracerProvider(tp trace.TracerProvider) Option {
-	return func(e *Engine) {
-		e.tracer = tp.Tracer(instrumentationName)
-	}
+	return func(o *options) { o.tracerProvider = tp }
 }
 
 // NewEngine constructs an Engine from cfg (resolved and validated via
@@ -90,35 +76,53 @@ func WithTracerProvider(tp trace.TracerProvider) Option {
 // adapter over chartrender.Render; tests inject a fake. Without a
 // WithTracerProvider Option, tracing defaults to the ambient global OTel
 // TracerProvider (a safe no-op until cmd/dashboard/main.go calls
-// telemetry.Init and registers the real one) — Diff behaves identically to
-// before this package was instrumented.
+// telemetry.Init and registers the real one).
 func NewEngine(cfg Config, renderer Renderer, opts ...Option) (*Engine, error) {
 	resolved, err := cfg.Resolved()
 	if err != nil {
 		return nil, err
 	}
 
-	cache, err := lru.New[cacheKey, Outcome](resolved.CacheEntries)
-	if err != nil {
-		return nil, fmt.Errorf("chartdiff: create cache: %w", err)
-	}
-
 	if renderer == nil {
 		renderer = helmRenderer{}
 	}
 
-	e := &Engine{
-		cfg:            resolved,
-		renderer:       renderer,
-		cache:          cache,
-		sem:            make(chan struct{}, resolved.ConcurrencyCap),
-		materializeSem: make(chan struct{}, resolved.MaterializeConcurrencyCap),
-		tracer:         otel.GetTracerProvider().Tracer(instrumentationName),
-	}
+	var o options
 	for _, opt := range opts {
-		opt(e)
+		opt(&o)
 	}
-	return e, nil
+	var coreOpts []subtree.Option
+	if o.tracerProvider != nil {
+		coreOpts = append(coreOpts, subtree.WithTracerProvider(o.tracerProvider))
+	}
+
+	inner, err := subtree.NewEngine[manifestdiff.Manifest, Outcome](
+		subtree.Config{
+			ProduceTimeout:            resolved.RenderTimeout,
+			ConcurrencyCap:            resolved.ConcurrencyCap,
+			CacheEntries:              resolved.CacheEntries,
+			MaterializeTimeout:        resolved.MaterializeTimeout,
+			MaterializeConcurrencyCap: resolved.MaterializeConcurrencyCap,
+			Materialize: gitsource.MaterializeBounds{
+				MaxTotalBytes: resolved.MaxMaterializedBytes,
+				MaxFiles:      resolved.MaxMaterializedFiles,
+				MaxDepth:      resolved.MaxMaterializedDepth,
+				MaxTreeNodes:  resolved.MaxMaterializedNodes,
+			},
+			Labels: subtree.Labels{
+				Name:                "chartdiff",
+				ProduceVerb:         "render",
+				ProduceSpanName:     "chartrender.render",
+				InstrumentationName: instrumentationName,
+			},
+		},
+		chartDomain{renderer: renderer, maxUnifiedBytes: resolved.MaxUnifiedBytes},
+		coreOpts...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &Engine{inner: inner}, nil
 }
 
 // Diff computes (or returns the cached) Chart diff Outcome for req against
@@ -129,97 +133,17 @@ func NewEngine(cfg Config, renderer Renderer, opts ...Option) (*Engine, error) {
 //   - repo.FirstParent reports gitsource.ErrNoParent (req.CommitSha is a
 //     root commit) -> NoPriorVersion.
 //   - materialization exceeds a configured bound
-//     (gitsource.ErrMaterializeBoundsExceeded), or a render exceeds
-//     Config.RenderTimeout -> ExceededLimits.
+//     (gitsource.ErrMaterializeBoundsExceeded), or a materialize/render call
+//     exceeds its configured timeout -> ExceededLimits.
 //   - chartrender reports ReasonDependencyNotVendored -> Unavailable.
 //   - chartrender reports ReasonMalformedChart, or any other unclassified
-//     failure resolving/materializing/rendering either side (a generic,
-//     safe bucket — the specific cause is logged server-side, never
-//     returned) -> CouldNotRender.
+//     failure resolving/materializing/rendering either side (a generic, safe
+//     bucket — the specific cause is logged server-side, never returned) ->
+//     CouldNotRender.
 //   - both sides render -> OK, with the manifestdiff.Result.
 //
-// Known limitation: e.group.Do coalesces concurrent Diff calls for the same
-// key onto a single computation, which runs under only the *leader's* ctx
-// (the caller whose call actually triggered computeAndCache). A follower
-// call coalesced onto that in-flight computation waits for it to finish
-// regardless of its own ctx being cancelled — singleflight has no per-caller
-// cancellation. This is inherent to singleflight, pre-existing, and not
-// addressed here; it does not affect the leader, and a follower is still
-// bounded by the leader's own render timeout / bounds checks.
+// See chartDomain.Classify for the mapping itself, and subtree.Engine.Diff
+// for the single-flight cancellation limitation Diff inherits.
 func (e *Engine) Diff(ctx context.Context, repo subtree.Repo, req Request) Outcome {
-	var parentSha string
-	err := telemetry.WithSpan(ctx, e.tracer, "gitsource.first_parent", func(context.Context) error {
-		v, err := repo.FirstParent(req.CommitSha)
-		parentSha = v
-		return err
-	})
-	if err != nil {
-		if errors.Is(err, gitsource.ErrNoParent) {
-			return Outcome{Kind: NoPriorVersion}
-		}
-		telemetry.LoggerFromContext(ctx).Error("chartdiff: resolve first parent",
-			"repo", req.RepoName, "tenant", req.TenantPath, "commit", req.CommitSha, "error", err)
-		return Outcome{Kind: CouldNotRender}
-	}
-
-	key := cacheKey{repoName: req.RepoName, tenantPath: req.TenantPath, parentSha: parentSha, commitSha: req.CommitSha}
-
-	if cached, ok := e.cache.Get(key); ok {
-		return cached
-	}
-
-	// group.Do coalesces concurrent Diff calls for the same key into a
-	// single computation: only the first caller materializes and renders,
-	// every concurrent caller for the same key shares its result. This is
-	// what keeps the renderer invocation count at "at most once per key"
-	// even under a concurrent burst of identical requests, not just on the
-	// already-cached fast path above.
-	v, _, _ := e.group.Do(key.String(), func() (interface{}, error) {
-		return e.computeAndCache(ctx, repo, req, key), nil
-	})
-	return v.(Outcome)
-}
-
-// computeAndCache re-checks the cache (closing the race between Diff's cache
-// check and this call joining the single-flight group — another goroutine
-// may have already populated the cache in between), computes the Outcome on
-// a genuine miss, and caches it (including a classified failure) before
-// returning.
-func (e *Engine) computeAndCache(ctx context.Context, repo subtree.Repo, req Request, key cacheKey) Outcome {
-	if cached, ok := e.cache.Get(key); ok {
-		return cached
-	}
-
-	outcome := e.compute(ctx, repo, req, key.parentSha)
-	e.cache.Add(key, outcome)
-	return outcome
-}
-
-// compute materializes and renders both sides of the diff and returns the
-// classified Outcome. It never touches the cache; computeAndCache owns that.
-func (e *Engine) compute(ctx context.Context, repo subtree.Repo, req Request, parentSha string) Outcome {
-	bounds := gitsource.MaterializeBounds{
-		MaxTotalBytes: e.cfg.MaxMaterializedBytes,
-		MaxFiles:      e.cfg.MaxMaterializedFiles,
-		MaxDepth:      e.cfg.MaxMaterializedDepth,
-		MaxTreeNodes:  e.cfg.MaxMaterializedNodes,
-	}
-
-	oldManifests, failure, ok := e.materializeAndRender(ctx, repo, req, parentSha, bounds, "old")
-	if !ok {
-		return failure
-	}
-
-	newManifests, failure, ok := e.materializeAndRender(ctx, repo, req, req.CommitSha, bounds, "new")
-	if !ok {
-		return failure
-	}
-
-	diff := manifestdiff.Diff(manifestdiff.Params{
-		Old:             oldManifests,
-		New:             newManifests,
-		MaxUnifiedBytes: e.cfg.MaxUnifiedBytes,
-	})
-
-	return Outcome{Kind: OK, Diff: diff}
+	return e.inner.Diff(ctx, repo, subtree.Request(req))
 }

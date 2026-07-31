@@ -1,4 +1,4 @@
-package chartdiff
+package subtree
 
 import (
 	"testing"
