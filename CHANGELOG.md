@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.17.1...app-v0.18.0) (2026-07-31)
+
+
+### Features
+
+* **risk:** warn when a risk filter names an unconfigured class ([#165](https://github.com/dackota/change-tracking-dashboard/issues/165)) ([b52d42e](https://github.com/dackota/change-tracking-dashboard/commit/b52d42e3dff3ae64604c8c2d66a8e31cdf89b30f)), closes [#157](https://github.com/dackota/change-tracking-dashboard/issues/157)
+
 ## [0.17.1](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.17.0...app-v0.17.1) (2026-07-31)
 
 
