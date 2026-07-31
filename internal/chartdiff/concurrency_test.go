@@ -68,12 +68,26 @@ func TestDiff_ConcurrencyCapOne_SerializesRenders(t *testing.T) {
 // check: raising the cap to 2 does let two renders overlap, proving the
 // serialization above is actually caused by the cap (not, say, an accidental
 // global lock).
+//
+// The overlap is established by a rendezvous rather than by sleeping: each
+// render announces its arrival and then blocks until the other one arrives,
+// so with a cap of 2 the two are provably in flight at the same instant no
+// matter how the scheduler interleaves them. An earlier version had both
+// renders sleep 30ms and hoped they landed in the same window, which failed
+// intermittently on a loaded machine -- and would fail more often under
+// -race, where every render is slower. The timeout is the failure path: if
+// the cap wrongly serializes, the first render waits it out and the
+// assertion below reports the max it actually saw.
 func TestDiff_ConcurrencyCapTwo_AllowsTwoSimultaneousRenders(t *testing.T) {
 	t.Parallel()
 
+	const rendezvousTimeout = 10 * time.Second
+
 	var inFlight int32
 	var maxObservedInFlight int32
+	var arrivals int32
 	gate := make(chan struct{})
+	bothArrived := make(chan struct{})
 
 	repo := &fakeChartRepo{
 		firstParentFn: func(sha string) (string, error) { return "parent-of-" + sha, nil },
@@ -87,7 +101,13 @@ func TestDiff_ConcurrencyCapTwo_AllowsTwoSimultaneousRenders(t *testing.T) {
 					break
 				}
 			}
-			time.Sleep(30 * time.Millisecond)
+			if atomic.AddInt32(&arrivals, 1) == 2 {
+				close(bothArrived)
+			}
+			select {
+			case <-bothArrived:
+			case <-time.After(rendezvousTimeout):
+			}
 			atomic.AddInt32(&inFlight, -1)
 			return &chartrender.Result{}, nil
 		},

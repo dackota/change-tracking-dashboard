@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/quick"
 
@@ -40,11 +41,11 @@ func (f *fakeChartDiffEngine) Diff(ctx context.Context, repo subtree.Repo, req c
 // resolver is ever reached.
 type fakeRepoResolver struct {
 	fn     func(repo string) (subtree.Repo, error)
-	called bool
+	called atomic.Bool
 }
 
 func (f *fakeRepoResolver) ResolveRepo(repo string) (subtree.Repo, error) {
-	f.called = true
+	f.called.Store(true)
 	return f.fn(repo)
 }
 
@@ -98,22 +99,22 @@ func neverFoundChecker() *fakeChangesetExistenceChecker {
 // looks right. Unlike fakeRepoResolver it never panics, so "was it called"
 // is the assertion rather than a panic.
 type spyRepoResolver struct {
-	called bool
+	called atomic.Bool
 }
 
 func (s *spyRepoResolver) ResolveRepo(string) (subtree.Repo, error) {
-	s.called = true
+	s.called.Store(true)
 	return stubRepo{}, nil
 }
 
 // spyChartDiffEngine is a web.ChartDiffEngine test double that records
 // whether it was ever invoked, for the same reason as spyRepoResolver.
 type spyChartDiffEngine struct {
-	called bool
+	called atomic.Bool
 }
 
 func (s *spyChartDiffEngine) Diff(context.Context, subtree.Repo, chartdiff.Request) chartdiff.Outcome {
-	s.called = true
+	s.called.Store(true)
 	return chartdiff.Outcome{Kind: chartdiff.OK}
 }
 
@@ -234,10 +235,10 @@ func TestChartDiffHandler_ExistenceCheckError_Returns500GenericWithoutLeakingDet
 	if strings.Contains(body, "/var/lib/db") || strings.Contains(body, "disk I/O error") {
 		t.Errorf("error body leaks internal detail: %q", body)
 	}
-	if resolver.called {
+	if resolver.called.Load() {
 		t.Error("ResolveRepo was called despite a checker error — must fail closed")
 	}
-	if engine.called {
+	if engine.called.Load() {
 		t.Error("engine.Diff was called despite a checker error — must fail closed")
 	}
 }
@@ -285,10 +286,10 @@ func TestChartDiffHandler_UnknownChangeset_RejectsWithoutReachingResolverOrEngin
 
 			rr := serveChartDiff(h, reqURL)
 
-			if resolver.called {
+			if resolver.called.Load() {
 				t.Error("ResolveRepo was called for a never-ingested (repo, commitSha) pair — security gate bypassed")
 			}
-			if engine.called {
+			if engine.called.Load() {
 				t.Error("engine.Diff was called for a never-ingested (repo, commitSha) pair — security gate bypassed")
 			}
 			if rr.Code != http.StatusNotFound {
@@ -355,10 +356,10 @@ func TestChartDiffHandler_PathNotInChangeset_RejectsWithoutReachingResolverOrEng
 
 			rr := serveChartDiff(h, reqURL)
 
-			if resolver.called {
+			if resolver.called.Load() {
 				t.Error("ResolveRepo was called for a path with no matching chart-kind Change — security gate bypassed")
 			}
-			if engine.called {
+			if engine.called.Load() {
 				t.Error("engine.Diff was called for a path with no matching chart-kind Change — security gate bypassed")
 			}
 			if rr.Code != http.StatusNotFound {
@@ -424,7 +425,7 @@ func TestChartDiffHandler_NeverIngestedRepoCommitPair_NeverReachesResolverOrEngi
 
 		rr := serveChartDiff(h, reqURL)
 
-		if resolver.called || engine.called {
+		if resolver.called.Load() || engine.called.Load() {
 			t.Logf("gate bypassed for repo=%q commitSha=%q", pair.repo, pair.commitSha)
 			return false
 		}
@@ -525,7 +526,7 @@ func TestChartDiffHandler_KnownChangesetWrongPath_NeverReachesResolverOrEngine_P
 
 		rr := serveChartDiff(h, reqURL)
 
-		if resolver.called || engine.called {
+		if resolver.called.Load() || engine.called.Load() {
 			t.Logf("gate bypassed for path=%q changeset=%+v", attempt.queryPath, attempt.cs)
 			return false
 		}
