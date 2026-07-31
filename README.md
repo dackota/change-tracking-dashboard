@@ -264,6 +264,10 @@ fails config load with an actionable error rather than silently never firing.
 | `/healthz`              | Liveness check (no dependencies).                |
 | `/api/changesets*`      | JSON + HTML fragments backing the UI.            |
 
+The sections below walk through each endpoint with worked examples. For the
+field-by-field contract — full response schemas, enum vocabularies, error
+bodies, and security headers — see [docs/api.md](docs/api.md).
+
 ### `GET /api/changesets`
 
 Returns changesets newest-first as JSON, with cursor pagination.
