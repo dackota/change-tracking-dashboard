@@ -44,9 +44,10 @@ type TrackerRaw struct {
 	PollIntervalSecondsOverride int    `yaml:"pollIntervalSeconds"`
 	BackfillDaysOverride        *int   `yaml:"backfillDays"` // pointer to distinguish 0 from absent
 	FacetRegex                  string `yaml:"facetRegex"`
-	// Engine selects the FieldExtractor backend for this tracker. Empty
-	// defaults to jq (today's only implementation). See extractor.ValidateEngine
-	// for the set of legal values.
+	// Engine selects the extractor backend for this tracker. Empty means
+	// auto-detect from each file's glob (jq unless the glob names a Terraform
+	// file). See extractor.Select for the legal values and how one is
+	// resolved.
 	Engine string       `yaml:"engine"`
 	Files  []FileConfig `yaml:"files"`
 }

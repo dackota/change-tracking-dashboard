@@ -22,14 +22,22 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
-// fakeFieldExtractor is a test double satisfying extractor.FieldExtractor
-// without running any gojq logic. Its Extract result is unreachable from the
-// real file content ("from-fake" is not derivable from the committed YAML),
-// so a persisted Change carrying it proves pollFileGroup used the injected
+// fakeFieldExtractor is a test double satisfying extractor.Selection without
+// running any gojq logic. Its Extract result is unreachable from the real file
+// content ("from-fake" is not derivable from the committed YAML), so a
+// persisted Change carrying it proves pollFileGroup used the injected
 // extractor rather than constructing its own gojq-based one internally.
+//
+// It reports its own engine name for the same reason a real Selection does:
+// the engine is part of what an extractor is, not a fact the poller tracks
+// separately, so a substituted backend names itself in logs and metrics
+// without the poller knowing anything about it.
 type fakeFieldExtractor struct {
-	field domain.TrackedField
+	engine string
+	field  domain.TrackedField
 }
+
+func (f *fakeFieldExtractor) Engine() string { return f.engine }
 
 func (f *fakeFieldExtractor) Extract(_ []byte) (domain.TrackedField, error) {
 	return f.field, nil
@@ -91,7 +99,7 @@ func TestPollFileGroup_UsesInjectedFieldExtractor(t *testing.T) {
 		t.Fatalf("facet.NewExtractor: %v", err)
 	}
 
-	fake := &fakeFieldExtractor{field: domain.TrackedField{Value: "from-fake", Present: true}}
+	fake := &fakeFieldExtractor{engine: "fake", field: domain.TrackedField{Value: "from-fake", Present: true}}
 
 	tracker := domain.Tracker{
 		Repo:         repoPath,
@@ -101,7 +109,7 @@ func TestPollFileGroup_UsesInjectedFieldExtractor(t *testing.T) {
 	}
 
 	p := New(src, st)
-	member := groupMember{tracker: tracker, engine: "jq", ex: fake, fe: fe}
+	member := groupMember{tracker: tracker, ex: fake, fe: fe}
 	errs := make([]error, 1)
 	p.pollFileGroup(context.Background(), p.logger, "Chart.yaml", []groupMember{member}, errs)
 	if errs[0] != nil {

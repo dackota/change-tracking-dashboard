@@ -307,9 +307,11 @@ func (p *Poller) PollGroup(ts []domain.Tracker) []error {
 type groupMember struct {
 	idx     int
 	tracker domain.Tracker
-	engine  string
-	ex      extractor.FieldExtractor
-	fe      *facet.Extractor
+	// ex carries its own resolved engine (ex.Engine()), so this struct never
+	// holds the engine as a second field that could fall out of step with the
+	// extractor it describes.
+	ex extractor.Selection
+	fe *facet.Extractor
 }
 
 // pollGroup holds PollGroup's business logic: compile each member's
@@ -331,10 +333,9 @@ func (p *Poller) pollGroup(ctx context.Context, logger *slog.Logger, ts []domain
 	// fails alone; the rest of the group still polls.
 	members := make([]groupMember, 0, len(ts))
 	for i, t := range ts {
-		engine := extractor.InferEngine(t.Engine, t.FileGlob)
-		ex, err := extractor.Select(engine, t.ExtractorExpr)
+		ex, err := extractor.Select(t.Engine, t.FileGlob, t.ExtractorExpr)
 		if err != nil {
-			errs[i] = fmt.Errorf("poller: select extractor (engine=%q, expr=%q): %w", engine, t.ExtractorExpr, err)
+			errs[i] = fmt.Errorf("poller: select extractor (engine=%q, glob=%q, expr=%q): %w", t.Engine, t.FileGlob, t.ExtractorExpr, err)
 			continue
 		}
 		fe, err := facet.NewExtractor(t.FacetPattern)
@@ -342,7 +343,7 @@ func (p *Poller) pollGroup(ctx context.Context, logger *slog.Logger, ts []domain
 			errs[i] = fmt.Errorf("poller: compile facet pattern %q: %w", t.FacetPattern, err)
 			continue
 		}
-		members = append(members, groupMember{idx: i, tracker: t, engine: engine, ex: ex, fe: fe})
+		members = append(members, groupMember{idx: i, tracker: t, ex: ex, fe: fe})
 	}
 	if len(members) == 0 {
 		return errs
@@ -642,7 +643,7 @@ func (p *Poller) emitChanges(ctx context.Context, logger *slog.Logger, m groupMe
 // this so a malformed or unparseable file is consistently logged and counted
 // on the poll-health/status surface no matter which site hits it.
 //
-// m.ex is typed as the extractor.FieldExtractor interface (not the concrete
+// m.ex is typed as the extractor.Selection interface (not the concrete
 // gojq-based *extractor.Extractor) so an alternate backend — e.g. the HCL
 // extractor — can be substituted without this changing at all.
 func (p *Poller) extractField(logger *slog.Logger, m groupMember, filePath string, snap domain.CommitSnapshot) (domain.TrackedField, error) {
@@ -652,10 +653,10 @@ func (p *Poller) extractField(logger *slog.Logger, m groupMember, filePath strin
 			slog.String("repo", m.tracker.Repo),
 			slog.String("filePath", filePath),
 			slog.String("commitSha", snap.CommitSha),
-			slog.String("engine", m.engine),
+			slog.String("engine", m.ex.Engine()),
 			slog.Any("error", err))
-		p.extractFailures.RecordExtractFailure(m.engine)
-		return domain.TrackedField{}, fmt.Errorf("engine=%q: %w", m.engine, err)
+		p.extractFailures.RecordExtractFailure(m.ex.Engine())
+		return domain.TrackedField{}, fmt.Errorf("engine=%q: %w", m.ex.Engine(), err)
 	}
 	return field, nil
 }

@@ -62,9 +62,10 @@ type Tracker struct {
 	ExtractorExpr string // gojq expression
 	FacetPattern  string // regex with named capture groups for facet extraction
 
-	// Engine selects which FieldExtractor implementation evaluates
-	// ExtractorExpr. Empty defaults to the jq engine (today's only
-	// implementation, unchanged behavior). See extractor.Select.
+	// Engine selects which extractor backend evaluates ExtractorExpr. Empty
+	// means auto-detect from FileGlob, which yields the jq engine for
+	// everything but Terraform files (unchanged behavior for trackers
+	// predating this field). See extractor.Select.
 	Engine string
 
 	// PollIntervalSeconds is how often this tracker is polled. Zero is not
