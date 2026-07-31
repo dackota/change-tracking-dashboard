@@ -39,6 +39,7 @@ var reservedFacetNames = map[string]struct{}{
 	"cursor": {},
 	"impact": {},
 	"limit":  {},
+	"risk":   {},
 	"since":  {},
 }
 

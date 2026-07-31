@@ -276,6 +276,7 @@ Returns changesets newest-first as JSON, with cursor pagination.
 | `cursor` | Opaque `nextCursor` from a previous response. Omit for the first page. |
 | `limit`  | Page size, clamped to 100. Defaults to 50.                             |
 | `impact` | Restrict to one or more impact tiers. Repeatable. Omit for no filter.  |
+| `risk`   | Restrict to one or more risk classes, by slug. Repeatable.             |
 | *facets* | Any configured facet name, as include/exclude filters.                  |
 
 Together `since` and `asOf` form a **half-open window** `[since, asOf)`. This is
@@ -321,6 +322,43 @@ examine. A highly selective filter can therefore return a **short page that is
 not the last page**. This changes nothing about how you paginate — keep
 following `nextCursor` until it is empty — but never infer that you are done
 from a page being shorter than `limit`.
+
+#### Filtering by risk
+
+`risk` restricts the feed to changesets carrying one or more risk classes.
+Because two of the display values are awkward in a URL, the wire uses stable
+slugs:
+
+| Slug                 | Display value        |
+| -------------------- | -------------------- |
+| `replace-destroy`    | `replace/destroy`    |
+| `security`           | `security`           |
+| `cost-tripwire`      | `cost tripwire`      |
+| `major-version-bump` | `major version bump` |
+
+Only the slug is accepted on the wire; the display value is not. Repeated
+values OR together, and the result ANDs with `impact`, `repo`, and any facet
+filters. A changeset matches when its risk set **intersects** the requested
+set, so a changeset carrying several classes matches a query naming any one of
+them — and a changeset carrying no risk at all never matches a non-empty
+`risk` filter.
+
+```bash
+# security or cost-relevant changes in prod, that are also breaking
+curl "https://changes.dackota.com/api/changesets?risk=security&risk=cost-tripwire&impact=major&env=prod"
+```
+
+The `risk[]` field in the **response** continues to carry display values, not
+slugs — slugs are request vocabulary only.
+
+As with `impact`, an unrecognized `risk` value returns `400` rather than being
+silently ignored, and the same short-page caveat applies.
+
+Risk classification is driven by operator-configured rules, so which
+changesets a `risk` query returns depends on your configured rule set. Note
+that the built-in default rules produce only `replace-destroy`, `security`,
+and `cost-tripwire`; `major-version-bump` requires a configured rule using
+`semverBump`.
 
 ## Private repositories (GitHub App)
 
