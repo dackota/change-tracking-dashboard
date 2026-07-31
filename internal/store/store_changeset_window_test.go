@@ -44,7 +44,7 @@ func TestQueryChangesets_SinceBoundIsInclusive(t *testing.T) {
 
 	page, err := s.QueryChangesets(
 		store.TimeWindow{Since: since, AsOf: csBase.Add(5 * time.Hour)},
-		filter.FilterSpec{}, "", 100,
+		filter.FilterSpec{}, nil, "", 100,
 	)
 	if err != nil {
 		t.Fatalf("QueryChangesets: %v", err)
@@ -103,7 +103,7 @@ func TestQueryChangesets_AdjacentWindowsTileWithNoGapsOrDuplicates(t *testing.T)
 	seen := make(map[string]int)
 	for i := 0; i+1 < len(bounds); i++ {
 		w := store.TimeWindow{Since: bounds[i], AsOf: bounds[i+1]}
-		page, err := s.QueryChangesets(w, filter.FilterSpec{}, "", 100)
+		page, err := s.QueryChangesets(w, filter.FilterSpec{}, nil, "", 100)
 		if err != nil {
 			t.Fatalf("QueryChangesets(window %d): %v", i, err)
 		}
@@ -148,7 +148,7 @@ func TestQueryChangesets_EmptyWindowReturnsNoChangesetsWithoutError(t *testing.T
 		{"zero width", store.TimeWindow{Since: csBase.Add(time.Hour), AsOf: csBase.Add(time.Hour)}},
 		{"inverted", store.TimeWindow{Since: csBase.Add(2 * time.Hour), AsOf: csBase}},
 	} {
-		page, err := s.QueryChangesets(tc.window, filter.FilterSpec{}, "", 100)
+		page, err := s.QueryChangesets(tc.window, filter.FilterSpec{}, nil, "", 100)
 		if err != nil {
 			t.Errorf("%s window: unexpected error %v, want an empty result", tc.name, err)
 			continue
@@ -190,7 +190,7 @@ func TestQueryChangesets_WindowHoldsOnEveryPageOfACursorWalk(t *testing.T) {
 		if pages > 20 {
 			t.Fatal("cursor walk did not terminate")
 		}
-		page, err := s.QueryChangesets(w, filter.FilterSpec{}, cursor, pageSize)
+		page, err := s.QueryChangesets(w, filter.FilterSpec{}, nil, cursor, pageSize)
 		if err != nil {
 			t.Fatalf("QueryChangesets (cursor=%q): %v", cursor, err)
 		}

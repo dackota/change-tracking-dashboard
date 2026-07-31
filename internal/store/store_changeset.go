@@ -27,12 +27,67 @@ var ErrInvalidCursor = errors.New("store: invalid cursor")
 // unbounded scan of every matching row in the changes table.
 const MaxChangesetPageSize = 500
 
+// MaxChangesetScan is the maximum number of commits QueryChangesets will
+// examine in a single call, independent of how many survive the predicate. It
+// is what preserves the "no unbounded scan" property once filtering happens
+// after assembly rather than in SQL: without it, a predicate matching nothing
+// would walk the entire changes table looking for a page it can never fill.
+//
+// 5000 is 10x MaxChangesetPageSize. The reasoning: a predicate matching 1 in
+// 10 commits still fills a maximum-size 500-changeset page within one call,
+// so every realistic impact filter (the least common tier in practice is
+// downgrade, well above 1-in-10 of a typical feed) is single-call. Selectivity
+// beyond that degrades gracefully into resumption rather than failure — the
+// call returns a short page plus a cursor — so the cost of the bound being
+// slightly too low is an extra round trip, while the cost of it being too high
+// is an unbounded-in-practice query. Cheap to revisit: it changes only how
+// much work one call does, never which changesets a full walk yields.
+const MaxChangesetScan = 5000
+
+// maxChangesetScanBatch caps a single fetch inside the page-fill loop. The
+// loop doubles its batch size on each iteration (starting from the page size)
+// so a highly selective predicate converges in a logarithmic number of round
+// trips rather than a linear one, and this cap stops one iteration from
+// materializing an unreasonable number of Change rows at once.
+const maxChangesetScanBatch = 500
+
 // ChangesetPage is one page of a QueryChangesets result: the Changesets
-// themselves plus an opaque cursor for fetching the next page. NextCursor is
-// empty when there is no further page.
+// themselves plus an opaque cursor for fetching the next page, and a count of
+// the work done to produce them.
+//
+// NextCursor is empty when there is no further page — and that is the *only*
+// end-of-results signal. Under a predicate, a page can be shorter than the
+// requested limit while matches still remain (the scan budget ran out first),
+// so a caller must never infer "done" from a short page.
+//
+// Examined is the number of commits the page-fill loop looked at to produce
+// this page, including those the predicate rejected. Compared against
+// len(Changesets) it is the diagnostic that makes a pathological filter
+// visible: a call that examined 5000 commits to return 3 is a filter that
+// needs attention, and without this count that call is indistinguishable in a
+// trace from one that examined 3. The store only reports it; recording it on a
+// span is the caller's job, since the store holds no context.
 type ChangesetPage struct {
 	Changesets []changeset.Changeset
 	NextCursor string
+	Examined   int
+}
+
+// ChangesetPredicate is an opaque caller-supplied filter over a fully
+// assembled Changeset, applied by QueryChangesets after assembly. A nil
+// predicate is a no-op (everything is kept).
+//
+// This exists because some of a Changeset's properties — its impact tier, its
+// risk classes — are query-time projections computed in Go after
+// changeset.Assemble and are never stored, so they cannot be expressed as a
+// SQL WHERE clause the way a facet filter can. Taking an opaque func keeps
+// classification policy entirely outside the store: the store learns only
+// "keep or drop", never why.
+type ChangesetPredicate func(changeset.Changeset) bool
+
+// keep reports whether cs survives p, treating a nil predicate as a no-op.
+func (p ChangesetPredicate) keep(cs changeset.Changeset) bool {
+	return p == nil || p(cs)
 }
 
 // QueryChangesets returns a page of Changesets — Changes grouped by the
@@ -55,7 +110,17 @@ type ChangesetPage struct {
 // on every page, so paging deep into a window never leaks a Changeset from
 // outside it. limit bounds the number of Changesets in this page (not the
 // number of underlying Change rows).
-func (s *Store) QueryChangesets(w TimeWindow, spec filter.FilterSpec, cursor string, limit int) (ChangesetPage, error) {
+//
+// pred is an optional post-assembly filter (see ChangesetPredicate); pass nil
+// for no class filtering, which leaves behavior identical to before the
+// parameter existed. With a predicate, the page is filled by looping — fetch,
+// assemble, filter, advance the seek past everything examined — so a filtered
+// page is as full as an unfiltered one while matches remain, rather than
+// arriving pre-punctured by rejections. That loop is bounded by
+// MaxChangesetScan; when the budget runs out mid-page the result is a short
+// page *with* a cursor, which is why NextCursor and not page length is the
+// end-of-results signal.
+func (s *Store) QueryChangesets(w TimeWindow, spec filter.FilterSpec, pred ChangesetPredicate, cursor string, limit int) (ChangesetPage, error) {
 	seek, err := decodeCursor(cursor)
 	if err != nil {
 		return ChangesetPage{}, err
@@ -71,31 +136,104 @@ func (s *Store) QueryChangesets(w TimeWindow, spec filter.FilterSpec, cursor str
 		effectiveLimit = MaxChangesetPageSize
 	}
 
-	// Fetch only the Change rows belonging to the (effectiveLimit + 1)
-	// distinct commits needed for this page, from the seek position forward
-	// — never the full matching set. Fetching one extra commit lets us
-	// detect whether a further page exists without a second round trip.
-	// Limiting raw Change rows directly would risk truncating a commit's
-	// Changeset mid-way; bounding by distinct commit and joining back for
-	// all of that commit's rows guarantees a page boundary always lands on
-	// a commit boundary.
-	changes, err := s.queryChangesForChangesets(w, spec, seek, effectiveLimit+1)
-	if err != nil {
-		return ChangesetPage{}, err
+	// The page-fill loop. Each iteration fetches the Change rows belonging to
+	// a bounded number of distinct commits from the current seek position,
+	// assembles them, and keeps the survivors of pred. Limiting raw Change
+	// rows directly would risk truncating a commit's Changeset mid-way;
+	// bounding by distinct commit and joining back for all of that commit's
+	// rows guarantees a page boundary always lands on a commit boundary — and
+	// because each iteration assembles a whole number of commits, that stays
+	// true across iterations too.
+	//
+	// The loop targets effectiveLimit+1 survivors rather than effectiveLimit,
+	// for the same reason the pre-filter implementation fetched one extra
+	// commit: finding one more survivor than the page holds proves a further
+	// page exists, so an exactly-full final page is not followed by a
+	// spurious empty one.
+	//
+	// It exits on any of three conditions, which are exactly the three ways a
+	// page can end: enough survivors found, the underlying result set
+	// exhausted, or the scan budget spent.
+	var kept []changeset.Changeset
+	var lastExamined changeset.Changeset
+	examined := 0
+	exhausted := false
+	batch := effectiveLimit + 1
+
+	for len(kept) <= effectiveLimit && !exhausted && examined < MaxChangesetScan {
+		// Never examine more commits than the budget still allows, so the
+		// bound holds regardless of batch sizing.
+		if remaining := MaxChangesetScan - examined; batch > remaining {
+			batch = remaining
+		}
+
+		changes, err := s.queryChangesForChangesets(w, spec, seek, batch)
+		if err != nil {
+			return ChangesetPage{}, err
+		}
+
+		sets := changeset.Assemble(changes)
+		if len(sets) < batch {
+			// Fewer distinct commits came back than the bound allowed, so
+			// there is nothing left beyond them.
+			exhausted = true
+		}
+
+		for _, cs := range sets {
+			examined++
+			lastExamined = cs
+			if pred.keep(cs) {
+				kept = append(kept, cs)
+			}
+			if len(kept) > effectiveLimit {
+				break
+			}
+		}
+
+		if len(sets) > 0 {
+			// Advance past the last commit *examined*, not the last one kept:
+			// rejected commits have already been judged and must never be
+			// re-fetched, which is what keeps a filtered walk linear.
+			seek = seekPosition{
+				committedAt: lastExamined.CommittedAt,
+				commitSha:   lastExamined.CommitSha,
+				active:      true,
+			}
+		}
+
+		// Grow geometrically so a highly selective predicate converges in a
+		// logarithmic number of round trips instead of a linear one.
+		if batch < maxChangesetScanBatch {
+			batch *= 2
+			if batch > maxChangesetScanBatch {
+				batch = maxChangesetScanBatch
+			}
+		}
 	}
 
-	sets := changeset.Assemble(changes)
+	page := ChangesetPage{Examined: examined}
 
-	if len(sets) <= effectiveLimit {
-		return ChangesetPage{Changesets: sets, NextCursor: ""}, nil
+	switch {
+	case len(kept) > effectiveLimit:
+		// One survivor beyond the page proves more exist. Resume from the
+		// last changeset actually returned, so the surplus is not skipped.
+		page.Changesets = kept[:effectiveLimit]
+		last := page.Changesets[len(page.Changesets)-1]
+		page.NextCursor = encodeCursor(last.CommittedAt, last.CommitSha)
+	case exhausted:
+		// The result set ran out: this page is the end of the walk.
+		page.Changesets = kept
+	default:
+		// The scan budget was spent with a page that may be short. Returning
+		// a cursor is mandatory here: the page is not the end of the walk, and
+		// a short page is not itself a "no more results" signal — the absence
+		// of a cursor is. Resuming from the last commit examined means the
+		// budget already spent is never re-spent.
+		page.Changesets = kept
+		page.NextCursor = encodeCursor(lastExamined.CommittedAt, lastExamined.CommitSha)
 	}
 
-	page := sets[:effectiveLimit]
-	last := page[len(page)-1]
-	return ChangesetPage{
-		Changesets: page,
-		NextCursor: encodeCursor(last.CommittedAt, last.CommitSha),
-	}, nil
+	return page, nil
 }
 
 // seekPosition identifies the last Changeset returned by a previous page, in

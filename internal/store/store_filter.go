@@ -37,6 +37,7 @@ var reservedFacetNames = map[string]struct{}{
 	"repo":   {},
 	"asOf":   {},
 	"cursor": {},
+	"impact": {},
 	"limit":  {},
 	"since":  {},
 }

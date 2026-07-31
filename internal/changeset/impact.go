@@ -28,6 +28,22 @@ const (
 	ImpactOther Impact = "other"
 )
 
+// ImpactTiers returns the closed vocabulary of impact tiers as a set of their
+// wire strings, as an independent copy the caller may retain or mutate.
+//
+// It exists so a request-parsing layer can validate a caller-supplied tier
+// name against the authoritative list without hard-coding a second copy of it
+// that would silently drift when a tier is added or renamed. The set shape
+// (rather than a slice) is deliberate: every caller so far asks "is this
+// string a tier?", never "what is the third tier?".
+func ImpactTiers() map[string]struct{} {
+	out := make(map[string]struct{}, len(impactRollupOrder))
+	for _, tier := range impactRollupOrder {
+		out[string(tier)] = struct{}{}
+	}
+	return out
+}
+
 // impactRollupOrder is the rollup precedence, most notable first: a
 // changeset's tier is the highest-precedence tier among its changes.
 //
