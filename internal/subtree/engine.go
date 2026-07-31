@@ -166,17 +166,12 @@ func NewEngine[A, O any](cfg Config, domain Domain[A, O], opts ...Option) (*Engi
 	}, nil
 }
 
-// Diff computes (or returns the cached) Outcome for req against repo. For any
-// input it returns exactly one Outcome, and a panic in either the materialize
-// or the produce step is recovered on the goroutine that raised it and folded
-// into a Failure.
-//
-// One gap: Repo.FirstParent is called synchronously on the caller's own
-// goroutine and is NOT guarded, so a panicking FirstParent propagates to the
-// caller. *gitsource.Source.FirstParent resolves a single commit object and
-// does not walk untrusted tree content the way MaterializeSubtreeBounded
-// does, so this is an accepted limitation rather than a closed one — see
-// TestDiff_FirstParentPanic_IsNotContained, which pins it.
+// Diff computes (or returns the cached) Outcome for req against repo. It is a
+// total function: for any input, exactly one Outcome is returned and Diff
+// never panics. Every call into caller-supplied code — Repo.FirstParent,
+// Repo.MaterializeSubtreeBounded, and Domain.Produce — is panic-guarded, each
+// on whichever goroutine actually runs it, and a recovered panic is folded
+// into a Failure the Domain classifies like any other error.
 //
 // Known limitation: e.group.Do coalesces concurrent Diff calls for the same
 // key onto a single computation, which runs under only the *leader's* ctx
@@ -188,9 +183,27 @@ func NewEngine[A, O any](cfg Config, domain Domain[A, O], opts ...Option) (*Engi
 // bounded by the leader's own timeouts and bounds checks.
 func (e *Engine[A, O]) Diff(ctx context.Context, repo Repo, req Request) O {
 	var parentSha string
-	err := telemetry.WithSpan(ctx, e.tracer, "gitsource.first_parent", func(context.Context) error {
-		v, err := repo.FirstParent(req.CommitSha)
-		parentSha = v
+	err := telemetry.WithSpan(ctx, e.tracer, "gitsource.first_parent", func(context.Context) (err error) {
+		// Repo.FirstParent runs synchronously on this goroutine, so unlike
+		// the materialize and produce steps it has no goroutine of its own to
+		// contain a panic. It still reads attacker-influenced repository data
+		// (go-git decoding a commit object) on a request path, so it gets the
+		// same treatment: recover, fold into a plain error, and let it fall
+		// through to the Internal bucket like any other unclassified failure.
+		//
+		// Recovering inside this closure rather than around WithSpan is
+		// deliberate — telemetry.WithSpan does not recover, so a panic
+		// unwinding through it would end the span without ever recording the
+		// error or setting Error status. Handled here, the panic is observable
+		// as a span exception exactly like a returned error.
+		defer func() {
+			if r := recover(); r != nil {
+				telemetry.LoggerFromContext(ctx).Error(e.cfg.Labels.Name+": first parent panicked",
+					"repo", req.RepoName, "tenant", req.TenantPath, "commit", req.CommitSha, "panic", r)
+				err = fmt.Errorf("%s: first parent panicked: %v", e.cfg.Labels.Name, r)
+			}
+		}()
+		parentSha, err = repo.FirstParent(req.CommitSha)
 		return err
 	})
 	if err != nil {
