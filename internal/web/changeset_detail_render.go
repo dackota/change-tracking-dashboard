@@ -14,7 +14,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
-	"path/filepath"
+	"path"
 	"regexp"
 	"strings"
 	"time"
@@ -126,12 +126,21 @@ var terraformChangeTemplate = template.Must(chartChangeTemplate.New("terraform-c
 `))
 
 // changeView is a classified Change plus TenantPath: the directory of the
-// Change's own FilePath (filepath.Dir), matching the PRD's "Rendering
+// Change's own FilePath (path.Dir), matching the PRD's "Rendering
 // basis" — the tenant chart directory is the directory of the chart
 // Change's source file — and how GET /api/changesets/detail/chart-diff's
 // own TenantPath is documented to be derived. html/template has no
 // path.Dir function of its own, so this is computed here, once, before
-// Execute, rather than in the template language. Every Change carries a
+// Execute, rather than in the template language.
+//
+// path.Dir, not filepath.Dir: FilePath is a git path and so is forward-slash
+// separated on every platform, whereas filepath.Dir rewrites the separator to
+// "\\" on Windows. This value is rendered into data-tenant-path, read back by
+// timeline.js, and compared against the same FilePath by the diff endpoints'
+// security gates (hasChartChangeAt / hasTerraformChangeAt) — so it must be
+// derived exactly as they derive it. The two were previously wrong in
+// lockstep, which made the round-trip appear to work while the documented
+// forward-slash API spelling was refused. Every Change carries a
 // TenantPath, though only the chart-change partial renders it.
 type changeView struct {
 	changeset.Change
@@ -218,7 +227,7 @@ func newChangesetView(cs changeset.Changeset, rules []changeset.RiskRule) change
 	for _, c := range cs.Changes {
 		changes = append(changes, changeView{
 			Change:          c,
-			TenantPath:      filepath.Dir(c.FilePath),
+			TenantPath:      path.Dir(c.FilePath),
 			IsTerraformKind: c.Kind.IsTerraform(),
 			Impact:          string(changeset.ClassifyChangeImpact(c)),
 		})

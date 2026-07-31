@@ -13,7 +13,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"path/filepath"
+	"path"
 
 	"github.com/dackota/change-tracking-dashboard/internal/changeset"
 	"github.com/dackota/change-tracking-dashboard/internal/plandiff"
@@ -68,8 +68,8 @@ func (h *PlanDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	repo := r.URL.Query().Get("repo")
 	commitSha := r.URL.Query().Get("commitSha")
-	path := r.URL.Query().Get("path")
-	if repo == "" || commitSha == "" || path == "" {
+	tenantPath := r.URL.Query().Get("path")
+	if repo == "" || commitSha == "" || tenantPath == "" {
 		writeDetailError(r, w, asJSON, http.StatusBadRequest, genericBadRequestMsg)
 		return
 	}
@@ -89,11 +89,11 @@ func (h *PlanDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return err
 	})
 	if err != nil {
-		logger.Error("web: check changeset existence for plan diff", "repo", repo, "tenant", path, "commitSha", commitSha, "error", err)
+		logger.Error("web: check changeset existence for plan diff", "repo", repo, "tenant", tenantPath, "commitSha", commitSha, "error", err)
 		writeDetailError(r, w, asJSON, http.StatusInternalServerError, genericServerErrorMsg)
 		return
 	}
-	if !found || !hasTerraformChangeAt(cs, path) {
+	if !found || !hasTerraformChangeAt(cs, tenantPath) {
 		writeDiffNotFound(r, w, asJSON)
 		return
 	}
@@ -105,7 +105,7 @@ func (h *PlanDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return err
 	})
 	if err != nil {
-		logger.Error("web: resolve plan repo for plan diff", "repo", repo, "tenant", path, "commitSha", commitSha, "error", err)
+		logger.Error("web: resolve plan repo for plan diff", "repo", repo, "tenant", tenantPath, "commitSha", commitSha, "error", err)
 		writeDetailError(r, w, asJSON, http.StatusInternalServerError, genericServerErrorMsg)
 		return
 	}
@@ -121,7 +121,7 @@ func (h *PlanDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = telemetry.WithSpan(r.Context(), tracer, "plandiff.diff", func(ctx context.Context) error {
 		outcome = h.engine.Diff(ctx, planRepo, plandiff.Request{
 			RepoName:   repo,
-			TenantPath: path,
+			TenantPath: tenantPath,
 			CommitSha:  commitSha,
 		})
 		return planDiffSpanError(outcome.Kind)
@@ -134,7 +134,7 @@ func (h *PlanDiffHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := renderPlanDiff(w, outcome); err != nil {
-		logResponseWriteError(r.Context(), "web: render plan diff", err, "repo", repo, "tenant", path, "commitSha", commitSha)
+		logResponseWriteError(r.Context(), "web: render plan diff", err, "repo", repo, "tenant", tenantPath, "commitSha", commitSha)
 	}
 }
 
@@ -154,11 +154,12 @@ func planDiffSpanError(kind plandiff.Kind) error {
 
 // hasTerraformChangeAt reports whether cs contains at least one
 // Terraform-kind Change (c.Kind.IsTerraform()) whose own source file
-// directory equals path. Mirrors hasChartChangeAt's identical authorization
-// role for the sibling chart-diff endpoint.
-func hasTerraformChangeAt(cs changeset.Changeset, path string) bool {
+// directory equals tenantPath. Mirrors hasChartChangeAt's identical
+// authorization role — including its use of path.Dir over filepath.Dir — for
+// the sibling chart-diff endpoint.
+func hasTerraformChangeAt(cs changeset.Changeset, tenantPath string) bool {
 	for _, c := range cs.Changes {
-		if c.Kind.IsTerraform() && filepath.Dir(c.FilePath) == path {
+		if c.Kind.IsTerraform() && path.Dir(c.FilePath) == tenantPath {
 			return true
 		}
 	}

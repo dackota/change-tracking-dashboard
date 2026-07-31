@@ -15,11 +15,9 @@ import (
 	"github.com/dackota/change-tracking-dashboard/internal/web"
 )
 
-// jsonPlanDiffURL addresses a Terraform change at a single-segment tenant
-// path. A single segment is deliberate: the gate compares path against
-// filepath.Dir(FilePath), which is OS-separator-dependent, so a one-segment
-// path keeps these negotiation tests portable and about negotiation rather
-// than about path separators.
+// jsonPlanDiffURL addresses a Terraform change at a tenant path. These tests
+// are about Accept negotiation, so the path is incidental — see
+// tenant_path_roundtrip_test.go for the tests that pin path handling itself.
 const jsonPlanDiffURL = "/api/changesets/detail/plan-diff?repo=r&commitSha=sha&path=prod"
 
 // jsonPlanDiffChecker reports the changeset jsonPlanDiffURL addresses as

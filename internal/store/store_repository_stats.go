@@ -26,7 +26,7 @@ type RepositoryStats struct {
 // callers can drive an empty-state branch by length alone.
 //
 // The chart-kind classification mirrors changeset.ClassifyKind's basename
-// check (filepath.Base(filePath) == "Chart.yaml") without importing that
+// check (path.Base(filePath) == "Chart.yaml") without importing that
 // package here: file_path is git-style forward-slash-separated throughout
 // this codebase, so "the basename is Chart.yaml" is exactly "the path
 // equals Chart.yaml, or ends with /Chart.yaml". That basename comparison is
