@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.14.0...app-v0.15.0) (2026-07-31)
+
+
+### Features
+
+* **api:** add risk filter with stable slugs ([#155](https://github.com/dackota/change-tracking-dashboard/issues/155)) ([6dcece7](https://github.com/dackota/change-tracking-dashboard/commit/6dcece7e8396c3b81da91578eac2adb9819e2445)), closes [#150](https://github.com/dackota/change-tracking-dashboard/issues/150)
+
 ## [0.14.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.13.4...app-v0.14.0) (2026-07-31)
 
 
