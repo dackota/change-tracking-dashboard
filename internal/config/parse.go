@@ -165,11 +165,6 @@ func resolveTracker(idx int, tr TrackerRaw, defaults Defaults) (ResolvedTracker,
 		return ResolvedTracker{}, err
 	}
 
-	// Validate engine: only "" (defaults to jq) and "jq" are legal today.
-	if err := validateEngine(idx, tr.Repo, tr.Engine); err != nil {
-		return ResolvedTracker{}, err
-	}
-
 	return ResolvedTracker{
 		Repo:                tr.Repo,
 		FacetRegex:          tr.FacetRegex,
