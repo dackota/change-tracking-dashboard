@@ -1,6 +1,6 @@
-// Package web (this file): the operator-facing warning for a risk filter that
-// names a class no active rule can produce.
-package web
+// Package changesetquery (this file): the operator-facing warning for a risk
+// filter that names a class no active rule can produce.
+package changesetquery
 
 import (
 	"log/slog"
@@ -61,7 +61,7 @@ func warnUnreachableRiskFilter(logger *slog.Logger, risks filter.ClassSet, rules
 
 	for _, slug := range unreachable {
 		logger.Warn(
-			"web: risk filter names a class no configured rule can produce; the empty result means \"not configured\", not \"nothing matched\"",
+			"changesetquery: risk filter names a class no configured rule can produce; the empty result means \"not configured\", not \"nothing matched\"",
 			"risk", slug,
 			"remedy", riskConfigRemedy,
 		)
