@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.3](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.18.2...app-v0.18.3) (2026-08-01)
+
+
+### Bug Fixes
+
+* **deps:** update module go.yaml.in/yaml/v3 to v3.0.5 ([#184](https://github.com/dackota/change-tracking-dashboard/issues/184)) ([92f2dc4](https://github.com/dackota/change-tracking-dashboard/commit/92f2dc4315634d6660c694fc99ee7f190a4a0742))
+
 ## [0.18.2](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.18.1...app-v0.18.2) (2026-07-31)
 
 
