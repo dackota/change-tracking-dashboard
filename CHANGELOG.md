@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.4](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.18.3...app-v0.18.4) (2026-08-04)
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/go-git/go-git/v5 to v5.19.2 ([#187](https://github.com/dackota/change-tracking-dashboard/issues/187)) ([5f358d6](https://github.com/dackota/change-tracking-dashboard/commit/5f358d600b415c52ceb804897f0547b31678aa70))
+
 ## [0.18.3](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.18.2...app-v0.18.3) (2026-08-01)
 
 
