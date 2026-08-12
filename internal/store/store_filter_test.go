@@ -85,20 +85,16 @@ func TestFacetOptions(t *testing.T) {
 	envVals := opts["env"]
 	if len(envVals) != 2 {
 		t.Errorf("env values = %v, want [dev prod]", envVals)
-	} else {
-		if envVals[0] != "dev" || envVals[1] != "prod" {
-			t.Errorf("env values = %v, want [dev prod]", envVals)
-		}
+	} else if envVals[0] != "dev" || envVals[1] != "prod" {
+		t.Errorf("env values = %v, want [dev prod]", envVals)
 	}
 
 	// tenant should have: ["tenant-one", "tenant-zero"] (sorted).
 	tenantVals := opts["tenant"]
 	if len(tenantVals) != 2 {
 		t.Errorf("tenant values = %v, want [tenant-one tenant-zero]", tenantVals)
-	} else {
-		if tenantVals[0] != "tenant-one" || tenantVals[1] != "tenant-zero" {
-			t.Errorf("tenant values = %v, want [tenant-one tenant-zero]", tenantVals)
-		}
+	} else if tenantVals[0] != "tenant-one" || tenantVals[1] != "tenant-zero" {
+		t.Errorf("tenant values = %v, want [tenant-one tenant-zero]", tenantVals)
 	}
 }
 

@@ -277,7 +277,7 @@ func TestTokenProvider_ThreadSafe(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
 
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
 			_, err := provider.Token()

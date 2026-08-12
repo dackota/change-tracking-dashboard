@@ -183,7 +183,7 @@ func TestPlanDiffHandler_JSON_OKCarriesPerResourceDeltasInSortedOrder(t *testing
 	h := newJSONPlanDiffHandler(okPlanOutcome())
 
 	var first string
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		rr := servePlanDiffAccept(h, jsonPlanDiffURL, "application/json")
 
 		var got planDiffBody

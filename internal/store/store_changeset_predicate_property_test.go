@@ -110,7 +110,7 @@ func TestQueryChangesets_FilteredWalkMatchesNaiveOracle(t *testing.T) {
 	// Seed a corpus with a random tier mix, plus multi-Change commits so
 	// assembly boundaries are exercised alongside filtering.
 	changes := make([]domain.Change, 0, commits*2)
-	for i := 0; i < commits; i++ {
+	for i := range commits {
 		tier := impactTiers[rng.Intn(len(impactTiers))]
 		old, new := bumpFor(tier)
 		sha := fmt.Sprintf("sha-%05d", i)
@@ -128,7 +128,7 @@ func TestQueryChangesets_FilteredWalkMatchesNaiveOracle(t *testing.T) {
 
 	full := store.TimeWindow{AsOf: predBase.Add(time.Duration(commits+1) * time.Minute)}
 
-	for caseNum := 0; caseNum < 40; caseNum++ {
+	for caseNum := range 40 {
 		// A random non-empty allow-set over the closed tier vocabulary.
 		allowed := make(map[changeset.Impact]struct{})
 		for _, tier := range impactTiers {

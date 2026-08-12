@@ -12,6 +12,7 @@ package gitsource
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -127,7 +128,7 @@ func (s *Source) Fetch(auth gogithttp.AuthMethod) error {
 	}
 
 	err := s.repo.Fetch(fetchOpts)
-	if err != nil && err != git.NoErrAlreadyUpToDate {
+	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 		// Return a fixed non-leaking error: transport errors can embed the remote's
 		// HTTP response body (which may contain auth challenges or server details).
 		// We discard the underlying error entirely — mirroring how
@@ -167,6 +168,7 @@ func (s *Source) fastForwardToRemote() error {
 	if err != nil {
 		// The remote-tracking ref may not exist (e.g. the remote uses a
 		// different default branch name). Treat as a non-fatal condition.
+		//nolint:nilerr // an absent remote-tracking ref means "nothing to fast-forward to", not a failure
 		return nil
 	}
 
@@ -240,7 +242,7 @@ func (s *Source) WalkCommits(ctx context.Context, filePath string, notBefore tim
 
 	for {
 		commit, err := iter.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -338,7 +340,7 @@ func (s *Source) MatchingFiles(glob string) ([]string, error) {
 	defer walker.Close()
 	for {
 		f, err := walker.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -443,7 +445,7 @@ func fileContentAtCommit(commit *object.Commit, filePath string) ([]byte, error)
 	}
 
 	entry, err := tree.File(filePath)
-	if err == object.ErrFileNotFound {
+	if errors.Is(err, object.ErrFileNotFound) {
 		return nil, nil
 	}
 	if err != nil {

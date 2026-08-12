@@ -11,6 +11,20 @@
   "automergeStrategy": "squash",
   "prHourlyLimit": 0,
   "prConcurrentLimit": 0,
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "The pinned golangci-lint release appears three times -- as the golangci-lint-action `version:` input in pr-ci.yml, and as the documented local-run command in .golangci.yml and README.md. Each carries a `# renovate:` marker line so all three are bumped as one dependency and cannot drift apart.",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/pr-ci\\.yml$/",
+        "/^\\.golangci\\.yml$/",
+        "/^README\\.md$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)[^\\n]*\\n[^\\n]*?(?<currentValue>v\\d+\\.\\d+\\.\\d+)"
+      ]
+    }
+  ],
   "packageRules": [
     {
       "description": "Go modules and the Dockerfile base image are runtime-affecting: commit as fix: so release-please cuts a patch release and the update deploys.",
@@ -20,6 +34,11 @@
     {
       "description": "GitHub Actions updates are CI-only: commit as chore: so release-please does not cut a release for them.",
       "matchManagers": ["github-actions"],
+      "semanticCommitType": "chore"
+    },
+    {
+      "description": "The golangci-lint pin is CI-only, like the actions above: commit as chore: so release-please does not cut a release for a linter bump.",
+      "matchManagers": ["custom.regex"],
       "semanticCommitType": "chore"
     },
     {

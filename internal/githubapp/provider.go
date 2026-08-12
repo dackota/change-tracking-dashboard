@@ -180,7 +180,7 @@ func (p *Provider) fetchInstallationToken() (*installationTokenResponse, error) 
 	if err != nil {
 		return nil, fmt.Errorf("githubapp: token endpoint request failed")
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode/100 != 2 {
 		return nil, fmt.Errorf("githubapp: token endpoint returned HTTP %d", resp.StatusCode)

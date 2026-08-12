@@ -67,9 +67,16 @@ var changesetDetailTemplateSource = fmt.Sprintf(`
 // value or chart partial by its Kind.
 var changesetDetailTemplate = template.Must(template.New("changeset-detail").Parse(changesetDetailTemplateSource))
 
-// valueChangeTemplate renders a value-kind Change: its field/key and the
-// old→new value delta directly.
-var valueChangeTemplate = template.Must(changesetDetailTemplate.New("value-change").Parse(`
+// The three partials below are parsed for their side effect: each is
+// registered by name into changesetDetailTemplate's set, and the dispatch in
+// changesetDetailTemplateSource ({{template "value-change"}} and friends)
+// resolves them by that name at Execute time. No Go code ever names the
+// resulting *template.Template, so each is bound to the blank identifier
+// rather than to a package-level variable nothing reads.
+
+// The "value-change" partial renders a value-kind Change: its field/key and
+// the old→new value delta directly.
+var _ = template.Must(changesetDetailTemplate.New("value-change").Parse(`
 <li class="change change-kind-value" data-kind="value" data-field="{{.Field}}">
   <span class="change-label">Value change</span>
   <span class="impact-badge impact-{{.Impact}}" data-impact="{{.Impact}}">{{.Impact}}</span>
@@ -80,14 +87,14 @@ var valueChangeTemplate = template.Must(changesetDetailTemplate.New("value-chang
 </li>
 `))
 
-// chartChangeTemplate renders a chart-kind Change (Chart.yaml) distinctly
+// The "chart-change" partial renders a chart-kind Change (Chart.yaml) distinctly
 // from a value change: it is explicitly labelled "chart change", shows the
 // dependency version old→new (interim rendering), and carries a
 // clearly-identifiable helm-diff slot that timeline.js wires live: the
 // data-tenant-path attribute (the directory of this Change's own source
 // file — see newChangesetView) is what timeline.js reads to build its GET
 // /api/changesets/detail/chart-diff fetch URL for this specific slot.
-var chartChangeTemplate = template.Must(valueChangeTemplate.New("chart-change").Parse(`
+var _ = template.Must(changesetDetailTemplate.New("chart-change").Parse(`
 <li class="change change-kind-chart" data-kind="chart" data-field="{{.Field}}">
   <span class="change-label">Chart change</span>
   <span class="impact-badge impact-{{.Impact}}" data-impact="{{.Impact}}">{{.Impact}}</span>
@@ -101,7 +108,7 @@ var chartChangeTemplate = template.Must(valueChangeTemplate.New("chart-change").
 </li>
 `))
 
-// terraformChangeTemplate renders a Terraform-kind Change (.tf/.tofu source
+// The "terraform-change" partial renders a Terraform-kind Change (.tf/.tofu source
 // file) distinctly from a plain value change: it is explicitly labelled
 // "terraform change", shows the tracked attribute's old→new value (interim
 // rendering — the same shape a plain value change uses), and carries a
@@ -109,9 +116,9 @@ var chartChangeTemplate = template.Must(valueChangeTemplate.New("chart-change").
 // data-tenant-path attribute (the directory of this Change's own source
 // file — see newChangesetView) is what timeline.js reads to build its GET
 // /api/changesets/detail/plan-diff fetch URL for this specific slot —
-// mirroring chartChangeTemplate's identical role for the sibling Kind
+// mirroring the chart partial's identical role for the sibling Kind
 // (acceptance criterion 8).
-var terraformChangeTemplate = template.Must(chartChangeTemplate.New("terraform-change").Parse(`
+var _ = template.Must(changesetDetailTemplate.New("terraform-change").Parse(`
 <li class="change change-kind-terraform" data-kind="terraform" data-field="{{.Field}}">
   <span class="change-label">Terraform change</span>
   <span class="impact-badge impact-{{.Impact}}" data-impact="{{.Impact}}">{{.Impact}}</span>

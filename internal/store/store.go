@@ -153,7 +153,7 @@ func (s *Store) dropLegacyHighWaterMarks() error {
 	if err != nil {
 		return fmt.Errorf("inspect high_water_marks: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var exists, hasField bool
 	for rows.Next() {
 		var (
@@ -215,7 +215,7 @@ func (s *Store) ensureColumn(table, column, decl string) error {
 	if err != nil {
 		return fmt.Errorf("inspect %s: %w", table, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var (
 			cid, notnull, pk int
@@ -333,6 +333,7 @@ func (s *Store) GetHighWaterMark(repo, filePath, field string) (HighWaterMark, e
 			// An unparseable timestamp is treated as unknown rather than
 			// failing the poll: the cursor itself is still good, and the only
 			// cost is one unbounded walk.
+			//nolint:nilerr // a corrupt committed_at degrades the walk bound; it must not fail the poll
 			return m, nil
 		}
 		m.CommittedAt = t

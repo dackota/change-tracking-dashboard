@@ -55,7 +55,7 @@ func TestQueryChangesets_GroupsChangesByCommit(t *testing.T) {
 
 	seedChanges(t, s, []domain.Change{commitA1, commitA2, commitB1})
 
-	page, err := s.QueryChangesets(store.TimeWindow{AsOf: csBase.Add(2*time.Hour)}, filter.FilterSpec{}, nil, "", 100)
+	page, err := s.QueryChangesets(store.TimeWindow{AsOf: csBase.Add(2 * time.Hour)}, filter.FilterSpec{}, nil, "", 100)
 	if err != nil {
 		t.Fatalf("QueryChangesets: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestQueryChangesets_IncludeFilter(t *testing.T) {
 		t.Fatalf("filter.Parse: %v", err)
 	}
 
-	page, err := s.QueryChangesets(store.TimeWindow{AsOf: csBase.Add(2*time.Hour)}, spec, nil, "", 100)
+	page, err := s.QueryChangesets(store.TimeWindow{AsOf: csBase.Add(2 * time.Hour)}, spec, nil, "", 100)
 	if err != nil {
 		t.Fatalf("QueryChangesets: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestQueryChangesets_ExcludeFilter_FacetAbsentSurvives(t *testing.T) {
 		t.Fatalf("filter.Parse: %v", err)
 	}
 
-	page, err := s.QueryChangesets(store.TimeWindow{AsOf: csBase.Add(3*time.Hour)}, spec, nil, "", 100)
+	page, err := s.QueryChangesets(store.TimeWindow{AsOf: csBase.Add(3 * time.Hour)}, spec, nil, "", 100)
 	if err != nil {
 		t.Fatalf("QueryChangesets: %v", err)
 	}
@@ -271,7 +271,7 @@ func TestQueryChangesets_IncludeAndExcludeCombined(t *testing.T) {
 		t.Fatalf("filter.Parse: %v", err)
 	}
 
-	page, err := s.QueryChangesets(store.TimeWindow{AsOf: csBase.Add(3*time.Hour)}, spec, nil, "", 100)
+	page, err := s.QueryChangesets(store.TimeWindow{AsOf: csBase.Add(3 * time.Hour)}, spec, nil, "", 100)
 	if err != nil {
 		t.Fatalf("QueryChangesets: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestQueryChangesets_RepoScope_FiltersToOneRepo(t *testing.T) {
 
 	spec := filter.FilterSpec{}.WithRepo("apps-repo")
 
-	page, err := s.QueryChangesets(store.TimeWindow{AsOf: csBase.Add(2*time.Hour)}, spec, nil, "", 100)
+	page, err := s.QueryChangesets(store.TimeWindow{AsOf: csBase.Add(2 * time.Hour)}, spec, nil, "", 100)
 	if err != nil {
 		t.Fatalf("QueryChangesets: %v", err)
 	}
@@ -367,7 +367,7 @@ func TestQueryChangesets_RepoScope_ComposesWithFacetFilterAND(t *testing.T) {
 	}
 	spec = spec.WithRepo("apps-repo")
 
-	page, err := s.QueryChangesets(store.TimeWindow{AsOf: csBase.Add(3*time.Hour)}, spec, nil, "", 100)
+	page, err := s.QueryChangesets(store.TimeWindow{AsOf: csBase.Add(3 * time.Hour)}, spec, nil, "", 100)
 	if err != nil {
 		t.Fatalf("QueryChangesets: %v", err)
 	}
@@ -403,7 +403,7 @@ func TestQueryChangesets_RepoScope_EmptyIsNoOp(t *testing.T) {
 
 	spec := filter.FilterSpec{}.WithRepo("")
 
-	page, err := s.QueryChangesets(store.TimeWindow{AsOf: csBase.Add(2*time.Hour)}, spec, nil, "", 100)
+	page, err := s.QueryChangesets(store.TimeWindow{AsOf: csBase.Add(2 * time.Hour)}, spec, nil, "", 100)
 	if err != nil {
 		t.Fatalf("QueryChangesets: %v", err)
 	}
@@ -438,7 +438,7 @@ func TestQueryChangesets_MostRecentFirstOrdering(t *testing.T) {
 	// Insert deliberately out of chronological order.
 	seedChanges(t, s, []domain.Change{oldest, newest, middle})
 
-	page, err := s.QueryChangesets(store.TimeWindow{AsOf: csBase.Add(3*time.Hour)}, filter.FilterSpec{}, nil, "", 100)
+	page, err := s.QueryChangesets(store.TimeWindow{AsOf: csBase.Add(3 * time.Hour)}, filter.FilterSpec{}, nil, "", 100)
 	if err != nil {
 		t.Fatalf("QueryChangesets: %v", err)
 	}
@@ -465,7 +465,7 @@ func TestQueryChangesets_Pagination_WalksFullSetWithNoGapsOrOverlaps(t *testing.
 
 	const totalCommits = 7
 	var all []domain.Change
-	for i := 0; i < totalCommits; i++ {
+	for i := range totalCommits {
 		all = append(all, domain.Change{
 			Repo: "apps-repo", FilePath: "values.yaml", Field: "f",
 			ChangeType:  domain.ChangeTypeModified,
@@ -483,7 +483,7 @@ func TestQueryChangesets_Pagination_WalksFullSetWithNoGapsOrOverlaps(t *testing.
 
 	var gotShas []string
 	cursor := ""
-	for pages := 0; pages < totalCommits+1; pages++ { // hard cap to avoid an infinite loop on a bug
+	for range totalCommits + 1 { // hard cap to avoid an infinite loop on a bug
 		page, err := s.QueryChangesets(store.TimeWindow{AsOf: asOf}, filter.FilterSpec{}, nil, cursor, pageSize)
 		if err != nil {
 			t.Fatalf("QueryChangesets (cursor=%q): %v", cursor, err)
@@ -503,7 +503,7 @@ func TestQueryChangesets_Pagination_WalksFullSetWithNoGapsOrOverlaps(t *testing.
 
 	// Expected order: newest-first, i.e. commit-06 down to commit-00.
 	wantShas := make([]string, totalCommits)
-	for i := 0; i < totalCommits; i++ {
+	for i := range totalCommits {
 		wantShas[i] = fmt.Sprintf("commit-%02d", totalCommits-1-i)
 	}
 	for i, want := range wantShas {
@@ -618,7 +618,7 @@ func TestQueryChangesets_Pagination_LargeSetWithSmallPageWalksWithNoGapsOrOverla
 	const pageSize = 5
 
 	var all []domain.Change
-	for i := 0; i < totalCommits; i++ {
+	for i := range totalCommits {
 		all = append(all, domain.Change{
 			Repo: "apps-repo", FilePath: "values.yaml", Field: "f",
 			ChangeType:  domain.ChangeTypeModified,
@@ -637,7 +637,7 @@ func TestQueryChangesets_Pagination_LargeSetWithSmallPageWalksWithNoGapsOrOverla
 	seen := map[string]bool{}
 	cursor := ""
 	maxPages := totalCommits/pageSize + 2 // hard cap to avoid an infinite loop on a bug
-	for pages := 0; pages < maxPages; pages++ {
+	for range maxPages {
 		page, err := s.QueryChangesets(store.TimeWindow{AsOf: asOf}, filter.FilterSpec{}, nil, cursor, pageSize)
 		if err != nil {
 			t.Fatalf("QueryChangesets (cursor=%q): %v", cursor, err)
@@ -658,7 +658,7 @@ func TestQueryChangesets_Pagination_LargeSetWithSmallPageWalksWithNoGapsOrOverla
 	if len(gotShas) != totalCommits {
 		t.Fatalf("walked %d Changesets across all pages, want %d (no gaps/overlaps)", len(gotShas), totalCommits)
 	}
-	for i := 0; i < totalCommits; i++ {
+	for i := range totalCommits {
 		want := fmt.Sprintf("commit-%03d", totalCommits-1-i)
 		if gotShas[i] != want {
 			t.Fatalf("gotShas[%d] = %q, want %q (most-recent-first order broken)", i, gotShas[i], want)
@@ -677,7 +677,7 @@ func TestQueryChangesets_IncludeFilter_AppliesUnderSmallPageBound(t *testing.T) 
 	s := newTestStore(t)
 
 	var all []domain.Change
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		env := "prod"
 		if i%2 == 0 {
 			env = "dev"
@@ -700,7 +700,7 @@ func TestQueryChangesets_IncludeFilter_AppliesUnderSmallPageBound(t *testing.T) 
 		t.Fatalf("filter.Parse: %v", err)
 	}
 
-	page, err := s.QueryChangesets(store.TimeWindow{AsOf: csBase.Add(10*time.Hour)}, spec, nil, "", 2)
+	page, err := s.QueryChangesets(store.TimeWindow{AsOf: csBase.Add(10 * time.Hour)}, spec, nil, "", 2)
 	if err != nil {
 		t.Fatalf("QueryChangesets: %v", err)
 	}
@@ -834,7 +834,7 @@ func TestQueryChangesets_MultiChangeCommitAtPageBoundaryStaysWhole(t *testing.T)
 	// The boundary commit itself: falls right at the pageSize-th slot, and
 	// produced many Change rows — if the bound limited raw rows instead of
 	// distinct commits, this commit would be split mid-Changeset.
-	for i := 0; i < changesInBoundaryCommit; i++ {
+	for i := range changesInBoundaryCommit {
 		all = append(all, domain.Change{
 			Repo: "apps-repo", FilePath: "values.yaml", Field: fmt.Sprintf("field-%d", i),
 			ChangeType: domain.ChangeTypeModified, OldValue: ptr("a"), NewValue: ptr("b"),
@@ -850,7 +850,7 @@ func TestQueryChangesets_MultiChangeCommitAtPageBoundaryStaysWhole(t *testing.T)
 
 	seedChanges(t, s, all)
 
-	page, err := s.QueryChangesets(store.TimeWindow{AsOf: csBase.Add(4*time.Hour)}, filter.FilterSpec{}, nil, "", pageSize)
+	page, err := s.QueryChangesets(store.TimeWindow{AsOf: csBase.Add(4 * time.Hour)}, filter.FilterSpec{}, nil, "", pageSize)
 	if err != nil {
 		t.Fatalf("QueryChangesets: %v", err)
 	}
@@ -868,7 +868,7 @@ func TestQueryChangesets_MultiChangeCommitAtPageBoundaryStaysWhole(t *testing.T)
 		t.Fatal("NextCursor is empty, want non-empty (more commits remain)")
 	}
 
-	nextPage, err := s.QueryChangesets(store.TimeWindow{AsOf: csBase.Add(4*time.Hour)}, filter.FilterSpec{}, nil, page.NextCursor, pageSize)
+	nextPage, err := s.QueryChangesets(store.TimeWindow{AsOf: csBase.Add(4 * time.Hour)}, filter.FilterSpec{}, nil, page.NextCursor, pageSize)
 	if err != nil {
 		t.Fatalf("QueryChangesets (page 2): %v", err)
 	}
@@ -900,7 +900,7 @@ func TestQueryChangesets_NonPositiveLimitIsClampedToHardMax(t *testing.T) {
 
 	const totalCommits = store.MaxChangesetPageSize + 5
 	var all []domain.Change
-	for i := 0; i < totalCommits; i++ {
+	for i := range totalCommits {
 		all = append(all, domain.Change{
 			Repo: "apps-repo", FilePath: "values.yaml", Field: "f",
 			ChangeType:  domain.ChangeTypeModified,

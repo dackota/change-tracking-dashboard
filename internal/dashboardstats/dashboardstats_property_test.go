@@ -36,10 +36,10 @@ func (changesetBatch) Generate(rnd *rand.Rand, size int) reflect.Value {
 	base := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	batch := make(changesetBatch, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		numChanges := rnd.Intn(maxChangesPerSet + 1)
 		changes := make([]changeset.Change, 0, numChanges)
-		for j := 0; j < numChanges; j++ {
+		for range numChanges {
 			kind := changeset.KindValue
 			if rnd.Intn(2) == 0 {
 				kind = changeset.KindChart
@@ -188,11 +188,7 @@ func TestCompute_Invariants_Property(t *testing.T) {
 		// result.
 		shuffled := deepCopyChangesets(input)
 		rand.Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
-		if !metricsEqual(dashboardstats.Compute(shuffled), got) {
-			return false
-		}
-
-		return true
+		return metricsEqual(dashboardstats.Compute(shuffled), got)
 	}
 
 	if err := quick.Check(property, &quick.Config{MaxCount: 500}); err != nil {

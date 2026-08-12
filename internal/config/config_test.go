@@ -268,7 +268,7 @@ func TestLoad_FlattenedTrackers_CarryResolvedPollAndBackfill_PerTrackerOverride(
 
 	trackers := w.Current().Trackers
 	// /repo/a produces 2 flattened trackers (two file×field combos).
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if trackers[i].PollIntervalSeconds != 30 {
 			t.Errorf("Trackers[%d].PollIntervalSeconds = %d, want 30 (per-tracker override)", i, trackers[i].PollIntervalSeconds)
 		}

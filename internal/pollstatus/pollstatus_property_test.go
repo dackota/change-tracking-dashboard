@@ -44,11 +44,11 @@ func TestRegistry_ConcurrentRecordAndSnapshot_Invariants_Property(t *testing.T) 
 
 	var wg sync.WaitGroup
 	for _, tr := range trackers {
-		for g := 0; g < goroutinesPerTracker; g++ {
+		for g := range goroutinesPerTracker {
 			wg.Add(1)
 			go func(tr domain.Tracker, seed int) {
 				defer wg.Done()
-				for i := 0; i < recordsPerGoroutine; i++ {
+				for i := range recordsPerGoroutine {
 					at := base.Add(time.Duration(seed*recordsPerGoroutine+i) * time.Second)
 					var err error
 					if i%3 == 0 {

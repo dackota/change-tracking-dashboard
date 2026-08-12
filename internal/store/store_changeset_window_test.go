@@ -176,7 +176,7 @@ func TestQueryChangesets_WindowHoldsOnEveryPageOfACursorWalk(t *testing.T) {
 	// 12 commits one hour apart. The window covers indices 3..8 inclusive of
 	// 3, exclusive of 9 — six Changesets, walked two at a time.
 	var seeded []domain.Change
-	for i := 0; i < 12; i++ {
+	for i := range 12 {
 		seeded = append(seeded, windowChangeAt(fmt.Sprintf("commit-%02d", i), csBase.Add(time.Duration(i)*time.Hour)))
 	}
 	seedChanges(t, s, seeded)

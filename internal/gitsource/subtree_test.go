@@ -151,7 +151,7 @@ type fileSet []string
 func (fileSet) Generate(rnd *rand.Rand, size int) reflect.Value {
 	n := rnd.Intn(7)
 	paths := make(fileSet, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if rnd.Intn(2) == 0 {
 			paths = append(paths, fmt.Sprintf("file%d.bin", i))
 		} else {

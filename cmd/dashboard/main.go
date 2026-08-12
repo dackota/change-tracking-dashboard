@@ -22,6 +22,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -122,7 +123,11 @@ func run(configPath, dbPath, listenAddr string, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}
-	defer st.Close()
+	defer func() {
+		if err := st.Close(); err != nil {
+			logger.Error("dashboard: store close failed", "error", err)
+		}
+	}()
 
 	// --- GitHub App token provider (optional) ---
 	// When all three env vars are set the provider mints short-lived installation
@@ -276,7 +281,7 @@ func run(configPath, dbPath, listenAddr string, logger *slog.Logger) error {
 
 	select {
 	case err := <-serveErrCh:
-		if err != nil && err != http.ErrServerClosed {
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("serve: %w", err)
 		}
 		return nil
