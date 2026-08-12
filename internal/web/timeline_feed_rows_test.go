@@ -122,11 +122,12 @@ func TestTimelineJS_BuildFeedRow_CommitCellLinksHTTPRepoPlainTextLocalRepo(t *te
 	if !strings.Contains(fn, "var url = commitURL(cs.repo, cs.commitSha);") {
 		t.Fatalf("buildFeedRow does not derive the commit URL via commitURL(cs.repo, cs.commitSha):\n%s", fn)
 	}
-	if !strings.Contains(fn, "if (url)") {
+	branchIdx := strings.Index(fn, "if (url)")
+	if branchIdx == -1 {
 		t.Fatalf("buildFeedRow does not branch on the derived commit URL's truthiness:\n%s", fn)
 	}
 
-	linkBranch := fn[strings.Index(fn, "if (url)"):]
+	linkBranch := fn[branchIdx:]
 	elseIdx := strings.Index(linkBranch, "} else {")
 	if elseIdx == -1 {
 		t.Fatalf("buildFeedRow's commit-link branch has no else (plain-text) arm:\n%s", fn)

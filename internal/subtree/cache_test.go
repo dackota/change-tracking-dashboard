@@ -29,7 +29,7 @@ func TestDiff_CachesOutcome_ProducesAtMostOncePerKey(t *testing.T) {
 	engine := newTestEngine(t, testConfig(), domain)
 	repo := fixedParentRepo("parent-sha")
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		if got := engine.Diff(context.Background(), repo, defaultRequest); got.Kind != kindOK {
 			t.Fatalf("call %d: Kind = %q, want %q", i, got.Kind, kindOK)
 		}
@@ -51,7 +51,7 @@ func TestDiff_CachesFailures_NeverRetriesAKnownBadComputation(t *testing.T) {
 	engine := newTestEngine(t, testConfig(), domain)
 	repo := fixedParentRepo("parent-sha")
 
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		if got := engine.Diff(context.Background(), repo, defaultRequest); got.Kind != kindFailed {
 			t.Fatalf("call %d: Kind = %q, want %q", i, got.Kind, kindFailed)
 		}
@@ -72,7 +72,7 @@ func TestDiff_NoPriorVersion_IsNotCached(t *testing.T) {
 	domain := &fakeDomain{}
 	engine := newTestEngine(t, testConfig(), domain)
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if got := engine.Diff(context.Background(), repo, defaultRequest); got.Kind != kindNoPriorVersion {
 			t.Fatalf("call %d: Kind = %q, want %q", i, got.Kind, kindNoPriorVersion)
 		}
@@ -126,7 +126,7 @@ func TestDiff_SingleFlight_CoalescesConcurrentIdenticalRequests(t *testing.T) {
 	const callers = 8
 	var wg sync.WaitGroup
 	results := make([]outcome, callers)
-	for i := 0; i < callers; i++ {
+	for i := range callers {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -172,7 +172,7 @@ func TestDiff_ConcurrencyCap_BoundsSimultaneousProduces(t *testing.T) {
 	engine := newTestEngine(t, cfg, domain)
 
 	var wg sync.WaitGroup
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -202,10 +202,12 @@ func TestDiff_IsTotal_AlwaysReturnsOneKindAndNeverPanics(t *testing.T) {
 		"panic":    func(string) (string, error) { panic("first parent exploded") },
 	}
 	materializers := map[string]func(_, _, _ string, _ gitsource.MaterializeBounds) error{
-		"ok":     func(_, _, _ string, _ gitsource.MaterializeBounds) error { return nil },
-		"bounds": func(_, _, _ string, _ gitsource.MaterializeBounds) error { return gitsource.ErrMaterializeBoundsExceeded },
-		"error":  func(_, _, _ string, _ gitsource.MaterializeBounds) error { return errUnexpected },
-		"panic":  func(_, _, _ string, _ gitsource.MaterializeBounds) error { panic("materialize exploded") },
+		"ok": func(_, _, _ string, _ gitsource.MaterializeBounds) error { return nil },
+		"bounds": func(_, _, _ string, _ gitsource.MaterializeBounds) error {
+			return gitsource.ErrMaterializeBoundsExceeded
+		},
+		"error": func(_, _, _ string, _ gitsource.MaterializeBounds) error { return errUnexpected },
+		"panic": func(_, _, _ string, _ gitsource.MaterializeBounds) error { panic("materialize exploded") },
 	}
 	produces := map[string]func(int, string) ([]string, error){
 		"ok":    func(int, string) ([]string, error) { return nil, nil },

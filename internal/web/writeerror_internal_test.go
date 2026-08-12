@@ -139,9 +139,9 @@ func TestLogResponseWriteError_ClientDisconnectNeverLogsErrorAtAnyWrapDepth(t *t
 	}
 
 	for _, base := range disconnects {
-		for depth := 0; depth <= 5; depth++ {
+		for depth := range 6 {
 			err := base
-			for i := 0; i < depth; i++ {
+			for i := range depth {
 				err = fmt.Errorf("layer %d: %w", i, err)
 			}
 

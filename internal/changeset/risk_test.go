@@ -86,7 +86,6 @@ func TestClassifyRisk_ReplaceDestroy(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -166,7 +165,6 @@ func TestClassifyRisk_Security(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -257,7 +255,6 @@ func TestClassifyRisk_CostTripwire(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -385,7 +382,7 @@ var adversarialChangeTypes = []domain.ChangeType{
 func (riskClassifierInput) Generate(rnd *rand.Rand, size int) reflect.Value {
 	n := rnd.Intn(6)
 	changes := make([]changeset.Change, 0, n)
-	for i := 0; i < n; i++ {
+	for range n {
 		var old, newv *string
 		if rnd.Intn(2) == 0 {
 			s := adversarialStrings[rnd.Intn(len(adversarialStrings))]
@@ -440,7 +437,6 @@ func TestClassifyRisk_NeverPanicsAndIsDeterministic_Property(t *testing.T) {
 	}
 
 	for name, rules := range rulesets {
-		rules := rules
 		t.Run(name, func(t *testing.T) {
 			property := func(in riskClassifierInput) (ok bool) {
 				defer func() {

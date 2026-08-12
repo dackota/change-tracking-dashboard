@@ -79,7 +79,7 @@ func TestTimelineHandler_RendersOneControlPerFacetValue(t *testing.T) {
 		{"env", "prod"},
 		{"tier", "sbx"},
 	} {
-		wantAttr := fmt.Sprintf(`data-facet="%s" data-value="%s"`, want.facet, want.value)
+		wantAttr := fmt.Sprintf(`data-facet=%q data-value=%q`, want.facet, want.value)
 		if !strings.Contains(body, wantAttr) {
 			t.Errorf("body missing control for facet=%s value=%s (want attr %q); got:\n%s", want.facet, want.value, wantAttr, body)
 		}
@@ -120,7 +120,7 @@ func TestTimelineHandler_ReservedFacetNameNeverRendersAsControl(t *testing.T) {
 	body := rr.Body.String()
 	for _, name := range reservedNames {
 		t.Run(name, func(t *testing.T) {
-			wantAttr := fmt.Sprintf(`data-facet="%s"`, name)
+			wantAttr := fmt.Sprintf(`data-facet=%q`, name)
 			if strings.Contains(body, wantAttr) {
 				t.Errorf("body rendered a control for reserved facet name %q (attr %q present), want excluded", name, wantAttr)
 			}

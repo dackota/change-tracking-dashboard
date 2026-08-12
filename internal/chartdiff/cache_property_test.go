@@ -41,8 +41,7 @@ func TestDiff_CacheDeterminism_Property(t *testing.T) {
 	outcomes := make([]chartdiff.Outcome, callers)
 	var wg sync.WaitGroup
 	wg.Add(callers)
-	for i := 0; i < callers; i++ {
-		i := i
+	for i := range callers {
 		go func() {
 			defer wg.Done()
 			outcomes[i] = engine.Diff(context.Background(), repo, req)

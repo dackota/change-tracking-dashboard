@@ -343,7 +343,7 @@ ORDER BY c.committed_at DESC, c.commit_sha ASC`, cteWhere.String(), outerWhereCl
 	if err != nil {
 		return nil, fmt.Errorf("store: query changesets: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var results []domain.Change
 	for rows.Next() {
@@ -376,7 +376,7 @@ ORDER BY id ASC`
 	if err != nil {
 		return changeset.Changeset{}, false, fmt.Errorf("store: query changeset %q/%q: %w", repo, commitSha, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var changes []domain.Change
 	for rows.Next() {

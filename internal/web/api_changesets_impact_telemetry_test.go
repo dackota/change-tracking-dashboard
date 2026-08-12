@@ -47,7 +47,7 @@ func TestChangesetsAPI_ImpactFilterRecordsScanCountsOnSpan(t *testing.T) {
 	// 30 commits, every third a major bump: 10 matches among 30 examined, so
 	// examined and returned are distinguishable numbers rather than
 	// coincidentally equal.
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		newVal := "1.0.1"
 		if i%3 == 0 {
 			newVal = "2.0.0"

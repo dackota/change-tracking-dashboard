@@ -97,7 +97,6 @@ func TestNewMux_ServesEveryRoute(t *testing.T) {
 	}
 
 	for _, tc := range routes {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -156,7 +155,6 @@ func TestNewMux_UnmatchedPathsFallThroughToTheTimeline(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -197,7 +195,6 @@ func TestNewMux_MissingDependency_IsReportedNotDeferred(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 

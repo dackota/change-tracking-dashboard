@@ -268,7 +268,7 @@ func TestOpen_DedupesLegacyDuplicateChanges(t *testing.T) {
 	}
 	const insert = `INSERT INTO changes (repo, file_path, field, change_type, commit_sha, author, committed_at)
 	                VALUES (?, ?, ?, ?, ?, ?, ?)`
-	for i := 0; i < 2; i++ { // two identical-identity rows (nil scalar key)
+	for i := range 2 { // two identical-identity rows (nil scalar key)
 		if _, err := legacy.Exec(insert,
 			"infra-repo", "terraform/cluster.tf", "kubernetes-version", "modified",
 			"sha-dup", "dev", "2024-01-01T00:00:00Z",

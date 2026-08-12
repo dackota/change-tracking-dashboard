@@ -50,7 +50,7 @@ func TestTimelineJS_BuildFeedRow_ImpactBadgeBeforeRiskBadges(t *testing.T) {
 	if riskCellIdx == -1 || impactIdx == -1 || riskForEachIdx == -1 {
 		t.Fatalf("could not locate risk cell, impact badge, and risk forEach in buildFeedRow:\n%s", fn)
 	}
-	if !(riskCellIdx < impactIdx && impactIdx < riskForEachIdx) {
+	if riskCellIdx >= impactIdx || impactIdx >= riskForEachIdx {
 		t.Errorf("impact badge must be built after the risk cell starts but before the risk forEach loop:\n%s", fn)
 	}
 }

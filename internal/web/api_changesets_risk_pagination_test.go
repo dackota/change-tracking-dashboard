@@ -60,7 +60,7 @@ func TestChangesetsAPI_RiskFilteredPaginationIsCorrect(t *testing.T) {
 	// 90 commits, every third carrying a security risk: 30 matches separated
 	// by two non-matching commits each, so an unfilled page would be obvious.
 	var wantMatches []string
-	for i := 0; i < 90; i++ {
+	for i := range 90 {
 		sha := fmt.Sprintf("commit-%03d", i)
 		if i%3 == 0 {
 			seedRiskCommit(t, st, sha, "oci-vcn-security-list.tf", "source", "10.0.0.0/8", "0.0.0.0/0", "infra-repo", nil, i)

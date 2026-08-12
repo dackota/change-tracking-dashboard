@@ -63,7 +63,6 @@ func TestParse_AdversarialInputs_NeverPanics(t *testing.T) {
 	}
 
 	for _, text := range adversarial {
-		text := text
 		t.Run("", func(t *testing.T) {
 			t.Parallel()
 			_ = issueref.Parse(text) // must not panic

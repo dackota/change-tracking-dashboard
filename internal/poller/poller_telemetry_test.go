@@ -281,7 +281,7 @@ func TestPoller_WithNow_PreservesInjectedTelemetry(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 
-	p := poller.New(src, st, poller.WithMeterProvider(mp)).WithNow(func() time.Time { return time.Now() })
+	p := poller.New(src, st, poller.WithMeterProvider(mp)).WithNow(time.Now)
 
 	tracker := domain.Tracker{
 		Repo:          repoPath,

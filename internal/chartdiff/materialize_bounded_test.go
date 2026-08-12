@@ -176,7 +176,7 @@ func TestDiff_MaterializeConcurrencyCapOne_SerializesMaterializations(t *testing
 
 	var wg sync.WaitGroup
 	wg.Add(2)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		sha := []string{"sha-1", "sha-2"}[i]
 		go func() {
 			defer wg.Done()
@@ -227,7 +227,7 @@ func TestDiff_MaterializeConcurrencyCapTwo_AllowsTwoSimultaneousMaterializations
 
 	var wg sync.WaitGroup
 	wg.Add(2)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		sha := []string{"sha-1", "sha-2"}[i]
 		go func() {
 			defer wg.Done()
@@ -280,8 +280,7 @@ func TestDiff_ConcurrentSameKeyCalls_MaterializesAtMostOncePerSide_Property(t *t
 	outcomes := make([]chartdiff.Outcome, callers)
 	var wg sync.WaitGroup
 	wg.Add(callers)
-	for i := 0; i < callers; i++ {
-		i := i
+	for i := range callers {
 		go func() {
 			defer wg.Done()
 			outcomes[i] = engine.Diff(context.Background(), repo, req)

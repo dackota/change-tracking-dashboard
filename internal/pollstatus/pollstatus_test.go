@@ -172,7 +172,7 @@ func TestRegistry_Snapshot_DeterministicOrder(t *testing.T) {
 	reg.Record(trB, at, nil)
 
 	want := []string{trA.Repo, trB.Repo, trC.Repo}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		got := reg.Snapshot()
 		if len(got) != 3 {
 			t.Fatalf("Snapshot() len = %d, want 3", len(got))

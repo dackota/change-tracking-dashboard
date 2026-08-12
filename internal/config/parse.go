@@ -34,7 +34,8 @@ func readConfigFile(path string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("config: read %q: %w", path, err)
 	}
-	defer f.Close()
+	// Read-only handle: a close error cannot affect the bytes already read.
+	defer func() { _ = f.Close() }()
 
 	// Read one byte past the cap so we can detect an over-limit file.
 	data, err := io.ReadAll(io.LimitReader(f, maxConfigBytes+1))

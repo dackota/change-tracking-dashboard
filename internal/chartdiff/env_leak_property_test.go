@@ -100,6 +100,10 @@ func TestDiff_EnvNeverLeaksIntoOutcome_Property(t *testing.T) {
 	property := func(secretSuffix uint32) bool {
 		secretValue := fmt.Sprintf("chartdiff-secret-%d-must-never-leak", secretSuffix)
 
+		// t.Setenv restores only once, when the test ends. This property sets
+		// and clears the variable per iteration on purpose, so that a leak
+		// from one iteration cannot be masked by the next one's value.
+		//nolint:usetesting // per-iteration set/unset, not a test-scoped override
 		if err := os.Setenv(envProbeVarName, secretValue); err != nil {
 			t.Fatalf("os.Setenv: %v", err)
 		}

@@ -30,7 +30,7 @@ func (pollHealthCase) Generate(rnd *rand.Rand, size int) reflect.Value {
 
 	n := rnd.Intn(12) // 0..11 trackers, including the empty-snapshot case
 	snapshot := make([]pollstatus.TrackerStatus, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		var attempt, success, next time.Time
 
 		hasAttempted := rnd.Intn(4) != 0 // ~75% attempted at least once; rest are the zero-value "never" shape

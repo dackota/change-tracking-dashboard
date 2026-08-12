@@ -104,10 +104,10 @@ func TestCache_ConcurrentAccessIsSafe(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
-	for g := 0; g < goroutines; g++ {
+	for g := range goroutines {
 		go func(g int) {
 			defer wg.Done()
-			for i := 0; i < ops; i++ {
+			for i := range ops {
 				k := (g*ops + i) % 128
 				c.Add(k, k*10)
 				if v, ok := c.Get(k); ok && v != k*10 {
@@ -133,7 +133,7 @@ func mustNew[K comparable, V any](t *testing.T, size int) *Cache[K, V] {
 func TestAdd_NeverExceedsCapacity(t *testing.T) {
 	const size = 8
 	c := mustNew[int, int](t, size)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		c.Add(i, i)
 		if got := c.ll.Len(); got > size {
 			t.Fatalf("after Add(%d): list length %d exceeds capacity %d", i, got, size)
