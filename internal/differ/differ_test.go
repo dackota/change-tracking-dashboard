@@ -110,7 +110,6 @@ func TestDiffScalar(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -179,21 +178,6 @@ func ptrStr(s *string) string {
 		return "<nil>"
 	}
 	return *s
-}
-
-// changeKey is a test helper to summarise a Change in a way that is easy to
-// index in test assertions (key + changeType).
-type changeKey struct {
-	key        string // "" if nil
-	changeType domain.ChangeType
-}
-
-func changeKeyOf(c domain.Change) changeKey {
-	k := ""
-	if c.Key != nil {
-		k = *c.Key
-	}
-	return changeKey{key: k, changeType: c.ChangeType}
 }
 
 // indexByKey returns a map from map-key → Change for easy per-key assertions.
@@ -360,7 +344,6 @@ func TestDiffKeyed(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 

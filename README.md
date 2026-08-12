@@ -555,6 +555,17 @@ go test -race ./...     # test (race detector on)
 go vet ./...            # static analysis
 ```
 
+Lint with the same version and configuration CI enforces — `.golangci.yml` at
+the repo root documents which linters are enabled and why the rest are not:
+
+```bash
+# renovate: datasource=github-releases depName=golangci/golangci-lint
+go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run ./...
+```
+
+It is expected to report zero issues; the `golangci-lint` job in
+`.github/workflows/pr-ci.yml` fails a PR that makes it report any.
+
 The web UI is server-rendered Go HTML with a single vanilla-JS file
 (`internal/web/static/timeline.js`); there is no frontend build step. Storage is
 pure-Go SQLite (`modernc.org/sqlite`), so the binary is static and CGO-free.

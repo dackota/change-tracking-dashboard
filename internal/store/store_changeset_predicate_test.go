@@ -173,14 +173,14 @@ func TestQueryChangesets_FilteredPagesNeverSplitACommit(t *testing.T) {
 	// 40 commits, each carrying three Changes, every other one a major bump.
 	var seeded []domain.Change
 	var wantMajors []string
-	for i := 0; i < 40; i++ {
+	for i := range 40 {
 		sha := fmt.Sprintf("sha-%04d", i)
 		newVal := "1.0.1"
 		if i%2 == 0 {
 			newVal = "2.0.0"
 			wantMajors = append(wantMajors, sha)
 		}
-		for f := 0; f < 3; f++ {
+		for f := range 3 {
 			c := versionCommit(sha, "1.0.0", newVal, i)
 			c.Field = fmt.Sprintf("aidp-version-%d", f)
 			seeded = append(seeded, c)
@@ -238,7 +238,7 @@ func TestQueryChangesets_ScanBudgetBoundsWorkAndStaysResumable(t *testing.T) {
 
 	total := store.MaxChangesetScan + 500
 	changes := make([]domain.Change, 0, total)
-	for i := 0; i < total; i++ {
+	for i := range total {
 		changes = append(changes, versionCommit(fmt.Sprintf("sha-%06d", i), "1.0.0", "1.0.1", i))
 	}
 	seedChanges(t, s, changes)
@@ -300,7 +300,7 @@ func seedAlternating(t *testing.T, s *store.Store, n, k int) []string {
 
 	changes := make([]domain.Change, 0, n)
 	var majors []string
-	for i := 0; i < n; i++ {
+	for i := range n {
 		sha := fmt.Sprintf("sha-%04d", i)
 		if i%k == 0 {
 			changes = append(changes, versionCommit(sha, "1.0.0", "2.0.0", i))

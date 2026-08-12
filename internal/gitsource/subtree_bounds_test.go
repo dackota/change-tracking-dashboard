@@ -103,7 +103,7 @@ func TestMaterializeSubtreeBounded_ExceedsMaxFiles_ReturnsBoundsError(t *testing
 	t.Parallel()
 
 	files := map[string][]byte{"Chart.yaml": []byte("apiVersion: v2\nname: tenant\nversion: 1.0.0\n")}
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		files[fmt.Sprintf("templates/t%d.yaml", i)] = []byte("kind: ConfigMap\n")
 	}
 	repoPath, sha := buildTenantChartRepo(t, files)
@@ -209,7 +209,7 @@ type boundedFileSet map[string][]byte
 func (boundedFileSet) Generate(rnd *rand.Rand, size int) reflect.Value {
 	n := rnd.Intn(8) + 1
 	files := make(boundedFileSet, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		content := make([]byte, rnd.Intn(300))
 		rnd.Read(content)
 		files[fmt.Sprintf("file%d.bin", i)] = content
@@ -340,7 +340,7 @@ func buildManyEmptyDirsRepo(t *testing.T, n int) (repoPath, sha string) {
 	// lexicographic and numeric order agree regardless of n's magnitude.
 	width := len(fmt.Sprintf("%d", n))
 	entries := make([]object.TreeEntry, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		entries = append(entries, object.TreeEntry{Name: fmt.Sprintf("dir%0*d", width, i), Mode: filemode.Dir, Hash: emptyTreeHash})
 	}
 	tenantTreeHash := writeTree(entries)

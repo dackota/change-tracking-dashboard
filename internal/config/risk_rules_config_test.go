@@ -150,7 +150,6 @@ trackers:
 	}
 
 	for name, block := range cases {
-		block := block
 		t.Run(name, func(t *testing.T) {
 			path := writeTemp(t, base+block)
 			if _, err := config.Load(path); err == nil {

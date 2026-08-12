@@ -118,7 +118,6 @@ func TestClassifyChangeImpact_Table(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -173,7 +172,6 @@ func TestClassifyImpact_Rollup(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -234,7 +232,7 @@ var impactAdversarialStrings = []string{
 func (impactClassifierInput) Generate(rnd *rand.Rand, size int) reflect.Value {
 	n := rnd.Intn(6)
 	changes := make([]changeset.Change, 0, n)
-	for i := 0; i < n; i++ {
+	for range n {
 		var old, newv *string
 		if rnd.Intn(2) == 0 {
 			s := impactAdversarialStrings[rnd.Intn(len(impactAdversarialStrings))]

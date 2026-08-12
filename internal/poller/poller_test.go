@@ -14,9 +14,6 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
-// ptr is a test-local helper to take the address of a string literal.
-func ptr(s string) *string { return &s }
-
 // buildFixtureRepo mirrors gitsource_test's helper; both need their own repo.
 func buildFixtureRepo(t *testing.T) (repoPath, sha1, sha2 string) {
 	t.Helper()

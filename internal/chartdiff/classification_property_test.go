@@ -83,7 +83,6 @@ func TestDiff_ClassificationTotality_Property(t *testing.T) {
 	}
 
 	for _, sc := range scenarios {
-		sc := sc
 		t.Run(sc.name, func(t *testing.T) {
 			t.Parallel()
 

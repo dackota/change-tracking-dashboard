@@ -48,7 +48,7 @@ func TestDiff_ConcurrencyCapOne_SerializesRenders(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(2)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		sha := []string{"sha-1", "sha-2"}[i]
 		go func() {
 			defer wg.Done()
@@ -120,7 +120,7 @@ func TestDiff_ConcurrencyCapTwo_AllowsTwoSimultaneousRenders(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(2)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		sha := []string{"sha-1", "sha-2"}[i]
 		go func() {
 			defer wg.Done()

@@ -49,7 +49,7 @@ func TestDiff_UnifiedDiffTruncatedAtConfiguredCeiling(t *testing.T) {
 
 	oldBody := ""
 	newBody := ""
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		oldBody += "line = \"old-value-that-is-reasonably-long\"\n"
 		newBody += "line = \"new-value-that-is-reasonably-long\"\n"
 	}
@@ -115,7 +115,6 @@ func TestDiff_ConcurrencyCapOne_SerializesParses(t *testing.T) {
 
 	done := make(chan struct{}, 2)
 	for _, sha := range []string{"sha-1", "sha-2"} {
-		sha := sha
 		go func() {
 			<-gate
 			engine.Diff(context.Background(), repo, plandiff.Request{RepoName: "r", TenantPath: "stack", CommitSha: sha})

@@ -777,7 +777,7 @@ var adversarialFragments = []string{
 func (adversarialManifestPayload) Generate(rnd *rand.Rand, size int) reflect.Value {
 	n := rnd.Intn(4) + 1
 	var b strings.Builder
-	for i := 0; i < n; i++ {
+	for range n {
 		b.WriteString(adversarialFragments[rnd.Intn(len(adversarialFragments))])
 		b.WriteString(" ")
 	}

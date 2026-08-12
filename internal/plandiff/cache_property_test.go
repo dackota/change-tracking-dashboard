@@ -40,8 +40,7 @@ func TestDiff_CacheDeterminism_Property(t *testing.T) {
 	outcomes := make([]plandiff.Outcome, callers)
 	var wg sync.WaitGroup
 	wg.Add(callers)
-	for i := 0; i < callers; i++ {
-		i := i
+	for i := range callers {
 		go func() {
 			defer wg.Done()
 			outcomes[i] = engine.Diff(context.Background(), repo, req)
@@ -89,7 +88,7 @@ func TestDiff_CacheDeterminism_FailureOutcomeAlsoCoalesces(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(callers)
-	for i := 0; i < callers; i++ {
+	for range callers {
 		go func() {
 			defer wg.Done()
 			outcome := engine.Diff(context.Background(), repo, req)

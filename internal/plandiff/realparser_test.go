@@ -157,7 +157,7 @@ func TestDiff_RealParser_DeeplyNestedBlocks_ReturnsExceededLimitsNotPanic(t *tes
 	var b strings.Builder
 	b.WriteString(`resource "t" "n" {` + "\n")
 	depth := 20
-	for i := 0; i < depth; i++ {
+	for i := range depth {
 		b.WriteString(strings.Repeat("  ", i+1) + `nested {` + "\n")
 	}
 	for i := depth - 1; i >= 0; i-- {

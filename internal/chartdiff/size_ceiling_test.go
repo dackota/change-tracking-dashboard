@@ -15,7 +15,7 @@ import (
 // between two variants of it.
 func bigManifestYAML(n int, variant string) string {
 	var b strings.Builder
-	for i := 0; i < n; i++ {
+	for i := range n {
 		fmt.Fprintf(&b, "line%d: %s-%d\n", i, variant, i)
 	}
 	return b.String()

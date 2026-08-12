@@ -331,7 +331,6 @@ func TestDiff_ChangedPair_NonTerminatedYAML_DoesNotFuseDiffLines(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -390,7 +389,7 @@ func TestDiff_OversizedInput_TruncatesButKeepsTrueSummaryTotals(t *testing.T) {
 	const manifestCount = 50
 	old := make([]manifestdiff.Manifest, manifestCount)
 	new := make([]manifestdiff.Manifest, manifestCount)
-	for i := 0; i < manifestCount; i++ {
+	for i := range manifestCount {
 		name := fmt.Sprintf("cm-%02d", i)
 		old[i] = manifestdiff.Manifest{
 			Kind: "ConfigMap", Namespace: "default", Name: name,

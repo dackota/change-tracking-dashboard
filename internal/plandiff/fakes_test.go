@@ -41,14 +41,6 @@ func (f *fakePlanRepo) MaterializeSubtreeBounded(sha, subtreePath, destDir strin
 	return nil
 }
 
-// materializeCallCount returns the number of MaterializeSubtreeBounded calls
-// observed so far.
-func (f *fakePlanRepo) materializeCallCount() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.materializeCns
-}
-
 // fixedParentRepo returns a fakePlanRepo whose FirstParent always resolves
 // to parentSha and whose MaterializeSubtreeBounded is a no-op success -- the
 // common case for tests that only care about parse-side behavior.

@@ -156,10 +156,7 @@ func parseFile(content []byte, maxBlockDepth int) ([]Resource, error) {
 		if block.Type != "resource" || len(block.Labels) != 2 {
 			continue
 		}
-		attrs, err := topLevelAttrs(block.Body, content)
-		if err != nil {
-			return nil, err
-		}
+		attrs := topLevelAttrs(block.Body, content)
 		rendered, err := renderBody(block.Body, content, 1, maxBlockDepth)
 		if err != nil {
 			return nil, err
@@ -176,13 +173,14 @@ func parseFile(content []byte, maxBlockDepth int) ([]Resource, error) {
 
 // topLevelAttrs renders only body's direct attributes (not nested blocks)
 // into a flat name -> rendered-value map, for the replacement-forcing
-// heuristic.
-func topLevelAttrs(body *hclsyntax.Body, src []byte) (map[string]string, error) {
+// heuristic. Unlike renderBody it cannot fail: there is no recursion, so no
+// depth bound to exceed.
+func topLevelAttrs(body *hclsyntax.Body, src []byte) map[string]string {
 	attrs := make(map[string]string, len(body.Attributes))
 	for name, attr := range body.Attributes {
 		attrs[name] = renderExprText(attr.Expr, src)
 	}
-	return attrs, nil
+	return attrs
 }
 
 // renderBody deterministically renders body's attributes (sorted by name)

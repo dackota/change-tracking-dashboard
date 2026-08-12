@@ -517,7 +517,7 @@ func TestChangesetsAPI_Pagination_WalksFullSetWithNoGapsOrOverlaps(t *testing.T)
 	base := time.Now().Add(-24 * time.Hour)
 
 	const totalCommits = 7
-	for i := 0; i < totalCommits; i++ {
+	for i := range totalCommits {
 		c := domain.Change{
 			Repo: "apps-repo", FilePath: "values.yaml", Field: "f",
 			ChangeType:  domain.ChangeTypeModified,
@@ -536,7 +536,7 @@ func TestChangesetsAPI_Pagination_WalksFullSetWithNoGapsOrOverlaps(t *testing.T)
 
 	var gotShas []string
 	cursor := ""
-	for pages := 0; pages < totalCommits+1; pages++ { // hard cap to avoid infinite loop on a bug
+	for pages := range totalCommits + 1 { // hard cap to avoid infinite loop on a bug
 		u := "/api/changesets?limit=3"
 		if cursor != "" {
 			u += "&cursor=" + url.QueryEscape(cursor)
@@ -563,7 +563,7 @@ func TestChangesetsAPI_Pagination_WalksFullSetWithNoGapsOrOverlaps(t *testing.T)
 	}
 
 	wantShas := make([]string, totalCommits)
-	for i := 0; i < totalCommits; i++ {
+	for i := range totalCommits {
 		wantShas[i] = fmt.Sprintf("commit-%02d", totalCommits-1-i)
 	}
 	for i, want := range wantShas {
@@ -588,7 +588,7 @@ func TestChangesetsAPI_LimitClampedToServerCap(t *testing.T) {
 	// return them all in one page (no NextCursor); a clamped limit must
 	// still page.
 	const totalCommits = 150
-	for i := 0; i < totalCommits; i++ {
+	for i := range totalCommits {
 		c := domain.Change{
 			Repo: "apps-repo", FilePath: "values.yaml", Field: "f",
 			ChangeType:  domain.ChangeTypeModified,
@@ -644,7 +644,7 @@ func TestChangesetsAPI_LimitRespectsExplicitSmallerValue(t *testing.T) {
 	base := time.Now().Add(-24 * time.Hour)
 
 	const totalCommits = 5
-	for i := 0; i < totalCommits; i++ {
+	for i := range totalCommits {
 		c := domain.Change{
 			Repo: "apps-repo", FilePath: "values.yaml", Field: "f",
 			ChangeType:  domain.ChangeTypeModified,

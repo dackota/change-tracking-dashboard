@@ -78,7 +78,7 @@ func (s *Store) FacetOptions() (map[string][]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store: query facet options: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	// Collect distinct values per key using a set (map[value]struct{}).
 	type valueSet = map[string]struct{}

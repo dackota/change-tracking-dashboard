@@ -304,7 +304,7 @@ func TestFormatPlanDiffOutcomeText_MultipleKinds_SortsDeterministically(t *testi
 	counts := map[string]int64{"ok": 5, "could-not-render": 2, "exceeded-limits": 1}
 	want := "2 could-not-render, 1 exceeded-limits, 5 ok"
 
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		if got := formatPlanDiffOutcomeText(counts); got != want {
 			t.Errorf("formatPlanDiffOutcomeText(%v) = %q, want %q", counts, got, want)
 		}
@@ -322,7 +322,7 @@ func TestFormatExtractFailureText_MultipleEngines_SortsDeterministically(t *test
 	counts := map[string]int64{"jq": 1, "hcl": 2}
 	want := "2 hcl parse failures, 1 jq parse failure"
 
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		if got := formatExtractFailureText(counts); got != want {
 			t.Errorf("formatExtractFailureText(%v) = %q, want %q", counts, got, want)
 		}

@@ -110,7 +110,6 @@ func TestGroupWalkBound_TakesTheOldestBoundaryAnyFieldNeeds(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -155,7 +154,6 @@ func TestGroupWalkBound_UnboundedWins(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -189,7 +187,6 @@ func TestCursorsPresent(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
