@@ -1,0 +1,127 @@
+# golangci-lint configuration.
+#
+# Enforced on every PR by the `golangci-lint` job in
+# .github/workflows/pr-ci.yml. Run the same version locally with:
+#
+#   # renovate: datasource=github-releases depName=golangci/golangci-lint
+#   go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run ./...
+#
+# Both version pins carry a `renovate:` marker so the custom manager in
+# renovate.json bumps them together -- a config curated against one release
+# and run against another is how a lint gate starts lying.
+#
+# Curation rule: every linter enabled here is at zero findings on main. A
+# linter that would need a wall of //nolint to land is either fixed first or
+# left out with a recorded reason (see "Deliberately not enabled", below) --
+# a gate that ships red teaches everyone to ignore it.
+version: "2"
+
+linters:
+  # standard = errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+  enable:
+    # --- Correctness ---
+    - asasalint       # []any accidentally passed to a variadic ...any
+    - bodyclose       # HTTP response bodies must be closed (we call the GitHub API)
+    - contextcheck    # a function must not drop the caller's context for context.Background()
+    - durationcheck   # two time.Durations multiplied together (almost always a bug)
+    - errorlint       # == / != on errors, and %v where %w is meant
+    - fatcontext      # context repeatedly wrapped inside a loop
+    - makezero        # make([]T, n) followed by append (silent leading zeros)
+    - nilerr          # returning nil after checking that err != nil
+    - rowserrcheck    # sql.Rows.Err() left unchecked after iterating
+    - sqlclosecheck   # sql.Rows / sql.Stmt left unclosed
+    - wastedassign    # a value assigned and then overwritten before use
+
+    # --- Clarity / modern Go ---
+    - copyloopvar     # the pre-Go-1.22 `x := x` loop-variable copy
+    - gocritic        # broad diagnostic set (offBy1, unlambda, elseif, ...)
+    - intrange        # `for i := 0; i < n; i++` -> `for i := range n`
+    - unconvert       # conversion of a value to the type it already has
+    - unparam         # always-constant parameters and never-used results
+    - usetesting      # os.Setenv/MkdirTemp in tests where t.Setenv/t.TempDir fits
+
+    # --- Hygiene ---
+    - misspell        # common English misspellings in comments and strings
+    - nolintlint      # every //nolint must be machine-readable and carry a reason
+
+  settings:
+    errorlint:
+      # The comparison and type-assertion checks are the ones that catch bugs:
+      # `err == somethingWrapped` silently stops matching the day a caller
+      # wraps it.
+      comparison: true
+      asserts: true
+      # The errorf check is off on purpose. This codebase wraps the *sentinel*
+      # with %w and formats the *cause* with %v, deliberately and consistently
+      # (changesetquery.ErrBadRequest, store.ErrInvalidCursor, ...): the
+      # sentinel is the class callers match on, and the cause is diagnostic
+      # text that is explicitly not part of the API. Turning those %v verbs
+      # into %w would widen fourteen error contracts to satisfy a lint.
+      errorf: false
+
+    gocritic:
+      # Default checkers only. The opinionated tags (style beyond the defaults,
+      # performance micro-optimizations) fight this repo's deliberately explicit
+      # style; the diagnostics tag is what earns its place here.
+      enabled-tags:
+        - diagnostic
+
+    nolintlint:
+      # A //nolint is a claim that the linter is wrong. Make the claim legible:
+      # name the linter, explain why, and don't leave the directive behind once
+      # the code it covered has changed.
+      require-explanation: true
+      require-specific: true
+      allow-unused: false
+
+  exclusions:
+    generated: lax
+    rules:
+      # unparam's "always receives X" / "result is never used" findings are
+      # correct-but-useless on test helpers, where a wider signature documents
+      # the axis under test and the next test case fills it in. Keep unparam
+      # pointed at production code, where a dead parameter is real drift.
+      - path: _test\.go
+        linters:
+          - unparam
+
+# Deliberately NOT enabled -- each of these found real things, and each needs
+# its own change rather than a drive-by fix inside the lint-adoption PR:
+#
+#   noctx       -- correct: internal/store's API takes no context.Context at
+#                  all, so every Query/QueryRow is context-free. Plumbing
+#                  context through the store is a design change, not a lint fix.
+#   gosec       -- ~18 findings, mostly 0755 dirs and math/rand in tests plus
+#                  the intentional G304 config-path read and the G201 FilterSpec
+#                  SQL builder. Worth a triage pass of its own; enabling it here
+#                  would mean ~10 //nolint lines in one PR.
+#   forcetypeassert
+#               -- 3 hits, all internal/lru's container/list element -> *entry
+#                  assertions, which are safe by construction. Only a real fix
+#                  (a typed list) would clear them.
+#   predeclared -- 15 hits, nearly all of them the `old`/`new` parameter pair
+#                  that is this codebase's word for the two sides of a change
+#                  (differ, plandiff, chartdiff, subtree, poller). Renaming the
+#                  domain vocabulary to satisfy a shadowing rule is a bad trade.
+#   revive      -- its default rule set wants package comments, doc comments on
+#                  every exported const, and a rename of filter.FilterSpec (the
+#                  stutter rule). Style churn across the tree, not defects.
+#   errname     -- would rename the documented chartrender.Failure error type,
+#                  which callers match with errors.As, purely for the -Error
+#                  suffix convention.
+#   perfsprint, prealloc
+#               -- micro-optimizations in code that is not hot.
+#
+# No formatters are enabled. `gofmt -l` reports ~180 untouched files on a
+# Windows checkout because of CRLF line endings, so a formatter gate here would
+# be a tripwire for local runs while adding nothing that gofmt-on-save and
+# review don't already cover.
+formatters:
+  enable: []
+
+issues:
+  # Report every finding. The defaults (50 per linter, 3 per identical message)
+  # silently truncate, which hides work and makes a local run disagree with CI.
+  max-issues-per-linter: 0
+  max-same-issues: 0

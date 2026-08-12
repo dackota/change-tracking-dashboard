@@ -13,6 +13,18 @@ name: PR CI
 #                  the check on the first failing step). Only runs when the PR
 #                  touches Go source or module files -- a workflow-only PR
 #                  has nothing for it to verify.
+# - golangci-lint
+#               -> the static-analysis gate configured by .golangci.yml at the
+#                  repo root (that file records which linters are on and why
+#                  the rest are not). Gated on the same `go` path filter as
+#                  go-verify, plus .golangci.yml itself so a config-only PR
+#                  still proves the config runs clean. Runs in parallel with
+#                  go-verify rather than as a step inside it: a lint failure
+#                  and a test failure are independent facts, and folding them
+#                  into one check-run hides whichever comes second. NOTE: a
+#                  new job is advisory until the "main: require CI (auto-merge
+#                  gate)" ruleset lists `golangci-lint` among its required
+#                  checks -- that is a repo setting, not a file in this repo.
 # - grype-fs    -> scans the working tree's dependency graph (go.sum, etc.)
 #                  the same way publish.yml scans the built image: HIGH/CRITICAL,
 #                  fixed-only findings fail the check before anything merges.
@@ -62,6 +74,7 @@ jobs:
               - '**/*.go'
               - 'go.mod'
               - 'go.sum'
+              - '.golangci.yml'
 
   go-verify:
     name: Go build, vet, test
@@ -120,6 +133,34 @@ jobs:
             ./internal/scheduler/... \
             ./internal/store/... \
             ./internal/web/...
+
+  golangci-lint:
+    name: golangci-lint
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # golangci-lint-action does not install Go itself; it type-checks the
+      # tree with the toolchain already on PATH, so the version must be the
+      # one go.mod declares or the analyzers see a different standard library
+      # than `go build` does.
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # `version` is pinned rather than floated: a linter release can add
+      # checks, and an unpinned bump turns an unrelated PR red. Renovate
+      # proposes the upgrade instead, so the bump lands in a PR of its own
+      # where any new findings are the subject rather than a surprise.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          # renovate: datasource=github-releases depName=golangci/golangci-lint
+          version: v2.12.2
 
   grype-fs-scan:
     name: Grype filesystem/dependency scan
