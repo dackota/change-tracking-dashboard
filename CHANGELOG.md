@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.6](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.18.5...app-v0.18.6) (2026-08-12)
+
+
+### Bug Fixes
+
+* **deps:** update opentelemetry-go monorepo to v1.45.0 ([#193](https://github.com/dackota/change-tracking-dashboard/issues/193)) ([7720806](https://github.com/dackota/change-tracking-dashboard/commit/7720806e0bebf75f6f3d66596e9935576c2dc0e9))
+
 ## [0.18.5](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.18.4...app-v0.18.5) (2026-08-09)
 
 
