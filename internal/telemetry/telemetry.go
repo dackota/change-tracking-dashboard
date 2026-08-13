@@ -21,6 +21,16 @@ import (
 type Config struct {
 	ServiceName  string
 	OTLPEndpoint string
+
+	// Headers are sent on every OTLP export request. This is how a
+	// managed backend is authenticated against: Honeycomb expects an
+	// "x-honeycomb-team" header carrying the ingest API key. Empty (the
+	// local-collector case) sends no headers.
+	//
+	// A backend that requires auth and does not get it typically rejects
+	// exports silently, so an endpoint that implies auth without headers
+	// is worth noticing at startup — see Init's returned SDK.
+	Headers map[string]string
 }
 
 // SDK bundles the process-wide TracerProvider and MeterProvider Init sets
@@ -73,20 +83,28 @@ func Init(ctx context.Context, cfg Config) (*SDK, error) {
 		}, nil
 	}
 
-	endpoint := normalizeEndpoint(cfg.OTLPEndpoint)
+	endpoint, secure := parseEndpoint(cfg.OTLPEndpoint)
 
-	traceExporter, err := otlptracegrpc.New(ctx,
-		otlptracegrpc.WithEndpoint(endpoint),
-		otlptracegrpc.WithInsecure(),
-	)
+	traceOpts := []otlptracegrpc.Option{otlptracegrpc.WithEndpoint(endpoint)}
+	metricOpts := []otlpmetricgrpc.Option{otlpmetricgrpc.WithEndpoint(endpoint)}
+	if !secure {
+		traceOpts = append(traceOpts, otlptracegrpc.WithInsecure())
+		metricOpts = append(metricOpts, otlpmetricgrpc.WithInsecure())
+	}
+	// The secure case adds nothing: the gRPC exporters default to TLS
+	// against the host's root CA pool, which is what a managed endpoint
+	// (api.honeycomb.io:443) requires. WithInsecure is the opt-out.
+	if len(cfg.Headers) > 0 {
+		traceOpts = append(traceOpts, otlptracegrpc.WithHeaders(cfg.Headers))
+		metricOpts = append(metricOpts, otlpmetricgrpc.WithHeaders(cfg.Headers))
+	}
+
+	traceExporter, err := otlptracegrpc.New(ctx, traceOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("telemetry: create OTLP trace exporter: %w", err)
 	}
 
-	metricExporter, err := otlpmetricgrpc.New(ctx,
-		otlpmetricgrpc.WithEndpoint(endpoint),
-		otlpmetricgrpc.WithInsecure(),
-	)
+	metricExporter, err := otlpmetricgrpc.New(ctx, metricOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("telemetry: create OTLP metric exporter: %w", err)
 	}
@@ -117,15 +135,73 @@ func (s *SDK) Shutdown(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// normalizeEndpoint strips a scheme prefix if present: the config/env value
-// follows the standard OTEL_EXPORTER_OTLP_ENDPOINT convention (may include
-// "http://"/"https://"), but otlptracegrpc/otlpmetricgrpc's WithEndpoint
-// expects a bare "host:port".
-func normalizeEndpoint(endpoint string) string {
-	for _, prefix := range []string{"https://", "http://"} {
-		if strings.HasPrefix(endpoint, prefix) {
-			return strings.TrimPrefix(endpoint, prefix)
-		}
+// tlsPortSuffix is the port that, on a scheme-less endpoint, means "this is
+// a TLS endpoint" — the form managed backends are configured as
+// ("api.honeycomb.io:443").
+const tlsPortSuffix = ":443"
+
+// parseEndpoint splits the configured endpoint into the bare "host:port"
+// otlptracegrpc/otlpmetricgrpc's WithEndpoint expects, and whether to dial it
+// over TLS.
+//
+// The config/env value follows the standard OTEL_EXPORTER_OTLP_ENDPOINT
+// convention, so it may or may not carry a scheme. An explicit scheme decides:
+// "https://" is TLS, "http://" is not. Without one, port 443 is taken as TLS
+// and anything else (the in-cluster collector on :4317) as plaintext — so
+// both "https://api.honeycomb.io" and "api.honeycomb.io:443" reach Honeycomb,
+// and an existing "collector:4317" value keeps working untouched.
+func parseEndpoint(endpoint string) (hostPort string, secure bool) {
+	switch {
+	case strings.HasPrefix(endpoint, "https://"):
+		return strings.TrimPrefix(endpoint, "https://"), true
+	case strings.HasPrefix(endpoint, "http://"):
+		return strings.TrimPrefix(endpoint, "http://"), false
+	default:
+		return endpoint, strings.HasSuffix(endpoint, tlsPortSuffix)
 	}
-	return endpoint
+}
+
+// ResolveOTLPHeaders applies the documented precedence for OTLP export
+// headers, mirroring ResolveOTLPEndpoint: the standard
+// OTEL_EXPORTER_OTLP_HEADERS environment variable, when set, wins outright.
+// Otherwise a non-empty Honeycomb ingest key (HONEYCOMB_API_KEY) becomes the
+// single "x-honeycomb-team" header Honeycomb authenticates on.
+//
+// Both empty yields nil — Init's no-auth path, correct for a local collector.
+// The key is deliberately env-only: it is a credential, and belongs in a
+// Kubernetes Secret alongside GITHUB_APP_PRIVATE_KEY_FILE, never in the
+// tracker ConfigMap.
+func ResolveOTLPHeaders(envHeaders, honeycombAPIKey string) map[string]string {
+	if envHeaders != "" {
+		return parseHeaderList(envHeaders)
+	}
+	if honeycombAPIKey != "" {
+		return map[string]string{honeycombTeamHeader: honeycombAPIKey}
+	}
+	return nil
+}
+
+// honeycombTeamHeader is the header Honeycomb reads the ingest API key from.
+const honeycombTeamHeader = "x-honeycomb-team"
+
+// parseHeaderList parses the W3C-Baggage-shaped value of
+// OTEL_EXPORTER_OTLP_HEADERS: comma-separated "key=value" pairs, e.g.
+// "x-honeycomb-team=abc123,x-honeycomb-dataset=metrics". Malformed entries
+// (no "=") and blank keys are skipped rather than failing startup: a
+// mistyped header must not take the process down, and the resulting
+// export rejection is visible at the backend.
+func parseHeaderList(raw string) map[string]string {
+	headers := make(map[string]string)
+	for _, pair := range strings.Split(raw, ",") {
+		key, value, ok := strings.Cut(pair, "=")
+		key = strings.TrimSpace(key)
+		if !ok || key == "" {
+			continue
+		}
+		headers[key] = strings.TrimSpace(value)
+	}
+	if len(headers) == 0 {
+		return nil
+	}
+	return headers
 }
