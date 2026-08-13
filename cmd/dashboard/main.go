@@ -29,6 +29,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"syscall"
 	"time"
 
@@ -98,13 +99,30 @@ func run(configPath, dbPath, listenAddr string, logger *slog.Logger) error {
 	// empty value degrades safely: the SDK still initializes (spans/metrics
 	// carry real IDs for log correlation) but exports nothing, since no
 	// backend is assumed to exist.
+	//
+	// Export headers come from OTEL_EXPORTER_OTLP_HEADERS, or from
+	// HONEYCOMB_API_KEY (injected from a Secret) which is shorthand for the
+	// x-honeycomb-team header. Sending to Honeycomb is therefore just two env
+	// vars — endpoint api.honeycomb.io:443 plus the key — with no code change.
 	otlpEndpoint := telemetry.ResolveOTLPEndpoint(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"), cfgWatcher.Current().Observability.OTLPEndpoint)
+	otlpHeaders := telemetry.ResolveOTLPHeaders(os.Getenv("OTEL_EXPORTER_OTLP_HEADERS"), os.Getenv("HONEYCOMB_API_KEY"))
 	initCtx, initCancel := context.WithTimeout(context.Background(), telemetryInitTimeout)
-	sdk, err := telemetry.Init(initCtx, telemetry.Config{ServiceName: serviceName, OTLPEndpoint: otlpEndpoint})
+	sdk, err := telemetry.Init(initCtx, telemetry.Config{
+		ServiceName:  serviceName,
+		OTLPEndpoint: otlpEndpoint,
+		Headers:      otlpHeaders,
+	})
 	initCancel()
 	if err != nil {
 		return fmt.Errorf("init telemetry: %w", err)
 	}
+	// Header *names* only — the values are credentials. This line is the
+	// difference between "exports are silently rejected" and "auth is
+	// configured" being diagnosable from the logs.
+	logger.Info("dashboard: telemetry initialized",
+		"otlp_endpoint", otlpEndpoint,
+		"otlp_header_names", headerNames(otlpHeaders),
+	)
 	otel.SetTracerProvider(sdk.TracerProvider)
 	otel.SetMeterProvider(sdk.MeterProvider)
 	defer func() {
@@ -255,8 +273,26 @@ func run(configPath, dbPath, listenAddr string, logger *slog.Logger) error {
 	// carrying no information when they succeed. Its request log line is
 	// suppressed so real entries are not buried; its RED metrics and spans are
 	// not, and a 5xx on it is still logged. See telemetry.WithQuietRoutes.
+	// VISITOR_ID_SALT enables the visitor.id span attribute (unique-visitor
+	// counts); unset leaves it off. It must be the same value across replicas
+	// — see telemetry.VisitorIdentity — so it belongs in a Secret, not in a
+	// per-pod generated value.
+	visitorIdentity := telemetry.VisitorIdentity{
+		Salt:              os.Getenv("VISITOR_ID_SALT"),
+		TrustForwardedFor: os.Getenv("TRUST_FORWARDED_FOR") == "true",
+	}
+	// Geo attributes are lifted from headers an upstream proxy sets (a Traefik
+	// MaxMind plugin, a CDN); unset header names leave the dimension off. The
+	// names are configurable because they differ per plugin.
+	geoHeaders := telemetry.GeoHeaders{
+		CountryISOCode: os.Getenv("GEO_COUNTRY_HEADER"),
+		RegionISOCode:  os.Getenv("GEO_REGION_HEADER"),
+		CityName:       os.Getenv("GEO_CITY_HEADER"),
+	}
 	instrumentedMux := telemetry.Middleware(mux, sdk.TracerProvider.Tracer("http"), httpRed, logger,
-		telemetry.WithQuietRoutes(web.HealthzRoute))
+		telemetry.WithQuietRoutes(web.HealthzRoute),
+		telemetry.WithVisitorIdentity(visitorIdentity),
+		telemetry.WithGeoHeaders(geoHeaders))
 
 	srv := &http.Server{
 		Addr:         listenAddr,
@@ -301,4 +337,16 @@ func envOrDefault(key, defaultVal string) string {
 		return v
 	}
 	return defaultVal
+}
+
+// headerNames returns the sorted header names in headers, for logging which
+// OTLP headers are configured without ever logging their values (they are
+// API keys). Sorted so the startup line is stable across restarts.
+func headerNames(headers map[string]string) []string {
+	names := make([]string, 0, len(headers))
+	for name := range headers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }

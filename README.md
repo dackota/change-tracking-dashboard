@@ -99,6 +99,13 @@ CONFIG_PATH=./config.yaml DB_PATH=./changes.db \
 | `DB_PATH`                      | `changes.db`                  | Path to the SQLite database file (created if missing).        |
 | `LISTEN_ADDR`                  | `:8080`                       | HTTP listen address.                                          |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`  | *(unset)*                     | OTLP endpoint for traces/metrics; overrides the config value. |
+| `OTEL_EXPORTER_OTLP_HEADERS`   | *(unset)*                     | Comma-separated `key=value` headers sent on every export.      |
+| `HONEYCOMB_API_KEY`            | *(unset)*                     | Honeycomb ingest key; shorthand for an `x-honeycomb-team` header. |
+| `VISITOR_ID_SALT`              | *(unset)*                     | Enables the `visitor.id` span attribute; unset disables it.    |
+| `TRUST_FORWARDED_FOR`          | `false`                       | Take the client address from `X-Forwarded-For` (set only behind a proxy). |
+| `GEO_COUNTRY_HEADER`           | *(unset)*                     | Header carrying an ISO country code, e.g. `X-GeoIP2-Country`.  |
+| `GEO_REGION_HEADER`            | *(unset)*                     | Header carrying an ISO 3166-2 subdivision code.                |
+| `GEO_CITY_HEADER`              | *(unset)*                     | Header carrying a city name.                                   |
 | `GITHUB_APP_ID`                | *(unset)*                     | Enables GitHub App auth for private repos (see below).         |
 | `GITHUB_APP_INSTALLATION_ID`   | *(unset)*                     | GitHub App installation ID.                                    |
 | `GITHUB_APP_PRIVATE_KEY_FILE`  | *(unset)*                     | Path to the GitHub App private key (PEM).                      |
@@ -537,6 +544,80 @@ responses can be diffed meaningfully.
 As with chart-diff, a non-`ok` outcome carries the `kind` and nothing else —
 `diff`, `summary`, and `resources` are all omitted, and no HCL-parser or git
 internals reach the wire.
+
+## Telemetry
+
+The dashboard emits OpenTelemetry traces and RED metrics (rate, errors,
+duration) over OTLP/gRPC, plus structured logs carrying `trace_id`/`span_id`
+for correlation. With no endpoint configured the SDK still initializes and
+spans still carry real IDs — nothing is exported, and nothing breaks.
+
+Transport is chosen from the endpoint: an `https://` scheme or a bare
+`host:443` dials TLS, anything else (`otel-collector:4317`) stays plaintext.
+
+### Sending to Honeycomb
+
+Point the endpoint at Honeycomb and supply an ingest key. No collector needed:
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT=api.honeycomb.io:443
+export HONEYCOMB_API_KEY=your-ingest-key
+```
+
+Use `https://api.eu1.honeycomb.io` for the EU region. Traces route to a
+dataset named after `service.name` (`change-tracking-dashboard`).
+
+`HONEYCOMB_API_KEY` is shorthand for `OTEL_EXPORTER_OTLP_HEADERS=x-honeycomb-team=...`;
+set the header variable directly if you need to send more than one header. The
+key is an ingest credential — inject it from a Kubernetes Secret, not from the
+tracker ConfigMap. At startup the dashboard logs the endpoint and the *names*
+of the configured headers (never their values), so a missing key is
+diagnosable: Honeycomb rejects unauthenticated exports silently.
+
+### Counting unique visitors
+
+Request spans carry `http.request.method`, `http.route`, `http.response.status_code`,
+`url.path`, and `user_agent.original`. Setting `VISITOR_ID_SALT` adds `visitor.id`,
+and unique visitors is then a `COUNT_DISTINCT` over it:
+
+```
+COUNT_DISTINCT(visitor.id)  — optionally GROUP BY http.route
+```
+
+`visitor.id` is a salted hash of the client address, the User-Agent, and the
+UTC date. Two consequences worth knowing before you trust the number:
+
+- **It rotates at midnight UTC.** The same person is one visitor within a day
+  and a new one tomorrow, so the metric is *daily* uniques. Summing across days
+  double-counts returning visitors.
+- **It approximates.** Visitors sharing one NAT or corporate egress address
+  with the same browser collapse into one; one person on laptop and phone
+  counts twice.
+
+The raw client address is deliberately never put on a span — `visitor.id`
+answers the counting question without exporting an identifier that carries a
+PII retention obligation. Set `VISITOR_ID_SALT` from a Secret and use the same
+value across replicas, or each replica derives different IDs for the same
+person and the count multiplies. Set `TRUST_FORWARDED_FOR=true` only when the
+service is reachable exclusively through a proxy that overwrites the header;
+on a directly-reachable service any client can forge unlimited visitors.
+
+### Visitor location
+
+Setting `GEO_COUNTRY_HEADER` (and optionally the region/city variants) lifts
+those request headers onto the span as the OTel geo attributes
+`geo.country.iso_code`, `geo.region.iso_code`, and `geo.locality.name`. A
+header that is absent or empty leaves the dimension off the span rather than
+recording `""` as if it were a place.
+
+The IP-to-location lookup happens **upstream, not here**. Something has to hold
+a MaxMind database and refresh it monthly; doing that once at the proxy serves
+every service behind it instead of bundling a ~60MB database into this image.
+A Traefik MaxMind GeoIP2 plugin is the usual source.
+
+**These headers are only as trustworthy as `X-Forwarded-For`** — a client that
+can reach this service directly can set them to any value. Configure them only
+when a proxy that overwrites them is the sole route in.
 
 ## Private repositories (GitHub App)
 

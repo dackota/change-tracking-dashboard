@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -28,9 +30,12 @@ func (w *statusRecordingWriter) WriteHeader(status int) {
 }
 
 // middlewareConfig holds Middleware's optional behavior. Zero value is the
-// pre-existing behavior: every request is logged.
+// pre-existing behavior: every request is logged, and no visitor identity is
+// derived.
 type middlewareConfig struct {
 	quietRoutes map[string]struct{}
+	visitor     VisitorIdentity
+	geo         GeoHeaders
 }
 
 // MiddlewareOption configures optional Middleware behavior. See
@@ -59,6 +64,28 @@ func WithQuietRoutes(routes ...string) MiddlewareOption {
 		for _, route := range routes {
 			c.quietRoutes[route] = struct{}{}
 		}
+	}
+}
+
+// WithVisitorIdentity enables the "visitor.id" span attribute — the
+// high-cardinality dimension a unique-visitor count is a COUNT_DISTINCT over.
+// See VisitorIdentity for what the identifier is and, importantly, what it is
+// not: it rotates daily and cannot be reversed to an address.
+//
+// Passing a zero VisitorIdentity (or omitting this option) leaves the
+// attribute off, and the client address is never put on a span.
+func WithVisitorIdentity(identity VisitorIdentity) MiddlewareOption {
+	return func(c *middlewareConfig) {
+		c.visitor = identity
+	}
+}
+
+// WithGeoHeaders enables geo attributes on request spans, read from headers an
+// upstream proxy sets. See GeoHeaders for why the lookup belongs at the proxy
+// and not in this process.
+func WithGeoHeaders(geo GeoHeaders) MiddlewareOption {
+	return func(c *middlewareConfig) {
+		c.geo = geo
 	}
 }
 
@@ -94,6 +121,26 @@ func Middleware(next http.Handler, tracer trace.Tracer, red *REDMetrics, logger 
 		route := routeLabel(reqWithCtx)
 		duration := time.Since(start)
 		isServerError := rec.status >= serverErrorThreshold
+
+		// The span carried no dimensions before this: a request was visible
+		// as a duration and nothing else, so no query could group or break
+		// down by anything. These are the axes BubbleUp diffs on.
+		attrs := []attribute.KeyValue{
+			semconv.HTTPRequestMethodKey.String(r.Method),
+			semconv.HTTPRoute(route),
+			semconv.HTTPResponseStatusCode(rec.status),
+			semconv.URLPath(r.URL.Path),
+			semconv.UserAgentOriginal(r.UserAgent()),
+		}
+		// Deliberately absent: the client address itself. visitor.id is
+		// derived from it and answers the "how many unique visitors"
+		// question, so exporting the raw address to a third party would add
+		// a PII retention obligation and buy nothing.
+		if visitorID := VisitorID(cfg.visitor, ClientIP(r, cfg.visitor.TrustForwardedFor), r.UserAgent(), start); visitorID != "" {
+			attrs = append(attrs, attribute.String("visitor.id", visitorID))
+		}
+		attrs = append(attrs, geoAttributes(r, cfg.geo)...)
+		span.SetAttributes(attrs...)
 
 		var recordErr error
 		if isServerError {
