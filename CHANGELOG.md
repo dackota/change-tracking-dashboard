@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.18.6...app-v0.19.0) (2026-08-13)
+
+
+### Features
+
+* **telemetry:** send traces to Honeycomb and add visitor/geo dimensions ([#198](https://github.com/dackota/change-tracking-dashboard/issues/198)) ([0f13d41](https://github.com/dackota/change-tracking-dashboard/commit/0f13d418da863cf63eefa344e7fd4efdd1538969))
+
 ## [0.18.6](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.18.5...app-v0.18.6) (2026-08-12)
 
 
