@@ -102,6 +102,7 @@ CONFIG_PATH=./config.yaml DB_PATH=./changes.db \
 | `OTEL_EXPORTER_OTLP_HEADERS`   | *(unset)*                     | Comma-separated `key=value` headers sent on every export.      |
 | `HONEYCOMB_API_KEY`            | *(unset)*                     | Honeycomb ingest key; shorthand for an `x-honeycomb-team` header. |
 | `VISITOR_ID_SALT`              | *(unset)*                     | Enables the `visitor.id` span attribute; unset disables it.    |
+| `PERSISTENT_VISITOR_COOKIE`    | `false`                       | Set to `true` to enable the `visitor_id` cookie and `visitor.persistent_id` span attribute. |
 | `TRUST_FORWARDED_FOR`          | `false`                       | Take the client address from `X-Forwarded-For` (set only behind a proxy). |
 | `GEO_COUNTRY_HEADER`           | *(unset)*                     | Header carrying an ISO country code, e.g. `X-GeoIP2-Country`.  |
 | `GEO_REGION_HEADER`            | *(unset)*                     | Header carrying an ISO 3166-2 subdivision code.                |
@@ -601,6 +602,28 @@ value across replicas, or each replica derives different IDs for the same
 person and the count multiplies. Set `TRUST_FORWARDED_FOR=true` only when the
 service is reachable exclusively through a proxy that overwrites the header;
 on a directly-reachable service any client can forge unlimited visitors.
+
+### Tracking return visitors
+
+`visitor.id` rotates every midnight UTC by design, so it cannot answer "has
+this visitor been here before" or "how many times". Setting
+`PERSISTENT_VISITOR_COOKIE=true` adds a second, non-rotating identifier for
+that: a random UUID v4 stored in a first-party `visitor_id` cookie
+(`HttpOnly`, `SameSite=Lax`, ~1 year lifetime), set on a visitor's first
+request and read back on every one after. It is exported as
+`visitor.persistent_id`, so return visits are a query over the same span:
+
+```
+COUNT_DISTINCT(visitor.persistent_id)                — lifetime uniques
+COUNT(visitor.persistent_id) / COUNT_DISTINCT(...)   — average visits per visitor
+```
+
+Unlike `visitor.id`, this is genuine state stored in the visitor's browser,
+not a same-day-only hash — enable it only when a deployment specifically
+wants return-visit tracking, not as a default. The ID itself carries no
+information: it is a random value, not derived from the client address,
+User-Agent, or anything else, so it cannot be reversed to an identity and
+does not by itself constitute PII.
 
 ### Visitor location
 

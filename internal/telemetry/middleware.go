@@ -33,9 +33,10 @@ func (w *statusRecordingWriter) WriteHeader(status int) {
 // pre-existing behavior: every request is logged, and no visitor identity is
 // derived.
 type middlewareConfig struct {
-	quietRoutes map[string]struct{}
-	visitor     VisitorIdentity
-	geo         GeoHeaders
+	quietRoutes       map[string]struct{}
+	visitor           VisitorIdentity
+	geo               GeoHeaders
+	persistentVisitor bool
 }
 
 // MiddlewareOption configures optional Middleware behavior. See
@@ -89,6 +90,18 @@ func WithGeoHeaders(geo GeoHeaders) MiddlewareOption {
 	}
 }
 
+// WithPersistentVisitorID enables the "visitor.persistent_id" span
+// attribute, backed by a first-party cookie set on the response — see
+// PersistentVisitorID for what it is and how it differs from the
+// WithVisitorIdentity daily hash. Off by default: unlike VisitorID, this
+// identifier is long-lived browser state, and a service should not acquire
+// that without an explicit decision to do so.
+func WithPersistentVisitorID(enabled bool) MiddlewareOption {
+	return func(c *middlewareConfig) {
+		c.persistentVisitor = enabled
+	}
+}
+
 // Middleware wraps next (the top-level mux) with the RED signal (criterion
 // 1) and request/log correlation (criterion 4) every HTTP route must carry.
 // It must wrap the mux, not each handler individually, so the operation
@@ -113,6 +126,22 @@ func Middleware(next http.Handler, tracer trace.Tracer, red *REDMetrics, logger 
 
 		rec := &statusRecordingWriter{ResponseWriter: w, status: http.StatusOK}
 		reqWithCtx := r.WithContext(ctx)
+
+		// Read (or mint) the persistent visitor cookie before dispatching, since
+		// the Set-Cookie header must go out before the handler writes a status
+		// or body. isHTTPS follows the same proxy-trust convention geoAttributes
+		// documents: a header a client controls directly is not trusted, one a
+		// deployment's proxy overwrites is.
+		var persistentVisitorID string
+		if cfg.persistentVisitor {
+			id, err := PersistentVisitorID(rec, reqWithCtx, isHTTPS(reqWithCtx))
+			if err != nil {
+				reqLogger.Warn("failed to derive persistent visitor id", "error", err)
+			} else {
+				persistentVisitorID = id
+			}
+		}
+
 		next.ServeHTTP(rec, reqWithCtx)
 
 		// reqWithCtx (not the original r) is the *http.Request the mux
@@ -138,6 +167,9 @@ func Middleware(next http.Handler, tracer trace.Tracer, red *REDMetrics, logger 
 		// a PII retention obligation and buy nothing.
 		if visitorID := VisitorID(cfg.visitor, ClientIP(r, cfg.visitor.TrustForwardedFor), r.UserAgent(), start); visitorID != "" {
 			attrs = append(attrs, attribute.String("visitor.id", visitorID))
+		}
+		if persistentVisitorID != "" {
+			attrs = append(attrs, attribute.String("visitor.persistent_id", persistentVisitorID))
 		}
 		attrs = append(attrs, geoAttributes(r, cfg.geo)...)
 		span.SetAttributes(attrs...)
@@ -176,6 +208,18 @@ func routeLabel(r *http.Request) string {
 		return r.Pattern
 	}
 	return r.URL.Path
+}
+
+// isHTTPS reports whether r arrived over TLS, directly or (per
+// X-Forwarded-Proto) via a reverse proxy that terminates it — the same
+// proxy-trust boundary GeoHeaders relies on: a deployment behind a
+// TLS-terminating proxy is expected to only route traffic to this service
+// over that proxy, so the header is not otherwise validated. Getting this
+// wrong is low-stakes either way: it only affects whether the persistent
+// visitor cookie ships with the Secure flag, never whether it is trusted for
+// anything but its own recognition.
+func isHTTPS(r *http.Request) bool {
+	return r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 }
 
 // httpStatusError is a minimal error used purely to signal a 5xx response to
