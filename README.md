@@ -1,7 +1,7 @@
 # Change Tracking Dashboard
 
 Watch what actually changes across your GitOps repos. The dashboard polls the git
-history of your config repositories, extracts the fields you care about — Helm
+history of your config repositories, extracts the fields you care about like Helm
 chart/subchart versions, image tags, Terraform inputs — and surfaces every change
 as a faceted, time-ordered feed. Click any change to see the real impact: the
 rendered Helm manifest diff or the Terraform resource-change view for that commit.
