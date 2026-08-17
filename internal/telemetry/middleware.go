@@ -33,29 +33,45 @@ func (w *statusRecordingWriter) WriteHeader(status int) {
 // pre-existing behavior: every request is logged, and no visitor identity is
 // derived.
 type middlewareConfig struct {
-	quietRoutes map[string]struct{}
-	visitor     VisitorIdentity
-	geo         GeoHeaders
+	quietRoutes       map[string]struct{}
+	visitor           VisitorIdentity
+	geo               GeoHeaders
+	persistentVisitor bool
 }
 
 // MiddlewareOption configures optional Middleware behavior. See
 // WithQuietRoutes.
 type MiddlewareOption func(*middlewareConfig)
 
-// WithQuietRoutes suppresses the "http request handled" log line for the
-// named routes when they succeed. Each route is a bounded-cardinality route
-// label as it appears in the log's "route" field — the pattern ServeMux
-// matched, e.g. "GET /healthz".
+// WithQuietRoutes suppresses the "http request handled" log line and the
+// "http.request" trace span for the named routes when they succeed. Each
+// route is a bounded-cardinality route label as it appears in the log's
+// "route" field — the pattern ServeMux matched, e.g. "GET /healthz".
 //
 // This exists for high-frequency, zero-information traffic: Kubernetes
 // liveness/readiness probes hit their endpoint several times a minute
-// forever, and at that rate the request log is entirely probe lines with real
-// entries buried among them.
+// forever, and at that rate the request log — and the trace view in a
+// backend like Honeycomb — is entirely probe entries with anything real
+// buried among them.
 //
-// Suppression is deliberately narrow. It applies to the request log line
-// only — RED metrics and spans are still recorded, so probe throughput and
-// latency stay observable — and only to non-5xx responses, so a quiet route
-// that actually starts failing is still logged at ERROR.
+// RED metrics are never suppressed — they are bounded-cardinality and cheap,
+// and probe throughput/latency is exactly the signal an operator wants
+// retained regardless of the other two.
+//
+// The log line and the span are suppressed on different terms, because a
+// span must wrap dispatch to time it, so whether to create one has to be
+// decided before the response status is known: log suppression applies only
+// to non-5xx responses (a quiet route that starts failing is still logged,
+// at ERROR), while span suppression is unconditional — a quiet route never
+// gets a span, success or failure. A quiet route's occasional failure is
+// still visible via its ERROR log line and its RED metrics.
+//
+// Span suppression also only recognizes a route registered as a literal
+// "METHOD /path" (as HealthzRoute is): it is checked against the raw request
+// line before mux dispatch, since the templated route ServeMux matches is
+// only known once dispatch has happened. A route registered with a path
+// parameter still suppresses its log line (checked again after dispatch,
+// against the templated route) but does not suppress its span.
 func WithQuietRoutes(routes ...string) MiddlewareOption {
 	return func(c *middlewareConfig) {
 		if c.quietRoutes == nil {
@@ -89,6 +105,18 @@ func WithGeoHeaders(geo GeoHeaders) MiddlewareOption {
 	}
 }
 
+// WithPersistentVisitorID enables the "visitor.persistent_id" span
+// attribute, backed by a first-party cookie set on the response — see
+// PersistentVisitorID for what it is and how it differs from the
+// WithVisitorIdentity daily hash. Off by default: unlike VisitorID, this
+// identifier is long-lived browser state, and a service should not acquire
+// that without an explicit decision to do so.
+func WithPersistentVisitorID(enabled bool) MiddlewareOption {
+	return func(c *middlewareConfig) {
+		c.persistentVisitor = enabled
+	}
+}
+
 // Middleware wraps next (the top-level mux) with the RED signal (criterion
 // 1) and request/log correlation (criterion 4) every HTTP route must carry.
 // It must wrap the mux, not each handler individually, so the operation
@@ -105,14 +133,40 @@ func Middleware(next http.Handler, tracer trace.Tracer, red *REDMetrics, logger 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 
-		ctx, span := tracer.Start(r.Context(), "http.request")
-		defer span.End()
+		// See WithQuietRoutes: a literal quiet route (checked against the raw
+		// request line, since the templated route isn't known until after
+		// dispatch) gets no span at all, rather than one that is merely
+		// dropped by the exporter — a probe hitting this route several times a
+		// minute forever must not cost a span allocation, a context value, or
+		// a trace-view row.
+		ctx := r.Context()
+		var span trace.Span
+		if _, quiet := cfg.quietRoutes[r.Method+" "+r.URL.Path]; !quiet {
+			ctx, span = tracer.Start(ctx, "http.request")
+			defer span.End()
+		}
 
 		reqLogger := FromContext(ctx, logger)
 		ctx = ContextWithLogger(ctx, reqLogger)
 
 		rec := &statusRecordingWriter{ResponseWriter: w, status: http.StatusOK}
 		reqWithCtx := r.WithContext(ctx)
+
+		// Read (or mint) the persistent visitor cookie before dispatching, since
+		// the Set-Cookie header must go out before the handler writes a status
+		// or body. isHTTPS follows the same proxy-trust convention geoAttributes
+		// documents: a header a client controls directly is not trusted, one a
+		// deployment's proxy overwrites is.
+		var persistentVisitorID string
+		if cfg.persistentVisitor {
+			id, err := PersistentVisitorID(rec, reqWithCtx, isHTTPS(reqWithCtx))
+			if err != nil {
+				reqLogger.Warn("failed to derive persistent visitor id", "error", err)
+			} else {
+				persistentVisitorID = id
+			}
+		}
+
 		next.ServeHTTP(rec, reqWithCtx)
 
 		// reqWithCtx (not the original r) is the *http.Request the mux
@@ -122,30 +176,37 @@ func Middleware(next http.Handler, tracer trace.Tracer, red *REDMetrics, logger 
 		duration := time.Since(start)
 		isServerError := rec.status >= serverErrorThreshold
 
-		// The span carried no dimensions before this: a request was visible
-		// as a duration and nothing else, so no query could group or break
-		// down by anything. These are the axes BubbleUp diffs on.
-		attrs := []attribute.KeyValue{
-			semconv.HTTPRequestMethodKey.String(r.Method),
-			semconv.HTTPRoute(route),
-			semconv.HTTPResponseStatusCode(rec.status),
-			semconv.URLPath(r.URL.Path),
-			semconv.UserAgentOriginal(r.UserAgent()),
+		if span != nil {
+			// The span carried no dimensions before this: a request was visible
+			// as a duration and nothing else, so no query could group or break
+			// down by anything. These are the axes BubbleUp diffs on.
+			attrs := []attribute.KeyValue{
+				semconv.HTTPRequestMethodKey.String(r.Method),
+				semconv.HTTPRoute(route),
+				semconv.HTTPResponseStatusCode(rec.status),
+				semconv.URLPath(r.URL.Path),
+				semconv.UserAgentOriginal(r.UserAgent()),
+			}
+			// Deliberately absent: the client address itself. visitor.id is
+			// derived from it and answers the "how many unique visitors"
+			// question, so exporting the raw address to a third party would add
+			// a PII retention obligation and buy nothing.
+			if visitorID := VisitorID(cfg.visitor, ClientIP(r, cfg.visitor.TrustForwardedFor), r.UserAgent(), start); visitorID != "" {
+				attrs = append(attrs, attribute.String("visitor.id", visitorID))
+			}
+			if persistentVisitorID != "" {
+				attrs = append(attrs, attribute.String("visitor.persistent_id", persistentVisitorID))
+			}
+			attrs = append(attrs, geoAttributes(r, cfg.geo)...)
+			span.SetAttributes(attrs...)
 		}
-		// Deliberately absent: the client address itself. visitor.id is
-		// derived from it and answers the "how many unique visitors"
-		// question, so exporting the raw address to a third party would add
-		// a PII retention obligation and buy nothing.
-		if visitorID := VisitorID(cfg.visitor, ClientIP(r, cfg.visitor.TrustForwardedFor), r.UserAgent(), start); visitorID != "" {
-			attrs = append(attrs, attribute.String("visitor.id", visitorID))
-		}
-		attrs = append(attrs, geoAttributes(r, cfg.geo)...)
-		span.SetAttributes(attrs...)
 
 		var recordErr error
 		if isServerError {
 			recordErr = &httpStatusError{status: rec.status}
-			span.SetStatus(codes.Error, recordErr.Error())
+			if span != nil {
+				span.SetStatus(codes.Error, recordErr.Error())
+			}
 		}
 		red.Record(ctx, route, recordErr, duration)
 
@@ -176,6 +237,18 @@ func routeLabel(r *http.Request) string {
 		return r.Pattern
 	}
 	return r.URL.Path
+}
+
+// isHTTPS reports whether r arrived over TLS, directly or (per
+// X-Forwarded-Proto) via a reverse proxy that terminates it — the same
+// proxy-trust boundary GeoHeaders relies on: a deployment behind a
+// TLS-terminating proxy is expected to only route traffic to this service
+// over that proxy, so the header is not otherwise validated. Getting this
+// wrong is low-stakes either way: it only affects whether the persistent
+// visitor cookie ships with the Secure flag, never whether it is trusted for
+// anything but its own recognition.
+func isHTTPS(r *http.Request) bool {
+	return r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 }
 
 // httpStatusError is a minimal error used purely to signal a 5xx response to
