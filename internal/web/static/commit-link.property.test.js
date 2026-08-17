@@ -185,11 +185,12 @@ check('for every http(s) repo + non-empty sha, the result is a well-formed https
 
       // Protocol-confusion guard: the sha can never change the *parsed*
       // scheme of the emitted URL, even when the sha itself looks like a
-      // competing scheme (javascript:, data:) — the scheme always comes
+      // competing scheme (javascript:, data:, vbscript:) — the scheme always comes
       // from the already-validated repo prefix, appended-to, never
       // replaced.
       assert.ok(!got.startsWith('javascript:'), `result must never start with javascript: ; got ${got}`);
       assert.ok(!got.startsWith('data:'), `result must never start with data: ; got ${got}`);
+      assert.ok(!got.startsWith('vbscript:'), `result must never start with vbscript: ; got ${got}`);
     }
   }
 });
