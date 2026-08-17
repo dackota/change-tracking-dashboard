@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1@sha256:87999aa3d42bdc6bea60565083ee17e86d1f3339802f543c0d03998580f9cb89
 
 # Stage 1: build
-# Use the same Go version as go.mod (go 1.25.6 maps to toolchain 1.25.x).
+# Use the same Go version as go.mod (go 1.26.6 maps to toolchain 1.26.x).
 # CGO_ENABLED=0: modernc.org/sqlite is pure-Go; no C toolchain needed.
 # --platform=$BUILDPLATFORM pins the builder to the host arch so Go
 # cross-compiles to the target natively (fast) rather than the runtime
@@ -9,7 +9,7 @@
 # Base pinned by digest (the multi-arch index digest, so buildx still resolves
 # the builder's own arch) for reproducibility + supply-chain integrity; bump
 # the digest + tag comment via Dependabot/Renovate to pick up Go patch releases.
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26.6-alpine@sha256:3889b425f035be855a72fb4755265311293b6d414521f0a519d819df32222d83 AS builder
 
 WORKDIR /build
 
