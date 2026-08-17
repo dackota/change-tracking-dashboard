@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.2](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.20.1...app-v0.20.2) (2026-08-17)
+
+
+### Bug Fixes
+
+* **deps:** bump go base image to 1.26.6 to clear HIGH grype findings ([#206](https://github.com/dackota/change-tracking-dashboard/issues/206)) ([a42a559](https://github.com/dackota/change-tracking-dashboard/commit/a42a5596862bbfd1534986ba3039fd66a1d83d31))
+
 ## [0.20.1](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.20.0...app-v0.20.1) (2026-08-17)
 
 
