@@ -13,6 +13,7 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 // quietRoutesFixture wires a Middleware over newTestMux with the given quiet
@@ -159,5 +160,97 @@ func TestMiddleware_QuietRoute_StillRecordsREDMetrics(t *testing.T) {
 	}
 	if got := metricAttr(rm, "operation.requests", "operation"); len(got) != 1 || got[0] != "GET /healthz" {
 		t.Errorf("operation.requests attrs = %v, want [GET /healthz]", got)
+	}
+}
+
+// TestMiddleware_QuietRoute_NoSpanCreated verifies suppression extends to
+// tracing: a probe hitting /healthz several times a minute forever must not
+// produce an "http.request" span every time, or the trace view in a backend
+// like Honeycomb drowns in probe entries the same way the log did before
+// WithQuietRoutes existed.
+func TestMiddleware_QuietRoute_NoSpanCreated(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	red, err := telemetry.NewREDMetrics(mp, "http")
+	if err != nil {
+		t.Fatalf("NewREDMetrics: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := telemetry.Middleware(mux, tp.Tracer("http"), red,
+		telemetry.NewLogger("svc", &bytes.Buffer{}),
+		telemetry.WithQuietRoutes("GET /healthz"))
+
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/healthz", nil))
+
+	if spans := exporter.GetSpans(); len(spans) != 0 {
+		t.Errorf("got %d spans for a quiet route, want 0: %v", len(spans), spans)
+	}
+}
+
+// TestMiddleware_QuietRoute_NoSpanEvenOnError verifies span suppression is
+// unconditional, unlike log suppression: the decision has to be made before
+// dispatch (a span must wrap dispatch to time it), before the eventual status
+// is known.
+func TestMiddleware_QuietRoute_NoSpanEvenOnError(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	red, err := telemetry.NewREDMetrics(mp, "http")
+	if err != nil {
+		t.Fatalf("NewREDMetrics: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	})
+
+	handler := telemetry.Middleware(mux, tp.Tracer("http"), red,
+		telemetry.NewLogger("svc", &bytes.Buffer{}),
+		telemetry.WithQuietRoutes("GET /healthz"))
+
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/healthz", nil))
+
+	if spans := exporter.GetSpans(); len(spans) != 0 {
+		t.Errorf("got %d spans for a failing quiet route, want 0: %v", len(spans), spans)
+	}
+}
+
+// TestMiddleware_NonQuietRoute_StillGetsSpan is the control for the two tests
+// above: it verifies the test harness actually captures a span when one is
+// expected, so "0 spans" in a quiet-route test means suppression worked, not
+// that spans were never being captured in the first place.
+func TestMiddleware_NonQuietRoute_StillGetsSpan(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	red, err := telemetry.NewREDMetrics(mp, "http")
+	if err != nil {
+		t.Fatalf("NewREDMetrics: %v", err)
+	}
+
+	handler := telemetry.Middleware(newTestMux(), tp.Tracer("http"), red,
+		telemetry.NewLogger("svc", &bytes.Buffer{}),
+		telemetry.WithQuietRoutes("GET /healthz"))
+
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/trackers", nil))
+
+	if spans := exporter.GetSpans(); len(spans) != 1 {
+		t.Fatalf("got %d spans for a non-quiet route, want 1", len(spans))
 	}
 }
