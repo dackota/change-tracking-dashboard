@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.1](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.20.0...app-v0.20.1) (2026-08-17)
+
+
+### Bug Fixes
+
+* correct README.md text formatting ([#204](https://github.com/dackota/change-tracking-dashboard/issues/204)) ([a7e0890](https://github.com/dackota/change-tracking-dashboard/commit/a7e08901c0946d6bc35656b2179010892f91783a))
+
 ## [0.20.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.19.0...app-v0.20.0) (2026-08-17)
 
 
