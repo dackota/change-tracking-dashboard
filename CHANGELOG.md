@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.19.0...app-v0.20.0) (2026-08-17)
+
+
+### Features
+
+* **telemetry:** persistent visitor cookie + stop tracing quiet routes ([#201](https://github.com/dackota/change-tracking-dashboard/issues/201)) ([affddcd](https://github.com/dackota/change-tracking-dashboard/commit/affddcd344dbc1f49cbc6ca642010780c3bbfae1))
+
 ## [0.19.0](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.18.6...app-v0.19.0) (2026-08-13)
 
 
