@@ -289,10 +289,18 @@ func run(configPath, dbPath, listenAddr string, logger *slog.Logger) error {
 		RegionISOCode:  os.Getenv("GEO_REGION_HEADER"),
 		CityName:       os.Getenv("GEO_CITY_HEADER"),
 	}
+	// PERSISTENT_VISITOR_COOKIE opts into a first-party cookie that survives
+	// across days, unlike visitor.id above — it answers "has this browser
+	// been here before" rather than "how many distinct visitors today". Off
+	// by default: it is genuine long-lived browser state, not a metric a
+	// service should acquire without an explicit decision.
+	persistentVisitorCookie := os.Getenv("PERSISTENT_VISITOR_COOKIE") == "true"
+
 	instrumentedMux := telemetry.Middleware(mux, sdk.TracerProvider.Tracer("http"), httpRed, logger,
 		telemetry.WithQuietRoutes(web.HealthzRoute),
 		telemetry.WithVisitorIdentity(visitorIdentity),
-		telemetry.WithGeoHeaders(geoHeaders))
+		telemetry.WithGeoHeaders(geoHeaders),
+		telemetry.WithPersistentVisitorID(persistentVisitorCookie))
 
 	srv := &http.Server{
 		Addr:         listenAddr,

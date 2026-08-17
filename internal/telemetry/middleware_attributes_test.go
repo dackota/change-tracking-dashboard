@@ -111,3 +111,119 @@ func TestMiddleware_VisitorID_SetWhenConfigured(t *testing.T) {
 		t.Errorf("visitor.id differs between requests from the same client: %q vs %q", firstID, secondID)
 	}
 }
+
+// TestMiddleware_PersistentVisitorID_OffByDefault verifies the cookie-backed
+// identifier is opt-in: no attribute and no Set-Cookie header until the
+// deployment explicitly enables it.
+func TestMiddleware_PersistentVisitorID_OffByDefault(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/trackers", nil)
+	rec := httptest.NewRecorder()
+
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(sdkmetric.NewManualReader()))
+	red, err := telemetry.NewREDMetrics(mp, "http")
+	if err != nil {
+		t.Fatalf("NewREDMetrics: %v", err)
+	}
+	exporter := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+
+	handler := telemetry.Middleware(newTestMux(), tp.Tracer("http"), red, telemetry.NewLogger("svc", &bytes.Buffer{}))
+	handler.ServeHTTP(rec, req)
+
+	attrs := make(map[attribute.Key]attribute.Value)
+	for _, kv := range exporter.GetSpans()[0].Attributes {
+		attrs[kv.Key] = kv.Value
+	}
+	if _, ok := attrs["visitor.persistent_id"]; ok {
+		t.Error("visitor.persistent_id was set without WithPersistentVisitorID")
+	}
+	if cookies := rec.Result().Cookies(); len(cookies) != 0 {
+		t.Errorf("got %d cookies set, want 0", len(cookies))
+	}
+}
+
+// TestMiddleware_PersistentVisitorID_SetWhenEnabled verifies enabling the
+// option sets both the response cookie and the span attribute on a
+// first-time visitor.
+func TestMiddleware_PersistentVisitorID_SetWhenEnabled(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/trackers", nil)
+	rec := httptest.NewRecorder()
+
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(sdkmetric.NewManualReader()))
+	red, err := telemetry.NewREDMetrics(mp, "http")
+	if err != nil {
+		t.Fatalf("NewREDMetrics: %v", err)
+	}
+	exporter := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+
+	handler := telemetry.Middleware(newTestMux(), tp.Tracer("http"), red, telemetry.NewLogger("svc", &bytes.Buffer{}),
+		telemetry.WithPersistentVisitorID(true))
+	handler.ServeHTTP(rec, req)
+
+	attrs := make(map[attribute.Key]attribute.Value)
+	for _, kv := range exporter.GetSpans()[0].Attributes {
+		attrs[kv.Key] = kv.Value
+	}
+	id := attrs["visitor.persistent_id"].AsString()
+	if id == "" {
+		t.Fatal("visitor.persistent_id was not set despite WithPersistentVisitorID(true)")
+	}
+
+	cookies := rec.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("got %d cookies set, want 1", len(cookies))
+	}
+	if cookies[0].Name != telemetry.PersistentVisitorCookie || cookies[0].Value != id {
+		t.Errorf("cookie = %s=%s, want %s=%s", cookies[0].Name, cookies[0].Value, telemetry.PersistentVisitorCookie, id)
+	}
+}
+
+// TestMiddleware_PersistentVisitorID_StableAcrossRequests verifies a
+// returning visitor (cookie already set) gets the same attribute value back
+// and no new cookie is issued.
+func TestMiddleware_PersistentVisitorID_StableAcrossRequests(t *testing.T) {
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(sdkmetric.NewManualReader()))
+	red, err := telemetry.NewREDMetrics(mp, "http")
+	if err != nil {
+		t.Fatalf("NewREDMetrics: %v", err)
+	}
+	exporter := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+
+	handler := telemetry.Middleware(newTestMux(), tp.Tracer("http"), red, telemetry.NewLogger("svc", &bytes.Buffer{}),
+		telemetry.WithPersistentVisitorID(true))
+
+	first := httptest.NewRequest(http.MethodGet, "/trackers", nil)
+	firstRec := httptest.NewRecorder()
+	handler.ServeHTTP(firstRec, first)
+	firstCookie := firstRec.Result().Cookies()[0]
+
+	second := httptest.NewRequest(http.MethodGet, "/trackers", nil)
+	second.AddCookie(firstCookie)
+	secondRec := httptest.NewRecorder()
+	handler.ServeHTTP(secondRec, second)
+
+	spans := exporter.GetSpans()
+	firstID := spanAttr(spans[0], "visitor.persistent_id")
+	secondID := spanAttr(spans[1], "visitor.persistent_id")
+	if firstID == "" || secondID != firstID {
+		t.Errorf("visitor.persistent_id = %q then %q, want a stable non-empty value", firstID, secondID)
+	}
+	if cookies := secondRec.Result().Cookies(); len(cookies) != 0 {
+		t.Errorf("got %d cookies set on a returning visitor, want 0", len(cookies))
+	}
+}
+
+// spanAttr returns the string value of key on span, or "" if absent.
+func spanAttr(span tracetest.SpanStub, key string) string {
+	for _, kv := range span.Attributes {
+		if string(kv.Key) == key {
+			return kv.Value.AsString()
+		}
+	}
+	return ""
+}
