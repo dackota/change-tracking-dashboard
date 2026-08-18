@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.3](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.20.2...app-v0.20.3) (2026-08-18)
+
+
+### Bug Fixes
+
+* **deps:** update docker/dockerfile:1 docker digest to ecfaec9 ([#208](https://github.com/dackota/change-tracking-dashboard/issues/208)) ([0603bef](https://github.com/dackota/change-tracking-dashboard/commit/0603befbf71fd1e6d7b1525cfd16a97b408788a3))
+
 ## [0.20.2](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.20.1...app-v0.20.2) (2026-08-17)
 
 
