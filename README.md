@@ -664,7 +664,7 @@ the repo root documents which linters are enabled and why the rest are not:
 
 ```bash
 # renovate: datasource=github-releases depName=golangci/golangci-lint
-go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.0 run ./...
+go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1 run ./...
 ```
 
 It is expected to report zero issues; the `golangci-lint` job in
