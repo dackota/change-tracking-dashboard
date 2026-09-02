@@ -4,7 +4,7 @@
 # .github/workflows/pr-ci.yml. Run the same version locally with:
 #
 #   # renovate: datasource=github-releases depName=golangci/golangci-lint
-#   go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1 run ./...
+#   go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2 run ./...
 #
 # Both version pins carry a `renovate:` marker so the custom manager in
 # renovate.json bumps them together -- a config curated against one release
