@@ -7,7 +7,7 @@ require (
 	github.com/aymanbagabas/go-udiff v0.4.1
 	github.com/bradleyfalzon/ghinstallation/v2 v2.19.0
 	github.com/go-git/go-git/v5 v5.19.2
-	github.com/hashicorp/hcl/v2 v2.24.0
+	github.com/hashicorp/hcl/v2 v2.25.0
 	github.com/itchyny/gojq v0.12.19
 	github.com/zclconf/go-cty v1.19.0
 	go.opentelemetry.io/otel v1.46.0
