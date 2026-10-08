@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.20.9](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.20.8...app-v0.20.9) (2026-10-08)
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/hashicorp/hcl/v2 to v2.25.0 ([#232](https://github.com/dackota/change-tracking-dashboard/issues/232)) ([5097455](https://github.com/dackota/change-tracking-dashboard/commit/5097455099896f957fd294107d1a31f7b1c06a24))
+* **deps:** update module modernc.org/sqlite to v1.58.0 ([#225](https://github.com/dackota/change-tracking-dashboard/issues/225)) ([d654db9](https://github.com/dackota/change-tracking-dashboard/commit/d654db94838ebb15d60f75e455a85db210386c63))
+
 ## [0.20.8](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.20.7...app-v0.20.8) (2026-10-08)
 
 
