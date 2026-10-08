@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.20.8](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.20.7...app-v0.20.8) (2026-10-08)
+
+
+### Bug Fixes
+
+* **deps:** update docker/dockerfile:1 docker digest to 4edf897 ([#236](https://github.com/dackota/change-tracking-dashboard/issues/236)) ([17302a1](https://github.com/dackota/change-tracking-dashboard/commit/17302a112da02986b507b2d5eb562240649f65c5))
+* **deps:** update module go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc to v0.21.0 [security] ([#235](https://github.com/dackota/change-tracking-dashboard/issues/235)) ([df3f158](https://github.com/dackota/change-tracking-dashboard/commit/df3f158f09d70bb8cae8c4a67709e44f72541038))
+
 ## [0.20.7](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.20.6...app-v0.20.7) (2026-10-07)
 
 
