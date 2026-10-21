@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.12](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.20.11...app-v0.20.12) (2026-10-21)
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/go-git/go-git/v5 to v5.19.3 ([#243](https://github.com/dackota/change-tracking-dashboard/issues/243)) ([cf13498](https://github.com/dackota/change-tracking-dashboard/commit/cf13498315066eb9be33dbb542a0e5ef16f9530d))
+
 ## [0.20.11](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.20.10...app-v0.20.11) (2026-10-20)
 
 
