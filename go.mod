@@ -9,7 +9,7 @@ require (
 	github.com/go-git/go-git/v5 v5.19.3
 	github.com/hashicorp/hcl/v2 v2.25.0
 	github.com/itchyny/gojq v0.12.19
-	github.com/zclconf/go-cty v1.19.0
+	github.com/zclconf/go-cty v1.20.0
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.47.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.47.0
