@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.14](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.20.13...app-v0.20.14) (2026-11-18)
+
+
+### Bug Fixes
+
+* **deps:** update module helm.sh/helm/v4 to v4.3.2 ([#264](https://github.com/dackota/change-tracking-dashboard/issues/264)) ([ec17915](https://github.com/dackota/change-tracking-dashboard/commit/ec179155a669fbb17f88809af3f79600192c6912))
+
 ## [0.20.13](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.20.12...app-v0.20.13) (2026-10-27)
 
 
