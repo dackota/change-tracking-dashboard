@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.15](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.20.14...app-v0.20.15) (2026-11-19)
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/itchyny/gojq to v0.12.20 ([#256](https://github.com/dackota/change-tracking-dashboard/issues/256)) ([61f5db1](https://github.com/dackota/change-tracking-dashboard/commit/61f5db15599e27f87fba49572f661fc739ac79fa))
+
 ## [0.20.14](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.20.13...app-v0.20.14) (2026-11-18)
 
 
