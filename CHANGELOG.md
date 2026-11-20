@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.17](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.20.16...app-v0.20.17) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/zclconf/go-cty to v1.20.0 ([#262](https://github.com/dackota/change-tracking-dashboard/issues/262)) ([33c4d5f](https://github.com/dackota/change-tracking-dashboard/commit/33c4d5f85f79ffbe5698facfc377f9175a4cf06a))
+
 ## [0.20.16](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.20.15...app-v0.20.16) (2026-11-19)
 
 
