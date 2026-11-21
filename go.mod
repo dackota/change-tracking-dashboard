@@ -4,7 +4,7 @@ go 1.26.6
 
 require (
 	github.com/Masterminds/semver/v3 v3.5.0
-	github.com/aymanbagabas/go-udiff v0.4.1
+	github.com/aymanbagabas/go-udiff v0.4.2
 	github.com/bradleyfalzon/ghinstallation/v2 v2.19.0
 	github.com/go-git/go-git/v5 v5.19.3
 	github.com/hashicorp/hcl/v2 v2.25.0
