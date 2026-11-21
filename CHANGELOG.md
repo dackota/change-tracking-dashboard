@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.18](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.20.17...app-v0.20.18) (2026-11-21)
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/aymanbagabas/go-udiff to v0.4.2 ([#270](https://github.com/dackota/change-tracking-dashboard/issues/270)) ([667daa4](https://github.com/dackota/change-tracking-dashboard/commit/667daa439c7c96c44c558361d17057c37f7c5ea9))
+
 ## [0.20.17](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.20.16...app-v0.20.17) (2026-11-20)
 
 
