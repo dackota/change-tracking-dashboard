@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.19](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.20.18...app-v0.20.19) (2026-11-26)
+
+
+### Bug Fixes
+
+* **deps:** update docker/dockerfile:1 docker digest to 572cebb ([#274](https://github.com/dackota/change-tracking-dashboard/issues/274)) ([9459df6](https://github.com/dackota/change-tracking-dashboard/commit/9459df6f66e2a19076f30f5940cdb3b415c988d3))
+
 ## [0.20.18](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.20.17...app-v0.20.18) (2026-11-21)
 
 
