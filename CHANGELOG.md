@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.20](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.20.19...app-v0.20.20) (2026-11-27)
+
+
+### Bug Fixes
+
+* **deps:** update module modernc.org/sqlite to v1.63.0 ([#277](https://github.com/dackota/change-tracking-dashboard/issues/277)) ([6d9fc00](https://github.com/dackota/change-tracking-dashboard/commit/6d9fc005db172de7c19bd99ea46a954ded63480c))
+
 ## [0.20.19](https://github.com/dackota/change-tracking-dashboard/compare/app-v0.20.18...app-v0.20.19) (2026-11-26)
 
 
